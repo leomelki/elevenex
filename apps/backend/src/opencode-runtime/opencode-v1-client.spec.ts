@@ -3,6 +3,23 @@ import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
 import { createOpenCodeV1Client } from './opencode-v1-client.js';
 
 describe('OpenCode legacy protocol extensions', () => {
+  it('steers with an asynchronous native prompt and the active turn selection', async () => {
+    const promptAsync = jest.fn().mockResolvedValue({});
+    const message = jest.fn(async ({ messageID }: { messageID: string }) => ({ data: { info: { id: messageID } } }));
+    const client = createOpenCodeV1Client({
+      session: { promptAsync, message },
+    } as unknown as OpencodeClient);
+    const selection = { model: { providerID: 'test', modelID: 'm' }, agent: 'plan', variant: 'high' };
+    const signal = new AbortController().signal;
+    const receipt = await client.steerPrompt!('s', 'Check the failing test', selection, { signal });
+    expect(promptAsync).toHaveBeenCalledWith({
+      sessionID: 's', messageID: expect.stringMatching(/^msg_[0-9a-f]{40}$/), ...selection, parts: [{ type: 'text', text: 'Check the failing test' }],
+    }, { signal });
+    await expect(receipt && receipt(signal)).resolves.toBe(true);
+    expect(message).toHaveBeenCalledWith({
+      sessionID: 's', messageID: promptAsync.mock.calls[0][0].messageID,
+    }, { signal, throwOnError: false });
+  });
   it.each(['selected', 'agent', 'project', 'provider'])(
     'resolves the %s compaction model',
     async (source) => {

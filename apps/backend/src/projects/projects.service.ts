@@ -1,9 +1,11 @@
+import { NavigationEventsService } from '../navigation/navigation-events.service.js';
 import { isSqliteUniqueConstraintError } from '../database/sqlite-errors.js';
 import {
   BadRequestException,
   ConflictException,
   Inject,
   Injectable,
+  Optional,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -26,6 +28,7 @@ export class ProjectsService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly sessionsService: SessionsService,
+    @Optional() private readonly navigationEvents?: NavigationEventsService,
   ) {}
 
   async findAll(state: ProjectListState = 'active') {
@@ -75,9 +78,16 @@ export class ProjectsService {
     return rows[0];
   }
 
-  async create(name: string, hidden = false) {
+  async create(
+    name: string,
+    hidden = false,
+    repositories: readonly {
+      readonly name: string;
+      readonly path: string;
+    }[] = [],
+  ) {
     try {
-      return Promise.resolve(
+      const result = await Promise.resolve(
         this.db.transaction((tx) => {
           const rows = tx
             .insert(schema.projects)
@@ -96,9 +106,22 @@ export class ProjectsService {
             })
             .run();
 
+          // Prevalidated repository metadata is committed with its project so a failed create cannot leave a partial workspace.
+          if (repositories.length)
+            tx.insert(schema.repos)
+              .values(
+                repositories.map((repository) => ({
+                  projectId: project.id,
+                  name: repository.name,
+                  path: repository.path,
+                })),
+              )
+              .run();
           return project;
         }),
       );
+      this.navigationEvents?.invalidate();
+      return result;
     } catch (error: unknown) {
       if (isSqliteUniqueConstraintError(error)) {
         throw new ConflictException('Project name already exists');
@@ -130,6 +153,7 @@ export class ProjectsService {
       );
     });
 
+    this.navigationEvents?.invalidate();
     return rows[0];
   }
 
@@ -149,6 +173,7 @@ export class ProjectsService {
       .where(eq(schema.projects.id, id))
       .returning();
 
+    this.navigationEvents?.invalidate();
     return rows[0];
   }
 
@@ -184,6 +209,7 @@ export class ProjectsService {
       })
       .where(eq(schema.projects.id, id))
       .returning();
+    this.navigationEvents?.invalidate();
     return rows[0];
   }
 
@@ -205,6 +231,7 @@ export class ProjectsService {
     if (rows.length === 0) {
       throw new NotFoundException(`Project with id ${id} not found`);
     }
+    this.navigationEvents?.invalidate();
     return Promise.resolve(rows[0]);
   }
 }

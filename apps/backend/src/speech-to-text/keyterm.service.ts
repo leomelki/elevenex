@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { basename } from 'node:path';
 import simpleGit from 'simple-git';
+import { isolateGitEnvironment } from '../config/git-environment.js';
 import { MAX_KEYTERMS } from './speech-to-text.types.js';
 
 /**
@@ -81,7 +82,10 @@ export class KeytermService {
     }
 
     try {
-      const git = simpleGit({ baseDir: worktreePath, timeout: { block: GIT_TIMEOUT_MS } });
+      const git = simpleGit({
+        baseDir: worktreePath,
+        timeout: { block: GIT_TIMEOUT_MS },
+      }).env(isolateGitEnvironment(process.env));
       const status = await git.raw([
         'status',
         '--porcelain=1',

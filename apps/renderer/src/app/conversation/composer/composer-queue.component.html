@@ -1,0 +1,101 @@
+@if (items().length) {
+  <section
+    [attr.aria-label]="waitingFor() ? 'Waiting to send' : 'Queued messages'"
+    [class.local-outbox]="!!waitingFor()"
+    cdkDropList
+    [cdkDropListData]="items()"
+    [cdkDropListDisabled]="disabled() || !reorderable()"
+    (cdkDropListDropped)="drop($event)"
+  >
+    @if (!waitingFor()) { <header>
+      <ex-icon name="layers" [size]="13" /><ex-ticker
+        [value]="items().length"
+      />
+      {{ waitingFor() ? 'waiting locally' : 'queued' }} <span>· {{ waitingFor() ? 'for ' + waitingFor() : 'after this turn' }}</span>
+    </header> }
+    <div class="items">
+      @for (item of items(); track item.renderId ?? item.id; let index = $index) {
+        <div
+          class="item"
+          cdkDrag
+          [cdkDragData]="item.id"
+          [cdkDragDisabled]="disabled() || !reorderable()"
+          animate.enter="queue-enter"
+          animate.leave="queue-leave"
+        >
+          @if (editing() === item.id) {
+            <div class="edit">
+              <textarea
+                aria-label="Edit queued message"
+                [value]="editText()"
+                [disabled]="disabled()"
+                (input)="update($event)"
+                (keydown.escape)="cancelEdit()"
+              ></textarea
+              ><button
+                exButton
+                variant="primary"
+                size="sm"
+                [disabled]="disabled() || !editText().trim()"
+                (click)="save(item.id)"
+              >
+                Save</button
+              ><button
+                exButton
+                variant="ghost"
+                size="sm"
+                (click)="cancelEdit()"
+              >
+                Cancel
+              </button>
+            </div>
+          } @else {
+            @if (reorderable()) {
+              <button
+                type="button"
+                class="handle"
+                cdkDragHandle
+                [disabled]="disabled()"
+                [attr.aria-label]="'Reorder ' + preview(item.text)"
+                (keydown.arrowup)="$event.preventDefault(); move(item.id, -1)"
+                (keydown.arrowdown)="$event.preventDefault(); move(item.id, 1)"
+              >
+                ⠿
+              </button>
+            }
+            @if (waitingFor()) { <ex-icon name="clock" class="waiting-icon" [size]="13" /> }
+            @else { <span class="number">{{ index + 1 }}</span> }
+            <span class="text" [title]="preview(item.text)">{{ preview(item.text) }}</span>
+            @if (waitingFor()) { <span class="waiting-label" role="status">{{ waitingLabel(item) }}</span> }
+            <span class="actions"
+              >@if (!waitingFor()) { <ex-icon-button
+                icon="steer"
+                label="Steer now"
+                size="sm"
+                [disabled]="disabled() || item.steerable === false"
+                (pressed)="steer.emit(item.id)" /> }
+              @if (editable() && item.editable !== false) {
+                <ex-icon-button
+                  icon="pencil"
+                  label="Edit queued message"
+                  size="sm"
+                  [disabled]="disabled()"
+                  (pressed)="beginEdit(item)"
+                />
+              }
+              @if (!waitingFor() || item.removable !== false) {
+              <ex-icon-button
+                icon="x"
+                label="Remove queued message"
+                size="sm"
+                [disabled]="disabled() || item.removable === false"
+                (pressed)="remove.emit(item.id)"
+              />
+              }
+            </span>
+          }
+        </div>
+      }
+    </div>
+  </section>
+}

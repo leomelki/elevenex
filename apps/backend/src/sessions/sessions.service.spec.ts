@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { Test, TestingModule } from '@nestjs/testing';
+import { eq } from 'drizzle-orm';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import Database from 'better-sqlite3';
 import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
@@ -39,7 +40,10 @@ describe('SessionsService', () => {
     cleanupSession: jest.Mock;
     reactivateSession: jest.Mock;
   };
-  let settingsServiceMock: { findOne: jest.Mock };
+  let settingsServiceMock: {
+    findOne: jest.Mock;
+    getInitialAgentProvider: jest.Mock;
+  };
 
   beforeEach(async () => {
     const testDb = createTestDb();
@@ -77,6 +81,7 @@ describe('SessionsService', () => {
       reactivateSession: jest.fn().mockResolvedValue(undefined),
     };
     settingsServiceMock = {
+      getInitialAgentProvider: jest.fn((provider: string) => provider),
       findOne: jest.fn().mockResolvedValue({
         defaultClaudeSessionSurface: 'claude-ui',
         defaultAgentProvider: 'claude',
@@ -201,6 +206,26 @@ describe('SessionsService', () => {
       });
     });
 
+    it('keeps a name changed while an automatic title was being generated', async () => {
+      const session = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/temporary-worktree',
+        isTemporary: true,
+      });
+      await service.update(session.id, { name: 'Session 42' });
+      const titleChanged = jest.fn();
+      service.on('session-title-changed', titleChanged);
+
+      const result = await service.renameFromGeneratedTitle(session.id, 'Generated title', {
+        expectedName: 'Temporary session',
+        signal: new AbortController().signal,
+      });
+
+      expect(result.name).toBe('Session 42');
+      expect(titleChanged).not.toHaveBeenCalled();
+    });
+
     it('should use the configured default agent provider for new sessions', async () => {
       settingsServiceMock.findOne.mockResolvedValueOnce({
         defaultClaudeSessionSurface: 'claude-ui',
@@ -218,6 +243,46 @@ describe('SessionsService', () => {
       });
 
       expect(result.activeAgentProvider).toBe('codex');
+    });
+
+    it('uses the persisted last harness only without a default, and retains explicit session choices', async () => {
+      const settings = new SettingsService(db);
+      await settings.rememberAgentConfig({
+        provider: 'codex',
+        model: 'gpt',
+        reasoningEffort: 'high',
+        fastMode: true,
+      });
+      settingsServiceMock.findOne.mockImplementation(() => settings.findOne());
+      settingsServiceMock.getInitialAgentProvider.mockImplementation(
+        (provider) => settings.getInitialAgentProvider(provider),
+      );
+      const workspace = {
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/last-used',
+      };
+      expect((await service.create(workspace)).activeAgentProvider).toBe(
+        'codex',
+      );
+      expect(
+        (await service.create({ ...workspace, activeAgentProvider: 'pi' }))
+          .activeAgentProvider,
+      ).toBe('pi');
+      settings.addAgentModelPreset(
+        {
+          id: 'pinned',
+          name: 'Pinned',
+          provider: 'claude',
+          model: null,
+          reasoningEffort: null,
+        },
+        true,
+        settings.getAgentPresetDefault().revision,
+      );
+      expect((await service.create(workspace)).activeAgentProvider).toBe(
+        'claude',
+      );
     });
 
     it('should auto-generate name as "Session N" when not provided', async () => {
@@ -487,6 +552,33 @@ describe('SessionsService', () => {
   });
 
   describe('delete', () => {
+    it('blocks new prompts during unstarted deletion and cleans resources', async () => {
+      const parent = await service.create({repoId, branchName:'main', worktreePath:'/tmp/wt'});
+      agentRuntimeCleanupMock.cleanupSession.mockImplementationOnce(async () => {
+        expect((await service.findOne(parent.id)).status).toBe('archived');
+      });
+      await service.deleteUnstarted(parent.id, () => true);
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(parent.id);
+      expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(parent.id);
+      await expect(service.findOne(parent.id)).rejects.toThrow(NotFoundException);
+    });
+    it('retains unused metadata and reactivates after cleanup failure so deletion can be retried', async () => {
+      const session = await service.create({repoId, branchName:'main', worktreePath:'/tmp/wt'});
+      agentRuntimeCleanupMock.cleanupSession.mockRejectedValueOnce(new Error('Cleanup failed'));
+      await expect(service.deleteUnstarted(session.id, () => true)).rejects.toThrow('Cleanup failed');
+      expect((await service.findOne(session.id)).status).toBe('created');
+      expect(agentRuntimeCleanupMock.reactivateSession).toHaveBeenCalledWith(session.id);
+      await service.deleteUnstarted(session.id, () => true);
+      await expect(service.findOne(session.id)).rejects.toThrow(NotFoundException);
+    });
+    it('does not stop sessions that have history or are no longer idle', async () => {
+      const session = await service.create({repoId, branchName:'main', worktreePath:'/tmp/wt'});
+      await expect(service.deleteUnstarted(session.id, () => false)).rejects.toThrow('has started');
+      await service.updateCodexSessionId(session.id,'history');
+      await expect(service.deleteUnstarted(session.id, () => true)).rejects.toThrow('has started');
+      expect(agentRuntimeCleanupMock.cleanupSession).not.toHaveBeenCalled();
+      expect((await service.findOne(session.id)).codexSessionId).toBe('history');
+    });
     it('should delete a session', async () => {
       const created = await service.create({
         repoId,
@@ -571,6 +663,46 @@ describe('SessionsService', () => {
   });
 
   describe('archive', () => {
+    it('archives a whole task session group in place and strictly cleans up its runtimes', async () => {
+      const task = db.insert(schema.workspaces).values({ repoId, name: 'Task', path: '/tmp/wt', taskState: 'ready' }).returning().get();
+      const values = { repoId, workspaceId: task.id, branchName: 'main', worktreePath: task.path };
+      const parent = db.insert(schema.sessions).values(values).returning().get();
+      const child = { ...values, parentSessionId: parent.id };
+      const children = db.insert(schema.sessions).values(Array.from({ length: 25 }, () => child)).returning().all();
+      const [alreadyArchived, unrelated, otherTask, temporary] = db.insert(schema.sessions).values([
+        { ...child, status: 'archived' },
+        values,
+        { ...child, workspaceId: null },
+        { ...child, isTemporary: true },
+      ]).returning().all();
+      const saved = (id: number) => db.select().from(schema.sessions).where(eq(schema.sessions.id, id)).get();
+
+      await expect(service.archiveTaskSessionGroup(task.id, parent.id, () => {
+        throw new BadRequestException('Confirmation required');
+      })).rejects.toThrow('Confirmation required');
+      expect(saved(children[0].id)?.status).toBe('created');
+      expect(agentRuntimeCleanupMock.cleanupSession).not.toHaveBeenCalled();
+
+      agentRuntimeCleanupMock.cleanupSession.mockImplementationOnce(async () => {
+        expect(saved(children[24].id)?.status).toBe('archived');
+        await expect(service.unarchive(parent.id)).rejects.toThrow('archive is already in progress');
+        await expect(service.updateStatus(children[24].id, 'active')).rejects.toThrow('archive is already in progress');
+        throw new Error('Cleanup failed');
+      });
+      await expect(service.archiveTaskSessionGroup(task.id, parent.id, jest.fn())).rejects.toThrow('Cleanup failed');
+      expect(saved(parent.id)).toMatchObject({ status: 'archived', archivedByTask: true });
+      for (const row of children) {
+        expect(saved(row.id)).toMatchObject({ status: 'archived', parentSessionId: parent.id, archivedByTask: true });
+        expect(ptyManagerMock.stopForTask).toHaveBeenCalledWith(row.id);
+      }
+      expect(ptyManagerMock.stopForTask).toHaveBeenCalledTimes(26);
+      expect(saved(alreadyArchived.id)).toMatchObject({ status: 'archived', archivedByTask: false });
+      for (const row of [unrelated, otherTask, temporary]) expect(saved(row.id)?.status).toBe('created');
+
+      await service.archiveTaskSessionGroup(task.id, parent.id, jest.fn());
+      expect(ptyManagerMock.stopForTask).toHaveBeenCalledTimes(52);
+    });
+
     it('stops task processes without archiving a conversation on worktree release', async () => {
       const created = await service.create({ repoId, branchName: 'main', worktreePath: '/tmp/wt' });
       await service.stopForWorktreeRelease(created.id);
@@ -790,6 +922,31 @@ describe('SessionsService', () => {
   });
 
   describe('completion marker', () => {
+    it('gives fast consecutive completions distinct versions', async () => {
+      const session = await service.create({ repoId, branchName: 'main', worktreePath: '/path' });
+      const now = jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-26T00:00:00.000Z'));
+      try {
+        const first = await service.markCompletionUnreviewed(session.id);
+        const second = await service.markCompletionUnreviewed(session.id);
+        expect(second.lastCompletionAt! > first.lastCompletionAt!).toBe(true);
+        expect((await service.markCompletionReviewed(session.id, first.lastCompletionAt!)).hasUnreviewedCompletion).toBe(true);
+      } finally { now.mockRestore(); }
+    });
+    it('acknowledges only the completion actually seen, idempotently', async () => {
+      const session = await service.create({ repoId, branchName: 'main', worktreePath: '/path' });
+      const completed = await service.markCompletionUnreviewed(session.id);
+      const changed = jest.fn();
+      service.on('session-completion-changed', changed);
+      try {
+        const stale = await service.markCompletionReviewed(session.id, '2000-01-01T00:00:00.000Z');
+        expect(stale.hasUnreviewedCompletion).toBe(true);
+        expect(changed).not.toHaveBeenCalled();
+        const seen = await service.markCompletionReviewed(session.id, completed.lastCompletionAt!);
+        expect(seen.hasUnreviewedCompletion).toBe(false);
+        await service.markCompletionReviewed(session.id, completed.lastCompletionAt!);
+        expect(changed).toHaveBeenCalledTimes(1);
+      } finally { service.off('session-completion-changed', changed); }
+    });
     it('should mark a completion as unreviewed', async () => {
       const session = await service.create({
         repoId,
@@ -886,6 +1043,46 @@ describe('SessionsService', () => {
       const reloaded = await service.findOne(created.id);
       expect(reloaded.claudeSessionId).toBe('claude-session-1');
       expect(reloaded.activeAgentProvider).toBe('claude');
+    });
+  });
+
+  it('switches an edited native conversation and keeps only change receipts before its boundary', async () => {
+    const created = await service.create({ repoId, branchName: 'main', worktreePath: '/tmp/wt' });
+    await service.updateCodexSessionId(created.id, 'source');
+    const earlier = '2026-11-01T00:00:00.000Z', boundary = '2026-11-01T00:01:00.000Z';
+    const receipts = [
+      { id: 'retained', finishedAt: earlier },
+      { id: 'removed', finishedAt: '2026-11-01T00:02:00.000Z' },
+    ].map(receipt => ({ ...receipt, sessionId: created.id, provider: 'codex', conversationId: 'source',
+      startedAt: earlier, details: { files: 0, additions: 0, deletions: 0, filesChanged: [] } }));
+    db.insert(schema.turnChanges).values(receipts).run();
+    service.replaceEditedConversation(created.id, 'codex', 'source', 'edited', boundary);
+    expect((await service.findOne(created.id)).codexSessionId).toBe('edited');
+    expect(db.select().from(schema.turnChanges).all()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'retained', conversationId: 'edited' }),
+      expect.objectContaining({ id: 'removed', conversationId: 'source' }),
+    ]));
+    expect(() => service.replaceEditedConversation(created.id, 'codex', 'source', 'stale', boundary)).toThrow('session changed');
+    expect((await service.findOne(created.id)).codexSessionId).toBe('edited');
+  });
+
+  it('stores Claude model choices independently of the native session ID', async () => {
+    const created = await service.create({
+      repoId,
+      branchName: 'main',
+      worktreePath: '/tmp/wt',
+    });
+    expect(created.claudeModelSelection).toBeNull();
+
+    await service.updateClaudeModelSelection(created.id, 'custom-alias');
+    await service.updateClaudeSessionId(created.id, 'claude-session-1');
+    expect((await service.findOne(created.id)).claudeModelSelection).toEqual({
+      model: 'custom-alias',
+    });
+
+    await service.updateClaudeModelSelection(created.id, null);
+    expect((await service.findOne(created.id)).claudeModelSelection).toEqual({
+      model: null,
     });
   });
 

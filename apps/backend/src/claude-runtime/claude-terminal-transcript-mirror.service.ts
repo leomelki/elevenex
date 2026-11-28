@@ -65,6 +65,7 @@ interface StatusChangedPayload {
   sessionId: number;
   status: string;
   activityStatus?: string;
+  failed?: boolean;
 }
 
 const READ_DEBOUNCE_MS = 80;
@@ -206,12 +207,12 @@ export class ClaudeTerminalTranscriptMirrorService
     const state = this.states.get(data.sessionId);
     if (!state || state.clients.size === 0) return;
 
-    const phase = this.activityStatusToRunPhase(
-      data.activityStatus ?? data.status,
-    );
+    const phase = data.failed
+      ? 'error'
+      : this.activityStatusToRunPhase(data.activityStatus ?? data.status);
     state.runPhase = phase;
     state.sessionState = this.runPhaseToSessionState(phase);
-    state.lastError = null;
+    state.lastError = data.failed ? 'The terminal agent turn failed.' : null;
 
     this.emitRunState(data.sessionId, state);
     this.scheduleRead(data.sessionId, state);
@@ -758,7 +759,9 @@ export class ClaudeTerminalTranscriptMirrorService
     if (state) return state;
 
     const activity = this.hooksService.getActivity(sessionId);
-    const runPhase = this.activityStatusToRunPhase(activity.activityStatus);
+    const runPhase = activity.failed
+      ? 'error'
+      : this.activityStatusToRunPhase(activity.activityStatus);
     state = {
       disposed: false,
       operations: Promise.resolve(),

@@ -1,0 +1,68 @@
+:host {
+  display: block;
+  height: 100%;
+}
+.machine-name {
+  font-weight: var(--text-title-weight);
+}
+.sidebar-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: var(--space-2);
+  gap: var(--space-2);
+}
+.sidebar-head,
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.sidebar-head {
+  padding: var(--space-1) var(--space-2);
+}
+h1 {
+  font-size: var(--text-ui-size);
+  font-weight: 600;
+  margin: 0;
+}
+ex-task-list {
+  flex: 1;
+  min-height: 0;
+}
+.main-content,
+.panel-content {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.panel-head {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8);
+  text-align: center;
+}
+.empty-state > ex-icon {
+  color: var(--ink-muted);
+}
+h2 {
+  font-size: var(--text-title-size);
+  font-weight: var(--text-title-weight);
+  letter-spacing: var(--text-title-tracking);
+  margin: var(--space-4) 0 var(--space-2);
+}
+p {
+  color: var(--ink-muted);
+  margin: 0 0 var(--space-6);
+  max-width: 30ch;
+}

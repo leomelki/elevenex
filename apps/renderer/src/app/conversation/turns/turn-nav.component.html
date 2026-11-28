@@ -1,0 +1,53 @@
+@if (turns().length) {
+  <nav
+    aria-label="Conversation turns"
+    (pointerenter)="enter()"
+    (pointerleave)="leave()"
+  >
+    <span class="position" aria-hidden="true"
+      >{{ cursor() + 1 }} / {{ turns().length }}</span
+    >
+    <div class="window" [class.above]="above()" [class.below]="below()">
+      <cdk-virtual-scroll-viewport
+        class="markers"
+        [itemSize]="rowHeight"
+        [minBufferPx]="48"
+        [maxBufferPx]="96"
+        tabindex="0"
+        role="listbox"
+        aria-label="Messages"
+        aria-description="Scroll to browse messages. Use Arrow keys or Page Up and Page Down to browse, Home and End for first and latest, and Enter to jump."
+        [attr.aria-activedescendant]="descendant()"
+        (focus)="focus()"
+        (blur)="blur()"
+        (scroll)="onScroll()"
+        (keydown)="keydown($event)"
+      >
+        <button
+          *cdkVirtualFor="
+            let turn of turns();
+            let index = index;
+            trackBy: trackTurn;
+            templateCacheSize: 0
+          "
+          type="button"
+          role="option"
+          tabindex="-1"
+          [id]="rowId(turn.id)"
+          [attr.data-state]="turn.state"
+          [attr.aria-current]="active() === turn.id ? 'step' : null"
+          [attr.aria-selected]="cursor() === index"
+          [attr.aria-posinset]="index + 1"
+          [attr.aria-setsize]="turns().length"
+          [attr.aria-label]="label(turn, index)"
+          [exTooltip]="label(turn, index)"
+          (pointermove)="preview(turn)"
+          (mousedown)="$event.preventDefault()"
+          (click)="select(turn)"
+        >
+          <span class="bar"></span>
+        </button>
+      </cdk-virtual-scroll-viewport>
+    </div>
+  </nav>
+}

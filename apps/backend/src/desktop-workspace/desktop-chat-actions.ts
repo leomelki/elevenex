@@ -1,0 +1,294 @@
+import { SESSION_CHAT_PROMPT_LIMIT } from '@elevenex/shared';
+import { chatPromptImages } from './desktop-chat-input.js';
+import { BadRequestException, ConflictException } from '@nestjs/common';
+import type { AgentRuntimeProviderFeatures } from '../agent-runtime/agent-runtime.types.js';
+import type { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
+import type { SessionsService } from '../sessions/sessions.service.js';
+import { record } from './desktop-chat-projection.js';
+import type { ConversationExportService } from '../agent-runtime/conversation-export.service.js';
+import { trackDesktopChatDelivery } from './desktop-chat-delivery.js';
+import { appendChatMentions } from './desktop-chat-mentions.js';
+
+/** Validate durable requests and delegate to the selected harness without replay. */
+export async function executeChatAction(
+  sessions: SessionsService,
+  registry: AgentRuntimeRegistryService,
+  sessionId: number,
+  session: Awaited<ReturnType<SessionsService['findOne']>>,
+  action: Record<string, unknown>,
+  exports?: ConversationExportService,
+) {
+  const provider = registry.getProvider(session.activeAgentProvider);
+  if (action.type === 'stop') {
+    await provider.interrupt(sessionId);
+    return { accepted: true };
+  }
+  await sessions.assertSessionWorkspaceLinked(sessionId);
+  if (session.status === 'archived')
+    throw new BadRequestException('Archived sessions are read-only.');
+  const text = (value: unknown, max = 1000) => {
+    if (typeof value !== 'string' || !value.trim() || value.length > max)
+      throw new BadRequestException('Invalid conversation action.');
+    return value;
+  };
+  const feature = <K extends keyof AgentRuntimeProviderFeatures>(key: K) =>
+    registry.getProviderFeature(session.activeAgentProvider, key);
+  switch (action.type) {
+    case 'provider': {
+      const next = text(action.provider);
+      registry.getProvider(next);
+      if (session.activeAgentProvider !== text(action.expectedProvider))
+        throw new ConflictException(
+          'The selected harness changed. Refresh this conversation.',
+        );
+      if (next === session.activeAgentProvider) break;
+      if (sessions.hasStartedAgentRuntime(session))
+        throw new BadRequestException(
+          'Choose a harness in a new session. This conversation has already started.',
+        );
+      const runtime = record(
+        await provider.getRuntimeState(sessionId, { initialize: false }),
+      );
+      if (
+        runtime.canInterrupt ||
+        runtime.runPhase === 'running' ||
+        runtime.runPhase === 'waiting' ||
+        runtime.pendingPermissionRequest ||
+        runtime.pendingUserInputRequest ||
+        (Array.isArray(runtime.pendingPrompts) && runtime.pendingPrompts.length)
+      )
+        throw new ConflictException(
+          'Wait for the current operation to finish before choosing a harness.',
+        );
+      await sessions.updateActiveAgentProvider(sessionId, next);
+      break;
+    }
+    case 'send': {
+      const { queue, deliveryId } = action;
+      if (typeof queue !== 'boolean')
+        throw new BadRequestException('Invalid queue option.');
+      if (action.sessionIds !== undefined && !exports) throw new BadRequestException('Session mentions are unavailable.');
+      const input = text(action.text, SESSION_CHAT_PROMPT_LIMIT);
+      await trackDesktopChatDelivery(sessions.delegationHandoffs?.prompts, sessionId, deliveryId, [input, queue, action.sessionIds], async (dispatch, onAccepted) => {
+        const prompt = exports
+          ? await appendChatMentions(input, action.sessionIds, exports)
+          : input;
+        const images = await chatPromptImages(input, sessionId, session.worktreePath, provider);
+        if (session.status === 'stopped') await sessions.reactivateRuntime(sessionId);
+        await provider.submitPrompt(sessionId, prompt, provider.info.id === 'antigravity' ? input : undefined, images, {
+          human: true,
+          ...(provider.info.id === 'antigravity' ? { origin: 'desktop-chat' } : {}),
+          queue,
+          waitForCompletion: false,
+          ...(dispatch ? { beforeDispatch: dispatch } : {}),
+          ...(onAccepted ? { onAccepted } : {}),
+        });
+      }, deliveryId => sessions.emit('desktop-chat-delivery-settled', { sessionId, deliveryId }));
+      break;
+    }
+    case 'background-agent': {
+      const id = text(action.id, 256);
+      if (!/^[\w-]{1,256}$/.test(id)) throw new BadRequestException('Invalid agent.');
+      const raw = record(await provider.getRuntimeState(sessionId, { initialize: false }));
+      const agent = Array.isArray(raw.subagents) ? raw.subagents.map(record).find(agent => agent.agentId === id) : undefined;
+      if (agent?.status !== 'started' || agent.canBackground !== true)
+        throw new ConflictException('This agent cannot be moved to the background.');
+      await feature('backgroundSubagent').backgroundSubagent(sessionId, id);
+      break;
+    }
+    case 'stop-background': {
+      // Reconcile current runtime ownership before dispatch; finished work
+      // must never fall through to interrupting the parent conversation.
+      const id = text(action.id, 400);
+      const raw = record(
+        await provider.getRuntimeState(sessionId, { initialize: false }),
+      );
+      const live =
+        Array.isArray(raw.backgroundWork) &&
+        raw.backgroundWork.some((item) => record(item).id === id) ||
+        (id.startsWith('subagent:') && Array.isArray(raw.subagents) && raw.subagents.some(item => record(item).agentId === id.slice(9) && record(item).status === 'started'));
+      if (!live)
+        throw new ConflictException('This background work already finished.');
+      if (id.startsWith('task:'))
+        await feature('stopBackgroundTask').stopBackgroundTask(
+          sessionId,
+          id.slice('task:'.length),
+        );
+      else if (id.startsWith('subagent:'))
+        await feature('stopSubagent').stopSubagent(
+          sessionId,
+          id.slice('subagent:'.length),
+        );
+      else throw new BadRequestException('Unsupported background work.');
+      break;
+    }
+    case 'cancel-queued':
+      await provider.cancelPendingPrompt(sessionId, text(action.id));
+      break;
+    case 'steer-queued':
+      if (provider.info.id === 'antigravity') await provider.steerPendingPrompt(sessionId, text(action.id), 'desktop-chat');
+      else await provider.steerPendingPrompt(sessionId, text(action.id));
+      break;
+    case 'resume-queue':
+      if (provider.info.id === 'antigravity') await provider.resumePendingPrompts(sessionId, 'desktop-chat');
+      else await provider.resumePendingPrompts(sessionId);
+      break;
+    case 'permission': {
+      const raw = record(await provider.getRuntimeState(sessionId)),
+        request = record(raw.pendingPermissionRequest);
+      if (request.requestId !== action.id)
+        throw new BadRequestException('This permission is no longer pending.');
+      if (action.decision === 'denied')
+        await feature('denyPermission').denyPermission(
+          sessionId,
+          text(action.id),
+        );
+      else if (
+        action.decision === 'approved' ||
+        (action.decision === 'always' &&
+          request.suppressAlwaysAllowRule !== true)
+      )
+        await feature('approvePermission').approvePermission(
+          sessionId,
+          text(action.id),
+          action.decision === 'always',
+        );
+      else throw new BadRequestException('Unsupported permission decision.');
+      break;
+    }
+    case 'answer': {
+      const id = text(action.id);
+      const raw = record(await provider.getRuntimeState(sessionId)),
+        permission = record(raw.pendingPermissionRequest);
+      const permissionQuestion =
+        permission.toolKind === 'ask_user_question' ||
+        String(permission.toolName).toLowerCase() === 'askuserquestion';
+      const request = permissionQuestion
+        ? permission
+        : record(raw.pendingUserInputRequest);
+      if (request.requestId !== id)
+        throw new BadRequestException('This question is no longer pending.');
+      if (!permissionQuestion && provider.info.id === 'claude' &&
+          (request.decision === 'confirm' || request.decision === 'unsupported')) {
+        if (action.decline !== undefined && typeof action.decline !== 'boolean')
+          throw new BadRequestException('Invalid confirmation decision.');
+        const decline = action.decline === true;
+        if (!decline && request.decision === 'unsupported')
+          throw new BadRequestException('This elicitation cannot be answered by this engine.');
+        if (!decline && (!action.answers || typeof action.answers !== 'object' ||
+            Array.isArray(action.answers) || Object.keys(action.answers).length))
+          throw new BadRequestException('This confirmation does not accept form answers.');
+        await feature('answerUserInput').answerUserInput(
+          sessionId, id, decline ? 'decline' : 'accept',
+          decline ? undefined : {}, { requirePending: true },
+        );
+        break;
+      }
+      const answers = record(action.answers),
+        content: Record<string, string | number | boolean | string[]> = {};
+      if (Object.keys(answers).length > 20)
+        throw new BadRequestException('Too many answers.');
+      for (const [key, value] of Object.entries(answers)) {
+        if (!Array.isArray(value) || value.length > 30)
+          throw new BadRequestException('Invalid answer.');
+        const values = value.map((item) => text(item, 4000));
+        const field = record(
+          record(record(request.requestedSchema).properties)[key],
+        );
+        content[text(key)] =
+          field.type === 'boolean'
+            ? values[0] === 'true'
+            : field.type === 'number' || field.type === 'integer'
+              ? Number(values[0])
+              : field.type === 'array' || (!field.type && values.length > 1)
+                ? values
+                : values.join(', ');
+        if (typeof content[key] === 'number' && !Number.isFinite(content[key]))
+          throw new BadRequestException('Invalid numeric answer.');
+      }
+      // Harness question protocols use question IDs (or full question text) as keys.
+      if (permissionQuestion) {
+        if (action.decline === true)
+          await feature('denyPermission').denyPermission(sessionId, id);
+        else
+          await feature('approvePermission').approvePermission(
+            sessionId, id, false, { answers: content },
+          );
+      } else
+        await feature('answerUserInput').answerUserInput(
+          sessionId,
+          id,
+          action.decline === true ? 'decline' : 'accept',
+          content,
+        );
+      break;
+    }
+    case 'model':
+      await provider.setSelectedModel(
+        sessionId,
+        action.model === null ? null : text(action.model),
+      );
+      break;
+    case 'plan':
+      if (typeof action.enabled !== 'boolean')
+        throw new BadRequestException('Invalid plan option.');
+      await feature('setPlanMode').setPlanMode(sessionId, action.enabled);
+      break;
+    case 'reasoning': {
+      const effort = action.effort === null ? null : text(action.effort);
+      const raw = record(
+        await provider.getRuntimeState(sessionId, { initialize: false }),
+      );
+      const model = Array.isArray(raw.availableModels)
+        ? raw.availableModels
+            .map(record)
+            .find((item) => item.id === raw.selectedModel)
+        : undefined;
+      if (
+        effort !== null &&
+        (!Array.isArray(model?.reasoningEfforts) ||
+          !model.reasoningEfforts.includes(effort))
+      )
+        throw new BadRequestException(
+          'Unsupported thinking level for this model.',
+        );
+      await feature('setReasoningEffort').setReasoningEffort(sessionId, effort);
+      break;
+    }
+    case 'fast': {
+      if (typeof action.enabled !== 'boolean')
+        throw new BadRequestException('Invalid fast option.');
+      const raw = record(
+        await provider.getRuntimeState(sessionId, { initialize: false }),
+      );
+      const model = Array.isArray(raw.availableModels)
+        ? raw.availableModels
+            .map(record)
+            .find((item) => item.id === raw.selectedModel)
+        : undefined;
+      if (action.enabled && model?.supportsFastMode !== true)
+        throw new BadRequestException(
+          'Fast mode is unavailable for this model.',
+        );
+      await feature('setFastMode').setFastMode(sessionId, action.enabled);
+      break;
+    }
+    case 'permission-mode': {
+      const mode = text(action.mode);
+      const available = provider.info.permissionModes ?? record(
+        await provider.getRuntimeState(sessionId, { initialize: false }),
+      ).permissionModes;
+      if (!Array.isArray(available) || !available.includes(mode))
+        throw new BadRequestException('Unsupported permission mode.');
+      const runtime = feature('setPermissionMode');
+      if (provider.info.id === 'antigravity')
+        await runtime.setPermissionMode(sessionId, mode, 'desktop-chat');
+      else
+        await runtime.setPermissionMode(sessionId, mode);
+      break;
+    }
+    default:
+      throw new BadRequestException('Unsupported conversation action.');
+  }
+  return { accepted: true };
+}

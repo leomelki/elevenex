@@ -1,0 +1,62 @@
+:host {
+  display: block;
+  container-type: inline-size;
+}
+div {
+  display: grid;
+  /* Reserve space for each label independently of live counts. */
+  grid-template-columns: minmax(0, 5.25fr) minmax(0, 4.5fr) minmax(0, 5fr) minmax(0, 3.5fr);
+  gap: var(--space-1);
+}
+button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+button:hover {
+  background: var(--surface-sunken);
+}
+button[aria-pressed='true'] {
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+}
+button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.number {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.zero .number {
+  color: var(--ink-muted);
+  font-weight: 500;
+}
+.label {
+  font-size: 11px;
+  line-height: 14px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@container (max-width: 230px) {
+  div { gap: 0; }
+  button { padding-inline: calc(var(--space-1) / 2); }
+}

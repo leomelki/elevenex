@@ -1,15 +1,596 @@
+import { readFile } from 'node:fs/promises';
 import { SESSION_TOOL_INSTRUCTIONS } from '../mcp/session-tool-context.js';
 import { jest } from '@jest/globals';
 
 jest.mock('../session-title/session-title.service.js', () => ({
   SessionTitleService: class SessionTitleService {},
 }));
+// This unit suite supplies a session fake; loading its native PTY graph is unnecessary.
+jest.mock('../sessions/sessions.service.js', () => ({
+  SessionsService: class SessionsService {},
+}));
 
 import { CodexRuntimeService } from './codex-runtime.service.js';
-import { CodexAppServerClient } from './codex-app-server.js';
+import { CodexAppServerClient, CodexAppServerResponseError } from './codex-app-server.js';
+import type { CodexAppServerNotification } from './codex-app-server.js';
+import { chatWork } from '../desktop-workspace/desktop-chat-work.js';
 import type { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 
 describe('CodexRuntimeService', () => {
+  const terminalList = 'thread/backgroundTerminals/list';
+  const terminalClean = 'thread/backgroundTerminals/clean';
+  const commandItem = {
+    type: 'commandExecution',
+    id: 'command-1',
+    source: 'unifiedExecStartup',
+    processId: '12345',
+  };
+  const terminal = { processId: '12345', command: 'sleep 12' };
+
+  it('publishes Codex background commands separately from an idle turn, then clears them on exit', async () => {
+    const { service, sessionsService, appServer, hooksService } = createService();
+    sessionsService.findOne.mockResolvedValue({ ...session, codexSessionId: 'root' });
+    let listed = [terminal];
+    appServer.request.mockImplementation(async method =>
+      method === terminalList ? { data: listed } : { data: [] },
+    );
+    const events = jest.fn();
+    service.on('event', events);
+    service.onModuleInit();
+    try {
+      await service.getRuntimeState(7);
+      const receive = appServer.onNotification.mock.calls[0][0];
+      const notify = (method: string, threadId = 'root') =>
+        receive({ method, params: { threadId, item: commandItem } });
+
+      notify('item/started', 'other');
+      notify('turn/completed', 'other');
+      notify('item/started');
+      expect(appServer.request.mock.calls.map(([method]) => method)).not.toContain(terminalList);
+      expect((await service.getRuntimeState(7)).backgroundWork).toEqual([]);
+
+      notify('turn/completed');
+      await new Promise(setImmediate);
+      const backgroundWork = [
+        expect.objectContaining({ id: 'task:root:12345', kind: 'task', label: 'sleep 12' }),
+      ];
+      expect(await service.getRuntimeState(7)).toMatchObject({
+        runPhase: 'idle', sessionState: 'idle', canInterrupt: false, backgroundWork,
+      });
+      expect(events).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'run_state',
+        payload: expect.objectContaining({ sessionId: 7, runPhase: 'idle', backgroundWork }),
+      }));
+      expect(hooksService.updateRuntimeActivity).toHaveBeenLastCalledWith(
+        7, expect.objectContaining({ activityStatus: 'idle', backgroundActive: true }),
+        { authoritative: true, provider: 'codex' },
+      );
+      expect(appServer.addRef).toHaveBeenCalledTimes(1);
+
+      listed = [];
+      notify('item/completed');
+      await new Promise(setImmediate);
+      expect((await service.getRuntimeState(7)).backgroundWork).toEqual([]);
+      expect(appServer.release).toHaveBeenCalledTimes(1);
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it('cleans session-owned Codex terminals and confirms exit before releasing the runtime', async () => {
+    const { service, sessionsService, appServer } = createService();
+    sessionsService.findOne.mockResolvedValue({ ...session, codexSessionId: 'root' });
+    let listed = [terminal];
+    let cleanFails = true;
+    appServer.request.mockImplementation(async method => {
+      if (method === terminalList) return { data: listed };
+      if (method === terminalClean) {
+        if (cleanFails) throw new Error('Temporary Codex failure');
+        listed = [];
+      }
+      return { data: [] };
+    });
+    service.onModuleInit();
+    try {
+      await service.getRuntimeState(7);
+      const receive = appServer.onNotification.mock.calls[0][0];
+      receive({ method: 'item/started', params: { threadId: 'root', item: commandItem } });
+      receive({ method: 'turn/completed', params: { threadId: 'root' } });
+      await new Promise(setImmediate);
+
+      await expect(service.cleanupSession(7)).rejects.toThrow('background commands stopped');
+      expect(appServer.release).not.toHaveBeenCalled();
+      cleanFails = false;
+      await service.cleanupSession(7);
+      expect(appServer.request.mock.calls.filter(([method]) =>
+        method === terminalList || method === terminalClean,
+      ).map(([method, params]) => [method, params])).toEqual([
+        [terminalList, { threadId: 'root', limit: 64 }],
+        [terminalList, { threadId: 'root', limit: 1 }],
+        [terminalClean, { threadId: 'root' }],
+        [terminalList, { threadId: 'root', limit: 1 }],
+        [terminalClean, { threadId: 'root' }],
+        [terminalList, { threadId: 'root', limit: 1 }],
+      ]);
+      expect(appServer.release).toHaveBeenCalledTimes(1);
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it.each(['empty', 'unsupported', 'poll'])(
+    'stops monitoring Codex terminals after a %s result',
+    async scenario => {
+      const { service, sessionsService, appServer } = createService();
+      sessionsService.findOne.mockResolvedValue({ ...session, codexSessionId: 'root' });
+      const listed = scenario === 'poll' ? [terminal] : [];
+      appServer.request.mockImplementation(async method => {
+        if (method !== terminalList) return { data: [] };
+        if (scenario === 'unsupported')
+          throw new Error('Invalid request: unknown variant `thread/backgroundTerminals/list`');
+        return { data: [...listed] };
+      });
+      jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+      service.onModuleInit();
+      try {
+        await service.getRuntimeState(7);
+        const receive = appServer.onNotification.mock.calls[0][0];
+        receive({ method: 'item/started', params: { threadId: 'root', item: commandItem } });
+        receive({ method: 'turn/completed', params: { threadId: 'root' } });
+        await new Promise(setImmediate);
+        expect((await service.getRuntimeState(7)).backgroundWork).toHaveLength(listed.length);
+        listed.length = 0;
+        await jest.advanceTimersByTimeAsync(15_000);
+        expect((await service.getRuntimeState(7)).backgroundWork).toEqual([]);
+        expect(appServer.release).toHaveBeenCalledTimes(1);
+        expect(appServer.request.mock.calls.filter(([method]) => method === terminalList))
+          .toHaveLength(scenario === 'poll' ? 2 : 1);
+      } finally {
+        service.onModuleDestroy();
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it.each(['thread/closed', 'elevenex:app-server-down'])(
+    'rejects a late terminal list after %s',
+    async method => {
+      const { service, sessionsService, appServer } = createService();
+      sessionsService.findOne.mockResolvedValue({ ...session, codexSessionId: 'root' });
+      let reply!: (result: unknown) => void;
+      appServer.request.mockImplementation(async name =>
+        name === terminalList ? new Promise(resolve => { reply = resolve; }) : { data: [] },
+      );
+      service.onModuleInit();
+      try {
+        await service.getRuntimeState(7);
+        const receive = appServer.onNotification.mock.calls[0][0];
+        receive({ method: 'item/started', params: { threadId: 'root', item: commandItem } });
+        receive({ method: 'turn/completed', params: { threadId: 'root' } });
+        receive({ method, params: { threadId: 'root' } });
+        reply({ data: [terminal] });
+        await new Promise(setImmediate);
+        expect((await service.getRuntimeState(7)).backgroundWork).toEqual([]);
+        expect(appServer.release).toHaveBeenCalledTimes(1);
+      } finally {
+        service.onModuleDestroy();
+      }
+    },
+  );
+
+  it('preserves assistant phases across live deltas and item receipts', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const notify = (method: string, params: Record<string, unknown>) =>
+      wire.notificationHandler({ method, params: { threadId: 'thread-1', turnId: 'turn-1', ...params } });
+    try {
+      const pending = service.submitPrompt(7, 'Run the checks');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      const progress = { id: 'progress', type: 'agentMessage', phase: 'commentary' };
+      notify('item/started', { item: { ...progress, text: '' } });
+      notify('item/agentMessage/delta', { itemId: progress.id, delta: 'Checking.' });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect((await service.getRuntimeState(7)).liveItems).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: progress.id, assistantPhase: 'commentary', content: 'Checking.' }),
+      ]));
+
+      notify('item/completed', { item: { id: progress.id, type: progress.type, text: 'Still checking.' } });
+      notify('item/completed', { item: { id: 'reply', type: 'agentMessage', phase: 'final_answer', text: 'Passed.' } });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect((await service.getRuntimeState(7)).liveItems).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: progress.id, assistantPhase: 'commentary', content: 'Still checking.' }),
+        expect.objectContaining({ id: 'reply', assistantPhase: 'final', content: 'Passed.' }),
+      ]));
+      notify('turn/completed', { turn: { id: 'turn-1', status: 'completed' } });
+      await pending;
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it('updates a native patch and interleaved commentary at their first live positions', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const notify = (method: string, params: Record<string, unknown>) =>
+      wire.notificationHandler({ method, params: { threadId: 'thread-1', turnId: 'turn-1', ...params } });
+    try {
+      const pending = service.submitPrompt(7, 'Apply a patch');
+      await new Promise(setImmediate);
+      const patch = { type: 'fileChange', id: 'patch', changes: [], status: 'inProgress' };
+      const progress = { type: 'agentMessage', id: 'progress', text: '', phase: 'commentary' };
+      notify('item/started', { item: progress });
+      notify('item/started', { item: patch });
+      notify('item/agentMessage/delta', { itemId: progress.id, delta: 'Editing.' });
+      await new Promise(setImmediate);
+      const started = (await service.getRuntimeState(7)).liveItems;
+      expect(started.map(item => item.id)).toEqual(['progress', 'patch:tool_use']);
+
+      const completed = { ...patch, changes: [{ kind: 'add', path: 'notes.txt', diff: 'Notes' }], status: 'completed' };
+      notify('item/completed', { item: completed });
+      notify('item/completed', { item: { type: 'agentMessage', id: 'answer', text: 'Done.' } });
+      notify('item/agentMessage/delta', { itemId: 'answer', delta: 'Done.' });
+      notify('item/completed', { item: completed });
+      notify('item/started', { item: patch });
+      await new Promise(setImmediate);
+      const rows = (await service.getRuntimeState(7)).liveItems;
+      expect(rows.map(item => item.id)).toEqual(['progress', 'patch:tool_use', 'patch:tool_result', 'answer']);
+      expect(rows[1]).toMatchObject({ timestamp: started[1].timestamp, toolInput: { changes: completed.changes } });
+      expect(rows[2]).toMatchObject({ toolUseId: patch.id, isError: false });
+      expect(rows[3].content).toBe('Done.');
+      notify('turn/completed', { turn: { id: 'turn-1', status: 'completed' } });
+      await pending;
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it('forwards only successful patch completions and command boundaries for the owned turn', async () => {
+    const capture = { id: 'capture' };
+    const changes = {
+      begin: jest.fn(async () => capture), finish: jest.fn(async () => undefined),
+      recordCodexPatch: jest.fn(), startCodexEdit: jest.fn(), startCommand: jest.fn(), endCommand: jest.fn(),
+    };
+    const { service, appServer } = createService(undefined, changes);
+    const wire = wireAppServerTurn(appServer);
+    const notify = (method: string, params: Record<string, unknown>) =>
+      wire.notificationHandler({ method, params: { threadId: 'thread-1', turnId: 'turn-1', ...params } });
+    try {
+      const pending = service.submitPrompt(7, 'Apply a patch then run a command');
+      await new Promise(setImmediate);
+      const patch = { type: 'fileChange', id: 'patch', changes: [{ kind: { type: 'add' }, path: 'file.txt', diff: 'new\n' }] };
+      notify('item/started', { item: { ...patch, status: 'inProgress' } });
+      notify('item/completed', { item: { ...patch, id: 'failed', status: 'failed' } });
+      notify('item/completed', { item: { ...patch, id: 'declined', status: 'declined' } });
+      notify('item/completed', { item: { ...patch, status: 'completed' }, turnId: 'other-turn' });
+      notify('item/completed', { item: { ...patch, status: 'completed' }, threadId: 'other-thread' });
+      notify('item/completed', { item: { ...patch, status: 'completed' } });
+      notify('item/completed', { item: { ...patch, status: 'completed' } });
+      const command = { type: 'commandExecution', id: 'command', command: 'run', cwd: '/tmp/project' };
+      notify('item/started', { item: { ...command, status: 'inProgress' } });
+      notify('item/completed', { item: { ...command, status: 'failed', exitCode: 1 } });
+      notify('turn/completed', { turn: { id: 'turn-1', status: 'interrupted' } });
+      await pending;
+      expect(changes.recordCodexPatch.mock.calls).toEqual([[capture, 'patch', 'turn-1', patch.changes]]);
+      expect(changes.startCommand.mock.calls).toEqual([[capture, 'command', 'Command']]);
+      expect(changes.startCodexEdit.mock.calls).toEqual([[capture, 'patch', patch.changes]]);
+      expect(changes.endCommand.mock.calls).toEqual([
+        [capture, 'failed', 'failed'], [capture, 'declined', 'failed'],
+        [capture, 'patch', 'completed'], [capture, 'command', 'failed'],
+      ]);
+      expect(changes.finish).toHaveBeenCalledWith(capture, 'thread-1');
+    } finally { service.onModuleDestroy(); }
+  });
+
+  it('adds a saved permission denial without resorting native activity by its receipt time', async () => {
+    const { service, sessionsService, historyService, interactionRows } = createService();
+    sessionsService.findOne.mockResolvedValue({ ...session, codexSessionId: 'thread' });
+    const timestamp = (second: number) => `2026-11-22T10:00:0${second}.000Z`;
+    const history = [
+      { id: 'prompt', kind: 'user', content: 'Edit the notes', timestamp: timestamp(1) },
+      { id: 'patch', kind: 'tool_use', timestamp: timestamp(6) },
+      { id: 'progress', kind: 'assistant', content: 'Checking the edit.', timestamp: timestamp(3) },
+    ];
+    historyService.getHistory.mockResolvedValue(history);
+    interactionRows.push({ toolUseId: 'permission', toolName: 'Permissions', createdAt: timestamp(2),
+      resolvedAt: timestamp(3), requestSnapshot: JSON.stringify({ codexSessionId: 'thread' }) });
+    expect((await service.getHistory(7)).map(row => row.id)).toEqual(['prompt', 'permission:tool_use', 'patch', 'progress']);
+    expect(history).toHaveLength(3);
+  });
+
+  it.each(['completed', 'interrupted', 'failed'])(
+    'records an unseen reply only for a successful turn (%s)', async status => {
+      const { service, sessionsService, appServer } = createService();
+      const wire = wireAppServerTurn(appServer);
+      try {
+        const pending = service.submitPrompt(7, 'Check completion tracking');
+        await new Promise<void>(resolve => setImmediate(resolve));
+        wire.notificationHandler({ method: 'turn/completed', params: {
+          threadId: 'thread-1', turn: { id: 'turn-1', status, ...(status === 'failed' ? { error: { message: 'Failed turn' } } : {}) },
+        } });
+        await pending;
+        if (status === 'completed') expect(sessionsService.markCompletionUnreviewed).toHaveBeenCalledWith(7, 'completed');
+        else expect(sessionsService.markCompletionUnreviewed).not.toHaveBeenCalled();
+        expect((await service.getRuntimeState(7)).runPhase).toBe(status === 'failed' ? 'error' : 'idle');
+      } finally { service.onModuleDestroy(); }
+    },
+  );
+  it('records completion after final evidence and retains successful output if marker storage fails', async () => {
+    let finish!: () => void;
+    const finishing = new Promise<void>(resolve => { finish = resolve; });
+    const changes = { begin: jest.fn(async () => undefined), finish: jest.fn(async () => { await finishing; return undefined; }) };
+    const { service, sessionsService, appServer } = createService(undefined, changes);
+    sessionsService.markCompletionUnreviewed.mockRejectedValueOnce(new Error('Temporary database failure'));
+    const wire = wireAppServerTurn(appServer);
+    try {
+      const pending = service.submitPrompt(7, 'Reply successfully');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      wire.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(changes.finish).toHaveBeenCalled();
+      expect(sessionsService.markCompletionUnreviewed).not.toHaveBeenCalled();
+      finish(); await pending;
+      expect(sessionsService.markCompletionUnreviewed).toHaveBeenCalledTimes(1);
+      expect((await service.getRuntimeState(7)).runPhase).toBe('idle');
+    } finally { finish(); service.onModuleDestroy(); }
+  });
+  it('populates and updates Activity from child events without opening agent history', async () => {
+    const { service, sessionsService, appServer, historyService } =
+      createService();
+    sessionsService.findOne.mockResolvedValue({
+      ...session,
+      codexSessionId: 'root',
+    });
+    let notify: (notification: CodexAppServerNotification) => void = () => {
+      throw new Error('Not subscribed');
+    };
+    appServer.onNotification.mockImplementation((handler) => {
+      notify = handler;
+      return () => undefined;
+    });
+    let metadataReady: (value: unknown) => void = () => {
+      throw new Error('Metadata not requested');
+    };
+    appServer.request.mockImplementation(async (method) =>
+      method === 'thread/read'
+        ? new Promise((resolve) => {
+            metadataReady = resolve;
+          })
+        : { data: [] },
+    );
+    service.onModuleInit();
+    try {
+      await service.getRuntimeState(7);
+      const activity = () =>
+        notify({
+          method: 'item/completed',
+          params: {
+            threadId: 'root',
+            item: {
+              type: 'subAgentActivity',
+              id: 'spawn',
+              kind: 'started',
+              agentThreadId: 'child',
+              agentPath: '/root/reviewer',
+              model: 'child-model',
+              reasoningEffort: 'high',
+            },
+          },
+        });
+      activity();
+      activity();
+      expect((await service.getRuntimeState(7)).backgroundWork).toEqual([
+        expect.objectContaining({ label: 'reviewer' }),
+      ]);
+      notify({
+        method: 'item/completed',
+        params: {
+          threadId: 'child',
+          item: {
+            type: 'userMessage',
+            id: 'assignment',
+            content: [{ type: 'text', text: 'Review the live feed' }],
+          },
+        },
+      });
+      metadataReady({
+        thread: {
+          id: 'child',
+          agentNickname: 'James',
+          agentRole: 'reviewer',
+          model: 'old-model',
+        },
+      });
+      await new Promise(setImmediate);
+      const controls = { stopTask: false, stopAgent: true, inspectAgent: true };
+      const work = chatWork(await service.getRuntimeState(7), controls);
+      expect(work.running).toEqual([
+        expect.objectContaining({
+          title: 'Review the live feed',
+          agentName: 'James',
+          role: 'reviewer',
+          model: 'child-model',
+          detail: 'Review the live feed',
+        }),
+      ]);
+      const published = jest.fn();
+      service.on('event', published);
+      jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+      try {
+        jest.advanceTimersByTime(300);
+        notify({
+          method: 'item/agentMessage/delta',
+          params: { threadId: 'child', itemId: 'step', delta: 'Checking ' },
+        });
+        notify({
+          method: 'item/agentMessage/delta',
+          params: { threadId: 'child', itemId: 'step', delta: 'update ' },
+        });
+        jest.advanceTimersByTime(300);
+        notify({
+          method: 'item/agentMessage/delta',
+          params: { threadId: 'child', itemId: 'step', delta: 'ownership' },
+        });
+        expect(
+          published.mock.calls.filter(
+            ([event]) => event.type === 'subagent_lifecycle',
+          ),
+        ).toHaveLength(2);
+        expect(
+          published.mock.calls.filter(([event]) => event.type === 'run_state'),
+        ).toHaveLength(0);
+        expect(
+          chatWork(await service.getRuntimeState(7), controls).running[0]
+            .detail,
+        ).toBe('Checking update ownership');
+      } finally {
+        jest.useRealTimers();
+      }
+      // A duplicate discovery with absent metadata must preserve the loaded fields.
+      notify({
+        method: 'item/completed',
+        params: {
+          threadId: 'root',
+          item: {
+            type: 'subAgentActivity',
+            id: 'spawn',
+            kind: 'started',
+            agentThreadId: 'child',
+          },
+        },
+      });
+      notify({
+        method: 'item/completed',
+        params: {
+          threadId: 'child',
+          item: {
+            type: 'agentMessage',
+            id: 'step',
+            text: 'Checking update ownership',
+          },
+        },
+      });
+      expect(
+        chatWork(await service.getRuntimeState(7), controls).running[0],
+      ).toMatchObject({
+        title: 'Review the live feed',
+        agentName: 'James',
+        role: 'reviewer',
+        detail: 'Checking update ownership',
+        model: 'child-model',
+      });
+      notify({
+        method: 'thread/settings/updated',
+        params: {
+          threadId: 'child',
+          threadSettings: { model: 'new-model', effort: 'low' },
+        },
+      });
+      expect((await service.getRuntimeState(7)).subagents[0]).toMatchObject({
+        model: 'new-model',
+        reasoningEffort: 'low',
+      });
+      notify({
+        method: 'turn/completed',
+        params: { threadId: 'child', turn: { status: 'completed' } },
+      });
+      const finished = chatWork(await service.getRuntimeState(7), controls);
+      expect(finished.running).toEqual([]);
+      expect(finished.recent[0].title).toBe('Review the live feed finished');
+      expect(
+        appServer.request.mock.calls.filter(
+          ([method]) => method === 'thread/read',
+        ),
+      ).toEqual([
+        ['thread/read', { threadId: 'child', includeTurns: false }, 10_000],
+      ]);
+      expect(historyService.getSubagentSnapshot).not.toHaveBeenCalledWith(
+        'child',
+        expect.anything(),
+      );
+      expect(historyService.getSubagentSnapshot).not.toHaveBeenCalledWith(
+        'child',
+        undefined,
+      );
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it.each(['replacement', 'destroy'] as const)(
+    'discards child metadata after %s',
+    async (change) => {
+      const { service, sessionsService, appServer } = createService();
+      sessionsService.findOne.mockResolvedValue({
+        ...session,
+        codexSessionId: 'root',
+      });
+      let notify: (notification: CodexAppServerNotification) => void = () => {
+        throw new Error('Not subscribed');
+      };
+      appServer.onNotification.mockImplementation((handler) => {
+        notify = handler;
+        return () => undefined;
+      });
+      let metadataReady: (value: unknown) => void = () => {
+        throw new Error('Not requested');
+      };
+      appServer.request.mockImplementation(async (method) =>
+        method === 'thread/read'
+          ? new Promise((resolve) => {
+              metadataReady = resolve;
+            })
+          : { data: [] },
+      );
+      service.onModuleInit();
+      try {
+        await service.getRuntimeState(7);
+        notify({
+          method: 'item/completed',
+          params: {
+            threadId: 'foreign',
+            item: {
+              type: 'subAgentActivity',
+              id: 'foreign-spawn',
+              kind: 'started',
+              agentThreadId: 'foreign-child',
+            },
+          },
+        });
+        expect(
+          appServer.request.mock.calls.some(
+            ([method]) => method === 'thread/read',
+          ),
+        ).toBe(false);
+        notify({
+          method: 'item/completed',
+          params: {
+            threadId: 'root',
+            item: {
+              type: 'subAgentActivity',
+              id: 'spawn',
+              kind: 'started',
+              agentThreadId: 'child',
+            },
+          },
+        });
+        if (change === 'replacement') {
+          sessionsService.findOne.mockResolvedValue({
+            ...session,
+            codexSessionId: 'new-root',
+          });
+          await service.getRuntimeState(7);
+        } else service.onModuleDestroy();
+        const published = jest.fn();
+        service.on('event', published);
+        metadataReady({ thread: { id: 'child', agentNickname: 'Stale name' } });
+        await new Promise(setImmediate);
+        expect(published).not.toHaveBeenCalled();
+      } finally {
+        service.onModuleDestroy();
+      }
+    },
+  );
+
   it('publishes authoritative routing and payload updates without duplicating incoming messages', () => {
     const { service } = createService();
     const runtime = service as any;
@@ -286,7 +867,7 @@ describe('CodexRuntimeService', () => {
     ]);
   });
   it('keeps child streaming and nested collaboration out of the parent transcript', async () => {
-    const { service, sessionsService } = createService();
+    const { service, sessionsService, historyService } = createService();
     sessionsService.findOne.mockResolvedValue({
       ...session,
       codexSessionId: 'root',
@@ -348,6 +929,16 @@ describe('CodexRuntimeService', () => {
         expect.objectContaining({ kind: 'assistant', content: 'Found a race' }),
       ]),
     );
+    historyService.getSubagentSnapshot.mockResolvedValueOnce({
+      history: [
+        { id: 'earlier', kind: 'assistant', content: 'Found a race', timestamp: new Date().toISOString() },
+        { id: 'reply', kind: 'assistant', content: 'Found a race and verified it.', timestamp: new Date().toISOString() },
+      ],
+    });
+    const saved = (await service.getSubagentHistory(7, 'child')).history.filter(item => item.kind === 'assistant');
+    expect(saved.map(({ id, content }) => [id, content])).toEqual([
+      ['earlier', 'Found a race'], ['reply', 'Found a race and verified it.'],
+    ]);
     runtime.finishRun(7);
     expect(runtime.subagentBackgroundWork(7)).toHaveLength(2);
     notify('turn/completed', {
@@ -464,6 +1055,28 @@ describe('CodexRuntimeService', () => {
     );
     runtime.ensureRuntimeState(7, 'new-root');
     expect(runtime.tracker(7).agents.size).toBe(0);
+  });
+
+  it('stops only the selected owned child and confirms its native turn', async () => {
+    const { service, appServer, sessionsService } = createService();
+    sessionsService.findOne.mockResolvedValue({ ...session, codexSessionId: 'root' });
+    const wire = wireAppServerTurn(appServer);
+    service.onModuleInit();
+    try {
+      await service.getRuntimeState(7);
+      for (const id of ['child-a', 'child-b']) wire.notificationHandler({ method: 'thread/started', params: {
+        thread: { id, source: { subAgent: { thread_spawn: { parent_thread_id: 'root' } } } },
+      } });
+      appServer.request.mockClear();
+      appServer.request.mockResolvedValueOnce({ thread: { turns: [{ id: 'child-turn', status: 'inProgress' }] } })
+        .mockResolvedValueOnce({}).mockResolvedValueOnce({ thread: { turns: [{ id: 'child-turn', status: 'interrupted' }] } });
+      await service.stopSubagent(7, 'child-a');
+      expect(appServer.request).toHaveBeenCalledWith('turn/interrupt', { threadId: 'child-a', turnId: 'child-turn' }, 5000);
+      expect(appServer.request).toHaveBeenCalledTimes(3);
+      const state = await service.getRuntimeState(7);
+      expect(state.backgroundWork?.map(item => item.id)).toEqual(['subagent:child-b']);
+      await expect(service.stopSubagent(7, 'not-owned')).rejects.toThrow('no longer');
+    } finally { service.onModuleDestroy(); }
   });
 
   it('fails cleanup until every active child turn is confirmed stopped', async () => {
@@ -619,9 +1232,7 @@ describe('CodexRuntimeService', () => {
     const { service, historyService, sessionsService, hooksService } =
       createService();
     const runtime = service as any;
-    jest
-      .spyOn(runtime, 'scheduleModelCatalogRefresh')
-      .mockImplementation(() => undefined);
+
     jest
       .spyOn(runtime, 'refreshCodexPlanUsage')
       .mockImplementation(async () => undefined);
@@ -644,7 +1255,7 @@ describe('CodexRuntimeService', () => {
         actionLabel: null,
         backgroundActive: false,
       },
-      { authoritative: true },
+      { authoritative: true, provider: 'codex' },
     );
     hooksService.updateRuntimeActivity.mockClear();
     await service.getSnapshot(7);
@@ -658,7 +1269,7 @@ describe('CodexRuntimeService', () => {
         actionLabel: null,
         backgroundActive: false,
       },
-      { authoritative: true },
+      { authoritative: true, provider: 'codex' },
     );
   });
 
@@ -701,6 +1312,8 @@ describe('CodexRuntimeService', () => {
       release = resolve;
     });
     appServer.request.mockImplementation(async (method: string) => {
+      if (method === 'model/list')
+        return { data: [{ id: 'gpt-test', isDefault: true }] };
       if (method === 'thread/start') return { thread: { id: 'thread-1' } };
       if (method === 'turn/start') {
         entered();
@@ -770,9 +1383,7 @@ describe('CodexRuntimeService', () => {
     });
     const state = runtime.ensureRuntimeState(7, 'thread-1');
     state.cachedWorktreePath = '/tmp/project';
-    jest
-      .spyOn(runtime, 'scheduleModelCatalogRefresh')
-      .mockImplementation(() => undefined);
+
     const wire = wireAppServerTurn(appServer);
     let rejectRead!: (error: Error) => void;
     const read = new Promise((_, reject) => {
@@ -785,6 +1396,8 @@ describe('CodexRuntimeService', () => {
     let confirmed = false;
     let turns = 0;
     appServer.request.mockImplementation(async (method: string) => {
+      if (method === 'model/list')
+        return { data: [{ id: 'gpt-test', isDefault: true }] };
       if (method === 'turn/start') return { turn: { id: `turn-${++turns}` } };
       if (method === 'thread/read') {
         if (confirmed)
@@ -840,7 +1453,7 @@ describe('CodexRuntimeService', () => {
         activityStatus: 'waiting',
         actionLabel: expect.stringContaining('stop'),
       }),
-      { authoritative: true },
+      { authoritative: true, provider: 'codex' },
     );
     await expect(service.resumePendingPrompts(7)).rejects.toThrow(
       'Retry stopping',
@@ -1007,9 +1620,17 @@ describe('CodexRuntimeService', () => {
       provider: 'codex',
       root: '/tmp/project',
       startedAt: '2026-10-23T11:00:00Z',
+      cwd: '/tmp/project',
+      accepting: true,
+      tools: new Map(),
+      commands: new Map(),
+      evidenceBytes: 0,
+      claudeTools: new Map(),
     };
     const turnChanges = {
       begin: jest.fn<TurnChangesService['begin']>().mockResolvedValue(capture),
+      startCommand: jest.fn(),
+      endCommand: jest.fn(),
       finish: jest
         .fn<TurnChangesService['finish']>()
         .mockRejectedValue(new Error('capture cleanup failed')),
@@ -1097,6 +1718,205 @@ describe('CodexRuntimeService', () => {
     expect(state).toMatchObject({ pendingPrompts: [], runPhase: 'idle' });
   });
 
+  it('keeps element context text beside native localImage inputs containing the actual bytes', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const prompt = 'Align ❶. Image 1 is element-one.jpg; image 2 is element-two.jpg.';
+    const images = [{ mediaType: 'image/jpeg' as const, data: '/9j/one=' }, { mediaType: 'image/png' as const, data: 'iVBORw0KGgo=' }];
+    await service.submitPrompt(7, prompt, undefined, images, { waitForCompletion: false });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    for (let attempt = 0; attempt < 100 && !wire.turnStartParams; attempt++) await new Promise<void>(resolve => setTimeout(resolve, 10));
+    const params = wire.turnStartParams;
+    if (!params || typeof params !== 'object' || !('input' in params) || !Array.isArray(params.input)) throw new Error('Missing native turn input');
+    expect(params.input[0]).toEqual({ type: 'text', text: prompt });
+    for (let index = 0; index < images.length; index++) {
+      const input: unknown = params.input[index + 1];
+      if (!input || typeof input !== 'object' || !('path' in input) || typeof input.path !== 'string') throw new Error('Missing native image input');
+      expect(input).toMatchObject({ type: 'localImage' });
+      expect(await readFile(input.path)).toEqual(Buffer.from(images[index]!.data, 'base64'));
+    }
+    wire.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+    await new Promise<void>(resolve => setImmediate(resolve));
+  });
+
+  it('acknowledges desktop sends while retaining the running turn and streaming lifecycle', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    await service.submitPrompt(7, 'Keep working', undefined, undefined, { waitForCompletion: false });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(wire.turnStartParams).toMatchObject({ input: [{ type: 'text', text: 'Keep working' }] });
+    expect(await service.getRuntimeState(7)).toMatchObject({ runPhase: 'running', canInterrupt: true });
+    wire.notificationHandler({
+      method: 'item/agentMessage/delta',
+      params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'reply', delta: 'Still working' },
+    });
+    expect((await service.getRuntimeState(7)).liveItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'assistant', content: 'Still working' }),
+    ]));
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(await service.getRuntimeState(7)).toMatchObject({ runPhase: 'idle', canInterrupt: false });
+  });
+
+  it('fences tracked desktop dispatch and acknowledges only the native turn/start reply', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const original = appServer.request.getMockImplementation()!;
+    const beforeDispatch = jest.fn();
+    const onAccepted = jest.fn();
+    let release!: (reply: { turn: { id: string } }) => void;
+    let started!: () => void;
+    const startedRequest = new Promise<void>(done => { started = done; });
+    appServer.request.mockImplementation(async (method, params) => {
+      if (method !== 'turn/start') return original(method, params);
+      expect(beforeDispatch).toHaveBeenCalledTimes(1);
+      started();
+      return new Promise(done => { release = done; });
+    });
+    try {
+      const send = service.submitPrompt(7, 'Verify delivery', undefined, undefined, {
+        waitForCompletion: false, beforeDispatch, onAccepted,
+      });
+      await startedRequest;
+      expect(onAccepted).not.toHaveBeenCalled();
+      wire.notificationHandler({ method: 'turn/started', params: { threadId: 'thread-1', turn: { id: 'turn-1' } } });
+      expect(onAccepted).not.toHaveBeenCalled();
+      release({ turn: { id: 'turn-1' } });
+      await send;
+      expect(onAccepted).toHaveBeenCalledTimes(1);
+      expect(onAccepted).toHaveBeenCalledWith('running');
+      wire.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it.each(['live', 'queued', 'existing queue', 'explicit', 'rejected', 'rejected explicit', 'unknown'] as const)(
+    'delivers an agent follow-up with %s steering',
+    async (delivery) => {
+      const { service, appServer } = createService();
+      const wire = wireAppServerTurn(appServer);
+      const initial = service.submitPrompt(7, 'Initial assignment');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (delivery === 'existing queue' || delivery === 'explicit')
+        await service.submitPrompt(7, 'Earlier queued work');
+      const accepted = jest.fn();
+      if (delivery === 'rejected' || delivery === 'rejected explicit') {
+        appServer.request.mockRejectedValueOnce(
+          new CodexAppServerResponseError('Active turn cannot be steered.', -32600),
+        );
+      } else if (delivery === 'unknown') {
+        appServer.request.mockRejectedValueOnce(new Error('Request timed out'));
+      }
+      try {
+        const sent = service.submitPrompt(7, 'Focus on the failing test', undefined, undefined, {
+          waitForCompletion: false,
+          preferSteering: true,
+          requireSteering: delivery === 'explicit' || delivery === 'rejected explicit',
+          queue: delivery === 'queued',
+          onAccepted: accepted,
+        });
+        if (delivery === 'unknown') {
+          await expect(sent).rejects.toThrow('Request timed out');
+          expect(accepted).not.toHaveBeenCalled();
+        } else if (delivery === 'rejected explicit') {
+          await expect(sent).rejects.toThrow('No active turn can accept live steering.');
+          expect(accepted).not.toHaveBeenCalled();
+        } else {
+          await sent;
+          expect(accepted).toHaveBeenCalledWith(delivery === 'live' || delivery === 'explicit' ? 'steered' : 'queued');
+        }
+        const steers = appServer.request.mock.calls.filter(([method]) => method === 'turn/steer');
+        expect(steers).toEqual(delivery === 'queued' || delivery === 'existing queue' ? [] : [['turn/steer', {
+          threadId: 'thread-1',
+          expectedTurnId: 'turn-1',
+          input: [{ type: 'text', text: 'Focus on the failing test' }],
+        }]]);
+        expect((await service.getRuntimeState(7)).pendingPrompts.map(({ prompt }) => prompt))
+          .toEqual({
+            live: [],
+            queued: ['Focus on the failing test'],
+            'existing queue': ['Earlier queued work', 'Focus on the failing test'],
+            explicit: ['Earlier queued work'],
+            rejected: ['Focus on the failing test'],
+            'rejected explicit': [],
+            unknown: [],
+          }[delivery]);
+        expect(appServer.request.mock.calls.filter(([method]) => method === 'turn/start')).toHaveLength(1);
+      } finally {
+        await service.clearPendingPrompts(7);
+        wire.notificationHandler({
+          method: 'turn/completed',
+          params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+        });
+        await initial;
+        service.onModuleDestroy();
+      }
+    },
+  );
+
+  it('uses durable delegation options and queues a second send racing the cold first turn', async () => {
+    const { service, appServer, sessionsService } = createService();
+    const delegated = {
+      ...session,
+      agentSelection: { provider: 'codex', model: 'gpt-test', reasoningEffort: 'high' },
+    };
+    sessionsService.findOne.mockResolvedValue(delegated);
+    const wire = wireAppServerTurn(appServer);
+    const first = jest.fn();
+    const second = jest.fn();
+    const running = service.submitPrompt(7, 'first', undefined, undefined, { onAccepted: first });
+    try {
+      await service.submitPrompt(7, 'second', undefined, undefined, {
+        waitForCompletion: false, preferSteering: true, onAccepted: second,
+      });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(first).toHaveBeenCalledWith('running');
+      expect(second).toHaveBeenCalledWith('queued');
+      expect(appServer.request).toHaveBeenCalledWith('thread/start', expect.objectContaining({
+        model: 'gpt-test', modelReasoningEffort: 'high',
+      }));
+      expect(wire.turnStartParams).toMatchObject({ input: [{ type: 'text', text: 'first' }] });
+      expect((await service.getRuntimeState(7)).pendingPrompts).toMatchObject([{ prompt: 'second' }]);
+    } finally {
+      await service.clearPendingPrompts(7);
+      wire.notificationHandler({
+        method: 'turn/completed',
+        params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+      });
+      await running;
+      service.onModuleDestroy();
+    }
+  });
+
+  it('rejects an unaccepted desktop send without starting a turn', async () => {
+    const { service, appServer } = createService();
+    await service.cleanupSession(7);
+    await expect(service.submitPrompt(7, 'Closed', undefined, undefined, { waitForCompletion: false }))
+      .rejects.toThrow('closed');
+    expect(appServer.request).not.toHaveBeenCalledWith('turn/start', expect.anything());
+  });
+
+  it('publishes cleanup failures after a desktop send was acknowledged', async () => {
+    const turnChanges = {
+      begin: jest.fn<TurnChangesService['begin']>().mockResolvedValue(undefined),
+      finish: jest.fn<TurnChangesService['finish']>().mockRejectedValue(new Error('capture cleanup failed')),
+    };
+    const { service, appServer } = createService(undefined, turnChanges);
+    const wire = wireAppServerTurn(appServer);
+    await service.submitPrompt(7, 'Do the work', undefined, undefined, { waitForCompletion: false });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(await service.getRuntimeState(7)).toMatchObject({ runPhase: 'error', lastError: 'capture cleanup failed', canInterrupt: false });
+  });
+
   it('accepts a new prompt after reactivation and reloads the task’s current environment', async () => {
     const { service, sessionsService } = createService();
     (service as any).ensureRuntimeState(7).cachedWorktreePath =
@@ -1108,13 +1928,14 @@ describe('CodexRuntimeService', () => {
     service.reactivateSession(7);
     await service.submitPrompt(7, 'Continue the investigation');
     expect(sessionsService.findOne).toHaveBeenCalledWith(7);
-    expect(run).toHaveBeenCalledWith(
+    expect(run.mock.calls[0]?.slice(0, 6)).toEqual([
       7,
       expect.anything(),
       '/tmp/project',
       expect.anything(),
       expect.anything(),
-    );
+      undefined,
+    ]);
   });
 
   it('rechecks checkout ownership before dispatching a queued or direct prompt', async () => {
@@ -1123,6 +1944,9 @@ describe('CodexRuntimeService', () => {
       new Error('Restore this task’s branch'),
     );
     appServer.request.mockResolvedValue({ thread: { id: 'thread-1' } });
+    appServer.request.mockResolvedValueOnce({
+      data: [{ id: 'gpt-test', isDefault: true }],
+    });
     await service.submitPrompt(7, 'Continue');
     expect(
       appServer.request.mock.calls.some(([method]) => method === 'turn/start'),
@@ -1238,9 +2062,11 @@ describe('CodexRuntimeService', () => {
         .fn<() => Promise<typeof session>>()
         .mockResolvedValue(session),
       updateStatus: jest.fn<() => Promise<unknown>>().mockResolvedValue({}),
+      markCompletionUnreviewed: jest.fn<() => Promise<unknown>>().mockResolvedValue({}),
       updateCodexSessionId: jest
         .fn<() => Promise<unknown>>()
         .mockResolvedValue({}),
+      replaceEditedConversation: jest.fn(),
       updatePlanMode: jest.fn<() => Promise<unknown>>().mockResolvedValue({}),
     };
     const authService = {
@@ -1288,12 +2114,12 @@ describe('CodexRuntimeService', () => {
       restartIfBinaryChanged: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
       prewarm: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
       request: jest
-        .fn<() => Promise<unknown>>()
+        .fn<(method: string, params: unknown, timeoutMs?: number) => Promise<unknown>>()
         .mockResolvedValue({ data: [] }),
       addRef: jest.fn(),
       release: jest.fn(),
       ensureReady: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
-      onNotification: jest.fn(() => () => undefined),
+      onNotification: jest.fn<(handler: (notification: CodexAppServerNotification) => void) => () => void>(() => () => undefined),
       onRequest: jest.fn(() => () => undefined),
       respondToRequest: jest.fn(),
       rejectRequest: jest.fn(),
@@ -1359,6 +2185,8 @@ describe('CodexRuntimeService', () => {
     });
     appServer.request.mockImplementation(
       async (method: string, params: unknown) => {
+        if (method === 'model/list')
+          return { data: [{ id: 'gpt-test', isDefault: true }] };
         if (method === 'thread/start') {
           return { thread: { id: 'thread-1' } };
         }
@@ -1531,6 +2359,118 @@ describe('CodexRuntimeService', () => {
       resolvedAt: '2026-09-30T08:00:05.000Z',
     });
     expect(await service.getHistory(7)).toEqual([]);
+  });
+
+  it.each(['automatic', 'resume', 'steer'] as const)(
+    'publishes queued user receipts during %s dispatch without reloading history',
+    async dispatch => {
+      const { service, appServer, historyService } = createService();
+      const wire = wireAppServerTurn(appServer);
+      const events: unknown[] = [];
+      service.on('event', event => events.push(event));
+      const initial = service.submitPrompt(7, 'Initial prompt');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      await service.submitPrompt(7, 'Repeated follow-up');
+      await service.submitPrompt(7, 'Repeated follow-up');
+      const queued = (await service.getRuntimeState(7)).pendingPrompts;
+      expect(queued).toHaveLength(2);
+      let activeTurnId = 'turn-1';
+      if (dispatch === 'steer') {
+        await service.steerPendingPrompt(7, queued[0].id);
+      } else {
+        if (dispatch === 'resume') {
+          appServer.request.mockImplementation(async method => method === 'thread/read'
+            ? { thread: { turns: [{ id: 'turn-1', status: 'interrupted' }] } } : {});
+          await service.interrupt(7);
+        }
+        else wire.notificationHandler({
+          method: 'turn/completed',
+          params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+        });
+        await initial;
+        appServer.request.mockImplementation(async method => method === 'turn/start'
+          ? { turn: { id: 'turn-2' } } : { thread: { id: 'thread-1' } });
+        if (dispatch === 'resume') await service.resumePendingPrompts(7);
+        await new Promise<void>(resolve => setImmediate(resolve));
+        activeTurnId = 'turn-2';
+      }
+      expect(await service.getRuntimeState(7)).toMatchObject({
+        pendingPrompts: [queued[1]],
+        liveItems: [],
+        dispatchingPrompts: [{ id: queued[0].id, prompt: 'Repeated follow-up', timestamp: expect.any(String) }],
+      });
+      const notify = (method: string, id: string, type: string, text: string, threadId = 'thread-1', turnId = activeTurnId) =>
+        wire.notificationHandler({ method, params: {
+          threadId, turnId, item: { id, type, content: [{ type: 'text', text }], text },
+        } });
+      // Concurrent sessions and an earlier turn cannot inject their messages.
+      notify('item/completed', 'foreign', 'userMessage', 'Wrong session', 'other-thread');
+      notify('item/completed', 'stale', 'userMessage', 'Wrong turn', 'thread-1', 'old-turn');
+      notify(dispatch === 'steer' ? 'item/started' : 'item/completed', 'native-queued-1', 'userMessage', 'Repeated follow-up');
+      notify('item/completed', 'answer', 'agentMessage', 'Working on the follow-up');
+      notify('item/completed', 'native-queued-1', 'userMessage', 'Repeated follow-up');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      const state = await service.getRuntimeState(7);
+      expect(state.liveItems.map(item => item.id)).toEqual(['native-queued-1', 'answer']);
+      expect(state.liveItems[0]).toMatchObject({ kind: 'user', content: 'Repeated follow-up' });
+      expect(state.pendingPrompts).toEqual([queued[1]]);
+      expect(state.dispatchingPrompts).toEqual([]);
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'message_start', payload: expect.objectContaining({
+          sessionId: 7, item: expect.objectContaining({ id: 'native-queued-1', kind: 'user' }),
+        }),
+      }));
+      expect(historyService.getHistory).not.toHaveBeenCalled();
+      await service.clearPendingPrompts(7);
+      wire.notificationHandler({ method: 'turn/completed', params: {
+        threadId: 'thread-1', turn: { id: activeTurnId, status: 'completed' },
+      } });
+      await initial;
+      await new Promise<void>(resolve => setImmediate(resolve));
+    },
+  );
+
+  it.each(['active', 'new'] as const)('keeps async answers out of user turns when answering in an %s turn', async mode => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const initial = service.submitPrompt(7, 'Initial prompt');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    wire.notificationHandler({ method: 'item/completed', params: {
+      threadId: 'thread-1', turnId: 'turn-1', item: asyncQuestionItem,
+    } });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const request = (await service.getRuntimeState(7)).pendingUserInputRequest!;
+    const complete = () => wire.notificationHandler({ method: 'turn/completed', params: {
+      threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' },
+    } });
+    if (mode === 'new') { complete(); await initial; }
+    const answering = service.answerUserInput(7, request.requestId, 'accept', {
+      'question-1': 'Complete', 'question-2': 'Keep existing APIs',
+    });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const text = 'Which approach?\nAnswer: Complete\n\nAny constraints?\nAnswer: Keep existing APIs';
+    for (const method of ['item/started', 'item/completed']) wire.notificationHandler({ method, params: {
+      threadId: 'thread-1', turnId: 'turn-1',
+      item: { type: 'userMessage', id: 'native-answer', content: [{ type: 'text', text }] },
+    } });
+    wire.notificationHandler({ method: 'item/completed', params: {
+      threadId: 'thread-1', turnId: 'turn-1',
+      item: { type: 'userMessage', id: 'ordinary', content: [{ type: 'text', text: 'Answer: This is an ordinary follow-up' }] },
+    } });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect((await service.getRuntimeState(7)).liveItems.filter(item => item.kind === 'user').map(item => item.id)).toEqual(['ordinary']);
+    complete();
+    await Promise.all([initial, answering]);
+    const repeated = service.submitPrompt(7, text);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    wire.notificationHandler({ method: 'item/completed', params: {
+      threadId: 'thread-1', turnId: 'turn-1',
+      item: { type: 'userMessage', id: 'later-prompt', content: [{ type: 'text', text }] },
+    } });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect((await service.getRuntimeState(7)).liveItems.filter(item => item.kind === 'user').map(item => item.id)).toEqual(['later-prompt']);
+    complete();
+    await repeated;
   });
 
   it('steers a queued prompt into the active Codex turn', async () => {
@@ -1910,6 +2850,8 @@ describe('CodexRuntimeService', () => {
       });
     };
     appServer.request.mockImplementation(async (method: string) => {
+      if (method === 'model/list')
+        return { data: [{ id: 'gpt-test', isDefault: true }] };
       if (method === 'thread/resume') {
         if (starts) stale(); // Previous turn completes while the new run resumes.
         return {};
@@ -1982,6 +2924,8 @@ describe('CodexRuntimeService', () => {
     const { service, appServer } = createService();
     const wire = wireAppServerTurn(appServer);
     appServer.request.mockImplementation(async (method: string) => {
+      if (method === 'model/list')
+        return { data: [{ id: 'gpt-test', isDefault: true }] };
       if (method === 'thread/start') return { thread: { id: 'thread-1' } };
       if (method === 'turn/start') {
         wire.notificationHandler({
@@ -2066,13 +3010,16 @@ describe('CodexRuntimeService', () => {
       state.cachedWorktreePath = '/tmp/project';
       wireAppServerTurn(appServer);
       appServer.request.mockRejectedValue(new Error(message));
+      appServer.request.mockResolvedValueOnce({
+        data: [{ id: 'gpt-test', isDefault: true }],
+      });
       await service.submitPrompt(7, 'retry this thread');
       expect(state).toMatchObject({
         codexSessionId: 'thread-1',
         runPhase: 'error',
         lastError: message,
       });
-      expect(appServer.request).toHaveBeenCalledTimes(1);
+      expect(appServer.request).toHaveBeenCalledTimes(2);
       expect(appServer.request).toHaveBeenCalledWith(
         'thread/resume',
         expect.objectContaining({ threadId: 'thread-1' }),
@@ -2093,6 +3040,8 @@ describe('CodexRuntimeService', () => {
       state.cachedWorktreePath = '/tmp/project';
       const wire = wireAppServerTurn(appServer);
       appServer.request.mockImplementation(async (method: string) => {
+        if (method === 'model/list')
+          return { data: [{ id: 'gpt-test', isDefault: true }] };
         if (method === 'thread/resume') throw new Error(message);
         if (method === 'thread/start') return { thread: { id: 'thread-1' } };
         if (method === 'turn/start') return { turn: { id: 'turn-1' } };
@@ -2353,12 +3302,9 @@ describe('CodexRuntimeService', () => {
 
     expect(appServer.request.mock.calls).toEqual([
       ['thread/read', { threadId: 'source-thread', includeTurns: true }],
-      ['thread/fork', { threadId: 'source-thread', beforeTurnId: 'turn-2' }],
+      ['thread/fork', { threadId: 'source-thread', beforeTurnId: 'turn-2', config: expect.any(Object) }],
     ]);
-    expect(sessionsService.updateCodexSessionId).toHaveBeenCalledWith(
-      7,
-      'rewound-thread',
-    );
+    expect(sessionsService.replaceEditedConversation).toHaveBeenCalledWith(7, 'codex', 'source-thread', 'rewound-thread', undefined);
   });
 
   it.each(['user', 'assistant'] as const)(
@@ -2410,7 +3356,7 @@ describe('CodexRuntimeService', () => {
       service.rewindConversation(7, 'codex-record:3'),
     ).rejects.toThrow('requested fork history');
 
-    expect(sessionsService.updateCodexSessionId).not.toHaveBeenCalled();
+    expect(sessionsService.replaceEditedConversation).not.toHaveBeenCalled();
     expect(historyService.waitForHistory).not.toHaveBeenCalled();
   });
 
@@ -2546,10 +3492,7 @@ describe('CodexRuntimeService', () => {
       threadId: 'rewound-thread',
       numTurns: 2,
     });
-    expect(sessionsService.updateCodexSessionId).toHaveBeenCalledWith(
-      7,
-      'rewound-thread',
-    );
+    expect(sessionsService.replaceEditedConversation).toHaveBeenCalledWith(7, 'codex', 'source-thread', 'rewound-thread', undefined);
     expect(historyService.waitForHistory).toHaveBeenCalledWith(
       'rewound-thread',
       1,
@@ -2570,7 +3513,7 @@ describe('CodexRuntimeService', () => {
     await expect(
       service.rewindConversation(7, 'codex-record:3'),
     ).rejects.toThrow('History not ready');
-    expect(sessionsService.updateCodexSessionId).not.toHaveBeenCalled();
+    expect(sessionsService.replaceEditedConversation).not.toHaveBeenCalled();
   });
 
   it('rejects a missing fork boundary without replacing the original thread', async () => {
@@ -2580,7 +3523,7 @@ describe('CodexRuntimeService', () => {
     await expect(
       service.rewindConversation(7, 'codex-record:3'),
     ).rejects.toThrow('selected Codex turn');
-    expect(sessionsService.updateCodexSessionId).not.toHaveBeenCalled();
+    expect(sessionsService.replaceEditedConversation).not.toHaveBeenCalled();
     expect(appServer.request).toHaveBeenCalledTimes(1);
   });
 
@@ -2593,7 +3536,7 @@ describe('CodexRuntimeService', () => {
     await expect(
       service.rewindConversation(7, 'codex-record:3'),
     ).rejects.toThrow('requested fork history');
-    expect(sessionsService.updateCodexSessionId).not.toHaveBeenCalled();
+    expect(sessionsService.replaceEditedConversation).not.toHaveBeenCalled();
     expect(historyService.waitForHistory).not.toHaveBeenCalled();
   });
 
@@ -2689,6 +3632,170 @@ describe('CodexRuntimeService', () => {
     expect((service as any).rewindingSessions.size).toBe(0);
   });
 
+  it('discovers models at module startup before any catalog read or prompt', async () => {
+    const { service, appServer } = createService();
+    const turn = wireAppServerTurn(appServer);
+    service.onModuleInit();
+    try {
+      await new Promise(setImmediate);
+      expect(appServer.request.mock.calls.filter(([method]) => method === 'model/list')).toHaveLength(1);
+      expect((await service.getRuntimeState(7)).availableModels).toEqual([
+        expect.objectContaining({ id: 'gpt-test' }),
+      ]);
+      await service.submitPrompt(7, 'hello', undefined, undefined, { waitForCompletion: false });
+      await new Promise(setImmediate);
+      expect(turn.turnStartParams).toEqual(expect.objectContaining({
+        collaborationMode: expect.objectContaining({ settings: expect.objectContaining({ model: 'gpt-test' }) }),
+      }));
+      turn.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+      await new Promise(setImmediate);
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it('waits for startup discovery when a prompt arrives before the catalog', async () => {
+    const { service, appServer } = createService();
+    const turn = wireAppServerTurn(appServer);
+    let discovered!: (value: unknown) => void;
+    appServer.request.mockReturnValueOnce(new Promise(resolve => { discovered = resolve; }));
+    service.onModuleInit();
+    try {
+      await service.submitPrompt(7, 'hello', undefined, undefined, { waitForCompletion: false });
+      await new Promise(setImmediate);
+      expect(turn.turnStartParams).toBeNull();
+      discovered({ data: [{ id: 'account-model', isDefault: true }] });
+      await new Promise(setImmediate);
+      expect(turn.turnStartParams).toEqual(expect.objectContaining({
+        collaborationMode: expect.objectContaining({ settings: expect.objectContaining({ model: 'account-model' }) }),
+      }));
+      expect(appServer.request.mock.calls.filter(([method]) => method === 'model/list')).toHaveLength(1);
+      turn.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+      await new Promise(setImmediate);
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it('retries in the background and lets a foreground read bypass the backoff', async () => {
+    jest.useFakeTimers();
+    const { service, appServer } = createService();
+    appServer.request.mockRejectedValue(new Error('Codex not installed'));
+    try {
+      service.onModuleInit();
+      await service.getModelCatalog();
+      expect(appServer.request).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(3_001);
+      // Opening the picker checks sooner than the background's 15 seconds.
+      await service.getModelCatalog();
+      expect(appServer.request).toHaveBeenCalledTimes(2);
+      await jest.advanceTimersByTimeAsync(30_000);
+      expect(appServer.request).toHaveBeenCalledTimes(3);
+      service.onModuleDestroy();
+      await jest.advanceTimersByTimeAsync(600_000);
+      expect(appServer.request).toHaveBeenCalledTimes(3);
+    } finally {
+      service.onModuleDestroy();
+      jest.useRealTimers();
+    }
+  });
+
+  it('lets a new prompt rediscover Codex during background failure backoff', async () => {
+    const { service, appServer } = createService();
+    const turn = wireAppServerTurn(appServer);
+    const now = jest.spyOn(Date, 'now').mockReturnValue(100_000);
+    appServer.request.mockRejectedValueOnce(new Error('CLI temporarily unavailable'));
+    service.onModuleInit();
+    try {
+      await new Promise(setImmediate);
+      now.mockReturnValue(103_001);
+      await service.submitPrompt(7, 'hello', undefined, undefined, { waitForCompletion: false });
+      await new Promise(setImmediate);
+      expect(appServer.request.mock.calls.filter(([method]) => method === 'model/list')).toHaveLength(2);
+      expect(turn.turnStartParams).not.toBeNull();
+      turn.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+      await new Promise(setImmediate);
+    } finally {
+      now.mockRestore();
+      service.onModuleDestroy();
+    }
+  });
+
+  it('does not send a saved default without any discovered Codex models', async () => {
+    const { service, appServer } = createService({ model: 'saved-model', reasoningEffort: null });
+    appServer.request.mockRejectedValue(new Error('Codex not installed'));
+    await service.submitPrompt(7, 'hello');
+    expect(appServer.request.mock.calls.some((call: unknown[]) => call[0] === 'turn/start')).toBe(false);
+  });
+
+  it('never advertises guessed models when Codex cannot be discovered', async () => {
+    const { service, appServer } = createService();
+    appServer.request.mockRejectedValue(new Error('spawn codex ENOENT'));
+    const catalog = await service.getModelCatalog();
+    expect(catalog.models).toEqual([]);
+    expect(catalog.providerDefaultModelId).toBeNull();
+    expect(catalog.unavailableReason).toContain('installed and signed in');
+    const state = await service.getRuntimeState(7);
+    expect(state.selectedModel).toBeNull();
+    expect(state.availableModels).toEqual([]);
+    await service.submitPrompt(7, 'hello');
+    expect(
+      appServer.request.mock.calls.some(
+        (call: unknown[]) => call[0] === 'turn/start',
+      ),
+    ).toBe(false);
+    expect((await service.getRuntimeState(7)).lastError).toContain(
+      'installed and signed in',
+    );
+  });
+
+  it('coalesces failed discovery and retries after three seconds', async () => {
+    const { service, appServer } = createService();
+    const now = jest.spyOn(Date, 'now').mockReturnValue(100_000);
+    try {
+      appServer.request.mockRejectedValueOnce(new Error('not installed'));
+      await Promise.all([service.getModelCatalog(), service.getModelCatalog()]);
+      expect(appServer.request).toHaveBeenCalledTimes(1);
+      now.mockReturnValue(102_999);
+      await service.getModelCatalog();
+      expect(appServer.request).toHaveBeenCalledTimes(1);
+      now.mockReturnValue(103_001);
+      appServer.request.mockResolvedValueOnce({
+        data: [{ id: 'account-model', isDefault: true }],
+      });
+      const catalog = await service.getModelCatalog();
+      expect(catalog.providerDefaultModelId).toBe('account-model');
+      expect(catalog.unavailableReason).toBeNull();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('replaces an implicit default on forced discovery and preserves a user pin', async () => {
+    const { service, appServer } = createService();
+    appServer.request.mockResolvedValueOnce({
+      data: [{ id: 'old', isDefault: true }],
+    });
+    await service.getModelCatalog();
+    await service.getRuntimeState(7);
+    await service.getRuntimeState(8);
+    await service.setSelectedModel(8, 'old');
+    const probe = jest
+      .spyOn(CodexAppServerClient.prototype, 'request')
+      .mockResolvedValue({ data: [{ id: 'current', isDefault: true }] });
+    try {
+      await service.getModelCatalog(true);
+      expect((await service.getRuntimeState(7)).selectedModel).toBe('current');
+      const pinned = await service.getRuntimeState(8);
+      expect(pinned.selectedModel).toBe('old');
+      expect(
+        pinned.availableModels.find((model) => model.id === 'old')?.description,
+      ).toContain('not offering');
+    } finally {
+      probe.mockRestore();
+    }
+  });
+
   it('lists models through the shared app-server client', async () => {
     const { service, appServer } = createService();
     appServer.request.mockResolvedValueOnce({
@@ -2715,6 +3822,8 @@ describe('CodexRuntimeService', () => {
           isDefault: true,
           supportedReasoningEfforts: [
             { reasoningEffort: 'low', description: 'Quick' },
+            { reasoningEffort: 'custom-middle', description: 'Custom' },
+            { reasoningEffort: 'xhigh', description: 'Extra high' },
             { reasoningEffort: 'ultra', description: 'Deep' },
           ],
         },
@@ -2732,13 +3841,40 @@ describe('CodexRuntimeService', () => {
       expect.objectContaining({
         id: 'gpt-current',
         displayName: 'GPT Current',
-        reasoningEfforts: ['low', 'ultra'],
+        reasoningEfforts: ['low', 'custom-middle', 'xhigh', 'ultra'],
         supportsEffort: true,
         isProviderDefault: true,
       }),
     ]);
     expect(catalog.providerDefaultModelId).toBe('gpt-current');
-    expect(catalog.reasoningEfforts).toEqual(['low', 'ultra']);
+    expect(catalog.reasoningEfforts).toEqual(['low', 'xhigh', 'ultra', 'custom-middle']);
+  });
+
+  it('refreshes immediately while an older discovery is slow and discards its late response', async () => {
+    const { service, appServer } = createService();
+    let finish!: (result: unknown) => void;
+    appServer.request.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const older = service.getModelCatalog();
+    const probe = jest
+      .spyOn(CodexAppServerClient.prototype, 'request')
+      .mockResolvedValue({ data: [{ id: 'current-model', isDefault: true }] });
+    try {
+      const refreshed = await service.getModelCatalog(true);
+      expect(refreshed.models.map((model) => model.id)).toEqual([
+        'current-model',
+      ]);
+      finish({ data: [{ id: 'stale-model', isDefault: true }] });
+      await older;
+      expect(
+        (await service.getModelCatalog()).models.map((model) => model.id),
+      ).toEqual(['current-model']);
+    } finally {
+      probe.mockRestore();
+    }
   });
 
   it('probes the updated CLI even with a fresh cache and defers replacement of the shared server', async () => {
@@ -2764,16 +3900,55 @@ describe('CodexRuntimeService', () => {
     }
   });
 
-  it('starts new sessions with the default preset fast mode', () => {
-    const { service } = createService({
+  it('starts new sessions with the default preset fast mode after discovery', async () => {
+    const { service, appServer } = createService({
       model: 'gpt-5.5',
       reasoningEffort: 'low',
       fastMode: true,
     });
+    appServer.request.mockResolvedValueOnce({
+      data: [
+        {
+          id: 'gpt-5.5',
+          additionalSpeedTiers: ['fast'],
+          supportedReasoningEfforts: ['low'],
+        },
+      ],
+    });
+    await service.getModelCatalog();
     const state = (service as any).ensureRuntimeState(7, null);
     expect(state.selectedModel).toBe('gpt-5.5');
     expect(state.reasoningEffort).toBe('low');
     expect(state.fastMode).toBe(true);
+  });
+
+  it('applies preset Fast after cold discovery without overriding a user change', async () => {
+    const { service, appServer } = createService({
+      model: 'account-model',
+      reasoningEffort: null,
+      fastMode: true,
+    });
+    await service.getRuntimeState(7);
+    await service.getRuntimeState(8);
+    await service.setFastMode(8, false);
+    const probe = jest
+      .spyOn(CodexAppServerClient.prototype, 'request')
+      .mockResolvedValue({
+        data: [
+          {
+            id: 'account-model',
+            isDefault: true,
+            additionalSpeedTiers: ['fast'],
+          },
+        ],
+      });
+    try {
+      await service.getModelCatalog(true);
+      expect((await service.getRuntimeState(7)).fastMode).toBe(true);
+      expect((await service.getRuntimeState(8)).fastMode).toBe(false);
+    } finally {
+      probe.mockRestore();
+    }
   });
 
   it('does not enable preset fast mode for a model without support', () => {
@@ -2785,7 +3960,7 @@ describe('CodexRuntimeService', () => {
     expect((service as any).ensureRuntimeState(7, null).fastMode).toBe(false);
   });
 
-  it('does not treat remote Codex model list order as the default', async () => {
+  it('uses a reported model when Codex does not flag a default', async () => {
     const { service, appServer } = createService();
     appServer.request.mockResolvedValueOnce({
       data: [
@@ -2797,7 +3972,7 @@ describe('CodexRuntimeService', () => {
     await (service as any).refreshModelCatalog();
 
     const state = await service.getRuntimeState(7);
-    expect(state.selectedModel).toBe('gpt-5.5');
+    expect(state.selectedModel).toBe('gpt-5.3-codex');
   });
 
   it('honors an explicit remote Codex default model flag', async () => {
@@ -3059,6 +4234,33 @@ describe('CodexRuntimeService', () => {
     });
     await iterator.next();
     await iterator.next();
+  });
+
+  it('passes the socket-mode MCP endpoint to Codex threads', async () => {
+    const environment = jest.replaceProperty(process, 'env', {
+      ...process.env,
+      ELEVENEX_DESKTOP_SOCKET: '/private/backend.sock',
+      ELEVENEX_MCP_URL: 'http://127.0.0.1:43210/api/mcp',
+    });
+    const { service, appServer } = createService();
+    wireAppServerTurn(appServer);
+    try {
+      const iterator = await startAppServerTurn(service, 'default');
+      expect(appServer.request).toHaveBeenCalledWith(
+        'thread/start',
+        expect.objectContaining({
+          config: {
+            'mcp_servers.elevenex': expect.objectContaining({
+              url: 'http://127.0.0.1:43210/api/mcp',
+              http_headers: { Authorization: 'Bearer evx_codex_test' },
+            }),
+          },
+        }),
+      );
+      await iterator.return(undefined);
+    } finally {
+      environment.restore();
+    }
   });
 
   it('selects native Codex default mode for implementation turns', async () => {

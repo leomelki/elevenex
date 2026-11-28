@@ -57,6 +57,38 @@ function fixture() {
 }
 
 describe('OpenCode catalogs and authentication', () => {
+  it('orders native variants by effort while preserving custom variants and excluding disabled ones', async () => {
+    const f = fixture();
+    const response = await f.client.provider.list();
+    response.data.all[0].models.model.variants = {
+      max: {},
+      customZ: {},
+      xhigh: {},
+      high: {},
+      minimal: {},
+      none: {},
+      low: {},
+      customA: {},
+      disabled: { disabled: true },
+    };
+    f.client.provider.list.mockResolvedValueOnce(response);
+    try {
+      await f.service.refreshNow();
+      const catalog = await f.service.getModelCatalog();
+      expect(catalog.models[0].reasoningEfforts).toEqual([
+        'none',
+        'minimal',
+        'low',
+        'high',
+        'xhigh',
+        'max',
+        'customZ',
+        'customA',
+      ]);
+    } finally {
+      f.service.onModuleDestroy();
+    }
+  });
   afterEach(() => jest.clearAllMocks());
   it('queues one fresh probe after an older probe for concurrent reloads', async () => {
     const f = fixture();

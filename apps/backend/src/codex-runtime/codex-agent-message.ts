@@ -1,6 +1,11 @@
 import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.types.js';
 import { readableText, record, textValue } from './codex-subagents.js';
 
+export function codexAssistantPhase(value: unknown): ClaudeTranscriptItem['assistantPhase'] {
+  if (value === 'commentary') return 'commentary';
+  if (value === 'final_answer') return 'final';
+}
+
 /** Incoming collaboration messages are distinct from the assistant's own agentMessage. */
 export function codexAgentMessage(
   raw: Record<string, unknown>,

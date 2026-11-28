@@ -1,0 +1,63 @@
+@if (titleBar()) {
+  <header class="title"><ex-title-bar><ng-content select="[shellTitle]" /></ex-title-bar></header>
+}
+<div class="regions">
+  <nav class="rail glass" aria-label="Projects">
+    <ng-content select="[shellRail]" />
+  </nav>
+  <aside class="sidebar glass" aria-label="Tasks and sessions">
+    <ng-content select="[shellSidebar]" />
+  </aside>
+  <div class="workspace" #workspace [style.--side-panel-width.px]="panelWidth()">
+    <main
+      class="main surface"
+      [attr.inert]="takingOver() ? '' : null"
+      [attr.aria-hidden]="takingOver() ? 'true' : null"
+    >
+      <ng-content select="[shellMain]" />
+    </main>
+    <!-- The receded chat stays in view beside a takeover; pressing it brings the chat back. -->
+    <button
+      type="button"
+      class="peek"
+      aria-label="Return to chat"
+      [attr.inert]="takingOver() ? null : ''"
+      (click)="leaveReview()"
+    >
+      <span class="grabber" aria-hidden="true"></span>
+    </button>
+    <aside
+      #panel
+      class="panel surface"
+      [id]="panelId"
+      [attr.aria-label]="panelLabel()"
+      [attr.aria-hidden]="!panelOpen()"
+      [attr.inert]="panelOpen() ? null : ''"
+    >
+      @if (canResize()) {
+        <div
+          class="panel-resize"
+          role="separator"
+          tabindex="0"
+          aria-label="Resize side panel"
+          aria-orientation="vertical"
+          [attr.aria-controls]="panelId"
+          [attr.aria-valuemin]="panelMinimum()"
+          [attr.aria-valuemax]="panelMaximum()"
+          [attr.aria-valuenow]="panelWidth()"
+          [attr.aria-valuetext]="panelWidth() + ' pixels'"
+          [exPanelResize]="panel"
+          [width]="panelWidth() ?? 0"
+          [minimum]="panelMinimum()"
+          [maximum]="panelMaximum()"
+          (widthChanged)="resizePanel($event)"
+          (resizeStarted)="startResize()"
+          (resizeEnded)="endResize($event)"
+        ></div>
+      }
+      <div class="panel-clip">
+        <div class="panel-inner"><ng-content select="[shellPanel]" /></div>
+      </div>
+    </aside>
+  </div>
+</div>

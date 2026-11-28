@@ -1,0 +1,149 @@
+const appMethods = ['taskAppsRead', 'taskAppApprove', 'taskAppOpenSetupSettings', 'taskAppRevealSetupHelper', 'taskAppOutput', 'taskAppStop', 'taskAppWatch', 'taskAppUnwatch', 'taskAppFrameAck', 'taskAppInput', 'taskAppReleaseInput', 'taskAppPopOut', 'taskAppWindowContext', 'onTaskAppFrame', 'onTaskAppClosed'];
+const terminalMethods = ['taskTerminalAttach', 'taskTerminalDetach', 'taskTerminalStreamWrite', 'taskTerminalStreamResize', 'taskTerminalStreamFocus', 'taskTerminalStreamAcknowledge', 'taskTerminalContext', 'onTaskTerminalStream', 'taskTerminalPreferences', 'taskTerminalSavePreferences', 'taskTerminalList', 'taskTerminalCreate', 'taskTerminalRead', 'taskTerminalCommands', 'taskTerminalInput', 'taskTerminalResize', 'taskTerminalAction', 'taskTerminalClose', 'taskTerminalOpenPort'];
+terminalMethods.push('taskTerminalCopyPort');
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { readFile } = require('node:fs/promises');
+const vm = require('node:vm');
+const remote = require('./remote-contract.cjs');
+const machines = require('./machine-contract.cjs');
+const workspace = require('./workspace-contract.cjs');
+const chatMethods = ['taskBrowserConfigure', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'];
+chatMethods.push('sessionChatTurnWork', 'sessionChatToolDetails', 'sessionChatDelivery', 'sessionChatPromptEdit');
+chatMethods.push('sessionChatWatch', 'sessionChatUnwatch', 'sessionChatAcknowledge', 'onSessionChatStream');
+
+test('preload exposes only the typed bridge and strips event objects', async () => {
+  let bridge;
+  const calls = [];
+  const listeners = new Map();
+  const code = await readFile(require.resolve('../dist/preload.js'), 'utf8');
+  vm.runInNewContext(code, {
+    exports: {}, process: { platform: 'darwin', isMainFrame: true },
+    require: (name) => {
+      assert.equal(name, 'electron', 'sandbox preload must not import other modules');
+      return {
+        contextBridge: { exposeInMainWorld: (name, value) => { assert.equal(name, 'elevenex'); bridge = value; } },
+        ipcRenderer: {
+          invoke: async (...args) => { calls.push(args); return 'mock'; },
+          on: (channel, fn) => listeners.set(channel, fn),
+          removeListener: (channel, fn) => {
+            assert.equal(listeners.get(channel), fn); listeners.delete(channel);
+            return { privateElectronEmitter: true };
+          },
+        },
+      };
+    },
+  });
+  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'onTitleBarPressed', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods, ...terminalMethods, ...appMethods, ...chatMethods, 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
+  assert.equal(Object.isFrozen(bridge), true);
+  await bridge.appVersion();
+  await bridge.gitStatus('/workspace');
+  await bridge.backendStatus();
+  await bridge.retryBackend();
+  await bridge.restartBackend();
+  assert.deepEqual(calls, [['app:version'], ['git:status', '/workspace'], ['backend:status'], ['backend:retry'], ['backend:restart']]);
+  calls.length = 0;
+  await bridge.writeClipboardText('  café 👩🏽‍💻\n\t代码\r\n');
+  assert.deepEqual(calls, [['clipboard:write-text', '  café 👩🏽‍💻\n\t代码\r\n']]);
+  calls.length = 0;
+  await bridge.backendClientState();
+  await bridge.backendInfo('scope');
+  assert.deepEqual(calls, [['backend-client:state'], ['backend-client:info', 'scope']]);
+  calls.length = 0;
+  await bridge.taskBrowserFrameAck('scope', 1, 'tab', 'stream', 1);
+  await bridge.taskBrowserFrameAck('scope', 1, 'tab', 'stream', 2, false);
+  assert.deepEqual(calls, [['task-browser:frame-ack', 'scope', 1, 'tab', 'stream', 1], ['task-browser:frame-ack', 'scope', 1, 'tab', 'stream', 2, false]]);
+  calls.length = 0;
+  for (const [method, , args] of remote.calls) await bridge[method](...args);
+  assert.deepEqual(calls, remote.calls.map(([, channel, args]) => [channel, ...args]));
+  calls.length = 0;
+  for (const [method, , args] of machines.calls) await bridge[method](...args);
+  assert.deepEqual(calls, machines.calls.map(([, channel, args]) => [channel, ...args]));
+  calls.length = 0;
+  for (const [method, , args] of workspace.calls) await bridge[method](...args);
+  assert.deepEqual(calls, workspace.calls.map(([, channel, args]) => [channel, ...args]));
+  calls.length = 0;
+  const target = { taskId: 1, sessionId: 2, requestId: 'read' };
+  await bridge.sessionChatChanges('scope', { ...target, turnId: 'reply', offset: 0 });
+  await bridge.sessionChatCatalog('scope', { ...target, provider: 'claude' });
+  await bridge.sessionChatRead('scope', target);
+  await bridge.sessionChatMedia('scope', { ...target, itemId: 'item', mediaId: '0' });
+  await bridge.sessionChatContent('scope', { ...target, itemId: 'item', part: 'text', offset: 0 });
+  const delivery = { ...target, deliveryId: '12345678-1234-4234-8234-123456789abc' };
+  await bridge.sessionChatDelivery('scope', delivery);
+  await bridge.sessionChatCommand('scope', { taskId: 1, sessionId: 2, action: { type: 'stop' } });
+  await bridge.sessionChatCancel('scope', 'read');
+  assert.deepEqual(calls, [['session-chat:changes', 'scope', { ...target, turnId: 'reply', offset: 0 }], ['session-chat:catalog', 'scope', { ...target, provider: 'claude' }], ['session-chat:read', 'scope', target], ['session-chat:media', 'scope', { ...target, itemId: 'item', mediaId: '0' }], ['session-chat:content', 'scope', { ...target, itemId: 'item', part: 'text', offset: 0 }], ['session-chat:delivery', 'scope', delivery], ['session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'stop' } }], ['session-chat:cancel', 'scope', 'read']]);
+  calls.length = 0;
+  const work = { ...target, turnId: 'prompt', revision: 'a'.repeat(64), offset: 0 };
+  const details = { ...target, item: { id: 'call', revision: 'b'.repeat(64) } };
+  await bridge.sessionChatTurnWork('scope', work);
+  await bridge.sessionChatToolDetails('scope', details);
+  const edit = { ...target, itemId: 'prompt' };
+  await bridge.sessionChatPromptEdit('scope', edit);
+  assert.deepEqual(calls, [['session-chat:turn-work', 'scope', work], ['session-chat:tool-details', 'scope', details],
+    ['session-chat:prompt-edit', 'scope', edit]]);
+  calls.length = 0;
+  const chatWatch = { taskId: 1, sessionId: 2, watchId: 'visible-chat', loadingMode: 'progressive' };
+  await bridge.sessionChatWatch('scope', chatWatch);
+  await bridge.sessionChatAcknowledge('scope', chatWatch.watchId, 1);
+  await bridge.sessionChatUnwatch('scope', chatWatch.watchId);
+  assert.deepEqual(calls, [
+    ['session-chat:watch', 'scope', chatWatch],
+    ['session-chat:acknowledge', 'scope', chatWatch.watchId, 1],
+    ['session-chat:unwatch', 'scope', chatWatch.watchId],
+  ]);
+  calls.length = 0;
+  await bridge.workspaceRetryTask('scope', 1, 'use-existing');
+  await bridge.workspaceRetryTask('scope', 1, 'snapshot');
+  assert.deepEqual(calls, [['workspace:retry-task', 'scope', 1, 'use-existing'], ['workspace:retry-task', 'scope', 1, 'snapshot']]);
+  calls.length = 0;
+  await bridge.taskTerminalCopyPort('scope', { taskId: 1, terminalId: 2, port: 8080 });
+  assert.deepEqual(calls, [['task-terminal:copy-port', 'scope', { taskId: 1, terminalId: 2, port: 8080 }]]);
+  const received = [];
+  const stop = bridge.onThemeChanged((...args) => received.push(args));
+  listeners.get('theme:changed')({ sender: 'private Electron object' }, 'dark');
+  assert.deepEqual(received, [['dark']]);
+  assert.equal(stop(), undefined, 'cleanup must not return an Electron emitter across the bridge');
+  const presses = [];
+  const stopTitleBar = bridge.onTitleBarPressed((...args) => presses.push(args));
+  listeners.get('window:title-bar-pressed')({ sender: 'private Electron object' }, 'unexpected payload');
+  assert.deepEqual(presses, [[]]);
+  assert.equal(stopTitleBar(), undefined);
+  const stopBackend = bridge.onBackendChanged((...args) => received.push(args));
+  listeners.get('backend:changed')({ sender: 'private Electron object' }, { phase: 'starting', version: 'abc' });
+  assert.deepEqual(received[1], [{ phase: 'starting', version: 'abc' }]);
+  stopBackend();
+  const stopRemote = bridge.onEnvironmentChanged((...args) => received.push(args));
+  const snapshot = { selection: { kind: 'local' } };
+  listeners.get('environment:changed')({ sender: 'private object' }, snapshot);
+  assert.deepEqual(received.at(-1), [snapshot]); stopRemote();
+  const clientState = { revision: 1, scope: null };
+  const stopClient = bridge.onBackendClientChanged((...args) => received.push(args));
+  listeners.get('backend-client:changed')({ sender: 'private object' }, clientState);
+  assert.deepEqual(received.at(-1), [clientState]); stopClient();
+  const stopChat = bridge.onSessionChatStream((...args) => received.push(args));
+  const reconnecting = { type: 'reconnecting', scopeId: 'scope', watchId: 'visible-chat', taskId: 1, sessionId: 2 };
+  listeners.get('session-chat:stream')({ sender: 'private object' }, reconnecting);
+  assert.deepEqual(received.at(-1), [reconnecting]); stopChat();
+  const stopMachine = bridge.onMachineStateChanged((...args) => received.push(args));
+  listeners.get('machines:changed')({ sender: 'private object' }, { revision: 4 });
+  assert.deepEqual(received.at(-1), [{ revision: 4 }]); stopMachine();
+  const windowInfo = { scopeId: 'scope', taskId: 1, tabId: 'tab', available: false };
+  const stopWindow = bridge.onTaskBrowserWindowChanged((...args) => received.push(args));
+  listeners.get('task-browser:window-changed')({ sender: 'private object' }, windowInfo);
+  assert.deepEqual(received.at(-1), [windowInfo]); assert.equal(stopWindow(), undefined);
+  const targetTask = { scopeId: 'scope', taskId: 1 };
+  const stopReveal = bridge.onTaskBrowserRevealTask((...args) => received.push(args));
+  listeners.get('task-browser:reveal-task')({ sender: 'private object' }, targetTask);
+  assert.deepEqual(received.at(-1), [targetTask]); assert.equal(stopReveal(), undefined);
+  assert.equal(listeners.size, 0);
+});
+
+
+test('editor subframes never receive the application bridge', async () => {
+  const code = await readFile(require.resolve('../dist/preload.js'), 'utf8');
+  let exposed = false;
+  vm.runInNewContext(code, {exports:{},process:{platform:'darwin',isMainFrame:false},require:()=>({contextBridge:{exposeInMainWorld:()=>{exposed=true;}},ipcRenderer:{}})});
+  assert.equal(exposed,false);
+});

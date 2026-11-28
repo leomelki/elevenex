@@ -1,3 +1,5 @@
+import { TaskAppHost } from '../../task-apps/task-app-host.js';
+import { DesktopBrowserService } from '../../desktop-browser/desktop-browser.service.js';
 import { BranchesService } from '../../branches/branches.service.js';
 import { Injectable } from '@nestjs/common';
 import { TasksService } from '../../tasks/tasks.service.js';
@@ -22,6 +24,7 @@ import { AgentRuntimeRegistryService } from '../../agent-runtime/agent-runtime-r
 import { ConversationExportService } from '../../agent-runtime/conversation-export.service.js';
 import { AgentFocusService } from '../../agent-focus/agent-focus.service.js';
 import { DesktopPortForwardingGateway } from '../port-forwarding/desktop-port-forwarding.gateway.js';
+import { SessionEventSubscriptions } from '../session-event-subscriptions.js';
 
 /**
  * Injectable bag of the existing domain services the MCP tools reuse
@@ -30,6 +33,8 @@ import { DesktopPortForwardingGateway } from '../port-forwarding/desktop-port-fo
  */
 @Injectable()
 export class McpToolServices {
+  readonly sessionEvents = new SessionEventSubscriptions();
+
   constructor(
     readonly projects: ProjectsService,
     readonly repos: ReposService,
@@ -54,5 +59,7 @@ export class McpToolServices {
     readonly tasks: TasksService,
     readonly branches: BranchesService,
     readonly portForwarding: DesktopPortForwardingGateway,
+    readonly browsers: DesktopBrowserService,
+    readonly apps: TaskAppHost,
   ) {}
 }

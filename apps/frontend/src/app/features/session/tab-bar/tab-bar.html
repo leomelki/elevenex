@@ -180,17 +180,6 @@
               <ng-icon name="lucideGitPullRequest" size="16" />
             </button>
           }
-          @case ('files') {
-            <button
-              class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-              [ngClass]="showFiles() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-              title="Files"
-              aria-label="Toggle Files panel"
-              (click)="toggleFiles.emit()"
-            >
-              <ng-icon name="lucideFolderTree" size="16" />
-            </button>
-          }
           @case ('browser') {
             <button
               class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"

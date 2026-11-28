@@ -32,7 +32,7 @@ import { FilesService } from '../files/files.service.js';
  * }
  *
  * @example
- * // Connect from VS Code Web
+ * // Connect to worktree change notifications
  * const ws = new WebSocket('ws://localhost:3000/file-changes?worktreePath=/path/to/worktree');
  * ws.onmessage = (event) => {
  *   const data = JSON.parse(event.data);
@@ -107,7 +107,7 @@ export class FileChangeGateway implements OnModuleDestroy {
    */
   private handleConnection(ws: WebSocket, worktreePath: string): void {
     if (!this.clients.has(worktreePath))
-      this.files?.invalidateEditorWorkspace(worktreePath);
+      this.files?.invalidateWorkspace(worktreePath);
     // Start watching this worktree (if not already)
     // The callback will broadcast events to all clients
     try {
@@ -161,7 +161,7 @@ export class FileChangeGateway implements OnModuleDestroy {
   broadcast(worktreePath: string, event: FileChangeEvent): void {
     if (!this.clients.has(worktreePath)) return;
     if (event.event !== 'git')
-      this.files?.markEditorWorkspaceChanged(worktreePath);
+      this.files?.markWorkspaceChanged(worktreePath);
     let batch = this.pending.get(worktreePath);
     if (!batch) {
       batch = {

@@ -1,0 +1,12 @@
+:host { display: block; }
+ol { display: flex; flex-direction: column; gap: 2px; list-style: none; margin: 0; padding: 0; }
+li { display: flex; align-items: flex-start; gap: 10px; min-height: 30px; padding: 5px 8px; box-sizing: border-box; border-radius: var(--radius-sm); color: var(--ink); text-align: start; transition: background var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out); }
+li.active { background: var(--running-soft); }
+.glyph { display: grid; place-items: center; width: var(--space-4); height: var(--text-ui-line); flex: none; }
+.dot { width: 6px; height: 6px; border-radius: 3px; background: var(--line-strong); opacity: .6; }
+.body { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; font-size: var(--text-ui-size); line-height: var(--text-ui-line); }
+.body ex-progress-line { margin-top: 4px; }
+.todo .label, .detail, .meta { color: var(--ink-muted); }
+.detail { font-size: var(--text-caption-size); line-height: var(--text-caption-line); overflow-wrap: anywhere; }
+.meta { padding-top: 1px; font-size: var(--text-mono-meta-size); font-family: var(--font-mono); white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { li { transition: none; } }

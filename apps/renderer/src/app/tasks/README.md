@@ -1,0 +1,406 @@
+# Task and navigation components
+
+Import public components and readonly view models from `./tasks`. Components use signal inputs, typed intent outputs and OnPush change detection. This family has no platform calls, git operations, clipboard access, repository scans or application store. The feature that supplies the inputs owns those operations and feeds the result back through inputs.
+
+`projects/` owns project identity and scope navigation. `outline/` owns the task/sub-task/session outline (sub-tasks retain one visual indent at any branch depth). `lifecycle/` owns task context, stages, links and closing. `branches/` owns the new-task form and branch/workspace selection. `navigation/` owns task side views and git actions. `task.models.ts` contains renderer view contracts; it does not replace privileged IPC contracts in `packages/shared`.
+
+`TaskSession.renderId` optionally retains the mounted sidebar row through local
+creation and its durable receipt. Keep it stable for that row's visible lifetime;
+`id` remains the identity emitted by actions and used for controlled selection.
+`TaskSession.local` marks an unfinished local draft: it is selectable but cannot
+be dragged as a session reference, archived or restored. Its owner supplies status,
+metadata and recovery; the task family never sends a create request.
+
+The compatible `review` status is presented as **New reply**: a steady 5px accent
+dot centered in the existing glyph column. It means an agent finished a turn
+that has not been viewed, independent of file changes. Rows keep their ordinary
+text, geometry and ordering. The glyph's accessible label and tooltip explain
+the cue; the existing summary counter filters it. Viewing/clearing belongs to
+the connected chat owner, never SessionRow. It fades quietly with no burst and
+settles immediately under reduced motion.
+
+The task row shows an agent icon beside the title when its creating agent can
+close it, keeping the row on one line. The row's tooltip explains the badge and
+the icon has the accessible name "Temporary task".
+The badge clears when the user chooses **Keep open** in the task header's **Task actions** menu.
+
+`TaskOutline.workspace` (`TaskWorkspaceSignal`: `tone`, `label`, `description`)
+reports a workspace that isn't ready: setting up, needing setup, closing. The
+owner supplies the words and omits it once ready. The row's signal shows the
+label in place of its session counts (`working` with a running ring, `attention`
+in the amber pill, `quiet` as muted text) and appends the description to the
+header tooltip. The signal stays mounted, so the change crossfades in place
+without moving the title.
+
+The connected sidebar shows same-task MCP delegates in their coding session's
+child disclosure. When an already nested conversation delegates, its new child
+appears alongside it to keep the outline two levels deep. Sidebar moves change
+placement, and the backend retains the original delegator for agent handoffs.
+See [cross-harness delegation](../../../../backend/src/mcp/README.md#cross-harness-delegation).
+
+`SessionRow` supports copying a session reference into a composer through native drag and drop, including archived/history and attention rows. Its select button alone is draggable; archive/restore controls retain their normal behavior. Dragging never activates the session. Connected owners set `TaskSession.mentionScope` to the backend scope; `SESSION_DRAG_TYPE`, `writeSessionDrag` and `readSessionDrag` are the public renderer-only transfer contract. Payloads contain a bounded ID/title/scope, with no transcript or path. The receiving composer validates scope and shape; the connected backend re-resolves identity on send. The @ picker provides the keyboard alternative. Nesting owners pass drag feedback through `emphasis` (accent title for a drop destination or a row previewing task level) and `receded` (glyph, title and metadata recede for a group that cannot accept the dragged session).
+
+| Component | Main inputs | Intent outputs |
+| --- | --- | --- |
+| `ProjectMark` | `name`, `logo`, `initials`, `emoji`, `icon`, `hue`, `size`, `decorative` | Centers the logo on the project hue. Falls back to the supplied emoji, icon, or initials. |
+| `ProjectRail` | `projects`, `all`, `activeId` | `selectProject(id)`, `addProject(tile)`, `reorderProjects(ids)` |
+| `StatusSummary` | `counts`, `active` | `selectStatus(status or null)`; a second click clears the filter |
+| `StageGlyph` | `stage`, `size` | None |
+| `TaskStage` | `stage` | `stageChange(stage)` |
+| `LinkChip` | `kind`, `label`, `state`, `href`, `compact` | `activated()` |
+| `TaskHeader` | `title`, `repo`, `parent`, `branch`, `links`, `meta`, `project`, `git`, `closeSuggested`, `canKeepOpen`, `panelOpen`, `branchCopied` | `closeRequested`, `keepOpenRequested`, `panelToggle`, `branchRename`, `branchCopy`, `linkRequested`, `linkActivated(link)`, `gitAction`, `changesRequested`, `parentRequested(TaskParentContext)` |
+| `CloseTask` | `title`, `sessions`, `running`, `apps`, `actions`, `terminals`, `unpushed`, `uncommitted`, `ticket` | `confirmed({push, moveTicket})`, `cancelled()` |
+| `RepoTag` | `repo: Repo or string`, `size` | None; hover exposes name/path |
+| `SubtaskGlyph` | `depth` | None; a fixed-width stair mark capped at three levels |
+| `TaskLine` | `task: TaskContext`, `branchCopied` | `renameRequested()`, `branchRename(name)`, `branchCopy(name)` |
+| `BranchPicker` | `query`, `branches` or precomputed `items`, `allowCreate`, `allowHeld`, `disabled`, `base`, `highlighted`, `label`, `listId` | `pick(row)` |
+| `BranchChip` | `name`, `base`, `compact`, `breadcrumb`, `copied` | `renameRequested(name)`, `copyRequested(name)` |
+| `WorkspacePicker` | `value`, `items` | `valueChange(name or 'auto')`, `newWorkspace()`, `manageWorkspaces()` |
+| `NewTask` | `project`, optional `projectMenu`, `active`, `repos`, initial `repo`, pure `branchesFor(repoId)`, `branches`, `bases`, `base`, `branchPrefix`, initial `title`, initial `step`, initial `branchQuery`, `baseQuery`, `hi`, `workspace`, `workspaces`, `links`, `autoFocus` | `create(CreatedTask)`, `plan(PlannedTask)`, `cancelled()`, `linkRequested()`, `projectRequested()`, `addRepository()`, `workspaceRequested('new' or 'manage')` |
+| `SessionRow` | `session`, `selected`, `muted` (boundary title only), `depth`, optional `context` for a two-line attention shortcut, `allowArchive` (default false), `archived`, `allowRestore` | `activated(sessionId)`, `archiveRequested(TaskSession)`, `deleteRequested(TaskSession)`, `restoreRequested(TaskSession)` |
+| `ArchivedSessions` | `archive: TaskSessionArchive`, `selected`, `disabled` | `requested(latest or earlier)`, `selectSession(sessionId)`, `restoreRequested(TaskSession)` |
+| `TaskGroup` | `task`, `selected`, optional `reveal: {sessionId}` request, `filter`, `showProject`, `showLink`, `allowAdd`, `allowAddSubtask`, `allowArchive`, `archiveDisabled`, `cap` (5; 0 uncapped), `capStep` (5), `sessionDisclosure` (model) | `archiveRequested(TaskSession)`, `deleteRequested(TaskSession)`, `restoreRequested(TaskSession)`, `archivedSessionsRequested(latest or earlier)`, `selectSession(sessionId)`, `addSession(taskId)`, `addSubtaskSession(subtaskId)` |
+| `TaskList` | `tasks`, `selected`, `filter`, `showProjects`, `sessionCap` (5), `allowArchive` (false), `sessionDisclosures` (model) | `archiveRequested({taskId, session})`, `deleteRequested({taskId, session})`, `restoreRequested({taskId, session})`, `archivedSessionsRequested({taskId, page})`, `selectSession({taskId, sessionId})`, `addSession(taskId)`, `addSubtaskSession({taskId, subtaskId})`, `closedRequested()` |
+| `PanelTabs` | `tabs`, `active`, `labelled`, `label` | `selectTab(id)` |
+| `GitBar` | `files`, `add`, `del`, `ahead`, `busy`, `busyLabel`, `compact`, `toolbar`, `mergeInto`, `job` | `action(GitAction)`, `changesRequested()`, `jobSessionRequested(sessionId)`, `jobCancelled(jobId)` |
+
+The `Component` suffix and `ex-` selector prefix apply to the names above. `branchItems`, `branchFromTitle`, `validBranchName` and `matchesSessionFilter` are pure exported operations, independently testable without rendering.
+
+## Ownership and interaction
+
+- NewTask accepts an owner-supplied `projectMenu` template composed with the shared dropdown menu/radio controls. It opens directly from the header button without changing card layout; without a template the button still emits `projectRequested`. Bind `active=false` when a retained dialog closes or becomes busy to dispose its portaled menu. The connected-workspace preview demonstrates this composition.
+- Use stable task, session, project and tab IDs. TaskList renders a single keyed outline in supplied order, independent of stage; stage changes preserve task positions and local folds. Tasks default to expanded. A compact Needs you area offers three contextual shortcuts for attention/failed sessions (including unmerged sub-tasks), with a reveal control for the rest. Closed tasks never contribute. Shortcuts emit the same selection intent as canonical sessions; a new selection opens its containing task and sub-task. TaskList also supplies a fresh `reveal` request on every shortcut activation so reselecting the current session reopens its manually folded task/sub-task. Filtering hides shortcuts and keeps hidden task components mounted and inert. Sessions keep their original order; a question changes its signal rather than moving its row. Seen completions and stopped sessions remain ordinary rows in the supplied order. Activity status never archives or groups a session; the owner excludes explicitly archived sessions from the normal task list.
+- Task and session controls expose their full titles through the shared hover/focus tooltip. Attention, failure and selected rows retain their semantic surfaces with distinct hover feedback. Supply `TaskOutline.repo` only when the project's repository context needs disambiguation; single-repository projects omit it. The containing feature owns the task-list scroll region so its header and pagination remain available.
+- Task headers share one full-row surface on hover or focus within; the New session icon retains its stronger local hover and focus ring. Hovering a session does not highlight its parent task header.
+- Feed a bounded task/session window into the outline and request pagination in the owning feature. BranchPicker shows at most seven results. It matches every query word, recognizes fully qualified refs and promotes exact/default matches. Branch lists held branches with their task name and disables them. From lets the user pick those branches as the source for a separate new branch. Use `BranchInfo.ref` to preserve Git identity when local and remote branches share a display name.
+- NewTask keeps its draft locally. Name → Branch → From uses Enter, arrows change the highlighted branch, Shift Tab returns to a prior step, Cmd/Ctrl Enter creates immediately, Alt Enter saves Planned and Escape emits cancellation. Existing branches also advance to From, which explains that history is kept and focuses Create task. With several `repos`, Repository is step 2; the initial `repo` is preselected, and the supplied `branchesFor` lookup and repository `base` drive Branch/From. A single repository retains three steps. The footer action says Next until From, then Create task; it follows the same highlighted answer as Enter. Initial form inputs are read once: destroy/recreate the form to open another draft. The chosen branch and base are rechecked against current supplied data before creation. Workspace selection is included in both create/plan payloads; multi-repository drafts include the repository ID. The Add repository intent lets the owner open project settings. The renderer never scans repositories.
+- Sub-tasks use stable IDs and optional parent IDs. Their supplied hierarchy is ordered once and rendered at one indent; malformed/cyclic ancestry is tolerated. Selection lights the current sub-task and its ancestry, while hover/focus temporarily lights its own path and gives a 500ms path hint. After four open sub-tasks the list keeps three and the selected one, with a reveal count for the rest. Merged branches have their own merged fold with their diff; completed sessions stay in the normal list. Root task signals and status filtering include nonmerged sub-task sessions. Each sub-task owns its folds; TaskGroup owns paths and the hint timer.
+- `FittedHighlightDirective` owns one measured picker selection surface. Selection changes glide with `dur-glide`/`ease-glide`; resized lists fit the selected row immediately. The observer, reduced-motion listener and interrupted animation are released on destruction. `Ticker` leaves initial history still and rolls changed live counts using the same motion tokens.
+- The owner handles branch rename/copy requests and supplies `copied` or `branchCopied` after a successful copy. LinkChip emits activation so the owner can validate the URL and use the existing platform boundary. It never navigates an untrusted renderer URL directly.
+- CDK menus supply keyboard navigation and focus restoration for stage/workspace/git menus. CloseTask owns its modal backdrop, CDK focus trap and cancellation. Render it conditionally; remove it when an output resolves the dialog. If no running sessions or unpushed work would be affected, the feature may close immediately and offer Undo. NewTask is a reusable card; a feature that presents it modally owns its dialog boundary.
+- PanelTabs implements automatic activation with arrows/Home/End and roving focus. Desktop side views use Terminal, Actions, Changes, Code, Browser, Apps order. Apps appears when the workspace supplies `appsVisible` for an active run or launch request. Provide `panelId` on a tab to connect it to the owning feature's tabpanel. Global project shortcuts and new-task shortcuts belong to that feature. Project reorder supports drag/drop and Option Shift Up/Down while a tile is focused; the owner applies the requested ID order.
+- GitBar keeps a single primary native button across commit/push/busy states. Busy disables its git actions, leaving the rest of the task usable. Combinations emit explicit intents so no component assembles a shell command. The feature-local `navigation/git-bar-motion.ts` owns the measured action/stat slots, outgoing ink, interruption and cleanup; the component retains closing content and owns the current Git intent. Both buttons remain mounted, hidden slots become inert immediately, and reduced motion settles the latest state without waiting.
+- With `mergeInto`, committed sub-tasks offer Merge into the parent's short branch name, with squash/merge-commit/rebase/push intents in the menu. `job` supplies a stable ID and keyed steps, optional helper-session IDs/titles, label, waiting state and note. The primary action opens the steps or requests the waiting helper; Cancel emits the job ID. The steps popover retains its exit while becoming inert, releases its focus trap immediately, and restores its trigger. Progress updates retain an open menu; replacing the job resets its local menu state. TaskHeader forwards `gitJobSessionRequested` and `gitJobCancelled`. `/git-jobs` exercises these states and `JobBrief` without git or agent operations.
+
+The isolated showcase is `apps/renderer/preview/tasks-demo.component.*`. Its sample projects, tasks and handlers stay outside the production renderer source graph. Unit tests cover branch validation/filtering, the keyboard creation flow, held branches, task identity across stage/filter changes, finished folds, tab navigation and emitted intents.
+
+## Production workspace adapters
+
+The connected [workspace feature](../workspace/README.md) supplies bounded backend
+windows to these components. `TaskOutline.moreSessions` keeps Older available
+after all loaded rows are visible. `TaskGroup` and `TaskList` emit
+`moreSessionsRequested(TaskSessionHistoryRequest)` to let the owner append a
+bounded batch and update the controlled disclosure. `TaskOutline.canAddSession=false` suppresses creation
+while a workspace is preparing. An empty task header emits
+`emptyTaskRequested(taskId)` alongside its local disclosure, so the owner can
+show task preparation/recovery. `TaskList.disabled` disables session addition
+while an owner mutation is running.
+
+`NewTask.branchQueryRequested` emits `{repoId, query, kind:'branch'|'base'}` as the
+active picker changes and `null` when a lookup is no longer needed. From preserves
+an existing branch's history and focuses Create task. Supply separately bounded
+results through `branchesFor` and `basesFor`. `branchesLoading` and
+`branchSearchFailed` keep unresolved choices disabled and support explicit retry.
+Creation and planning emit the chosen ref when available. Default local filtering
+continues to work without these optional inputs. `canLink` and
+`canManageWorkspaces` disable unsupported integrations while preserving the
+designed form. `WorkspacePicker.canManage` controls its new/manage commands.
+
+The 48px toolbar leads with the title and branch breadcrumb.
+The **Task actions** menu beside the branch offers rename, copy, and **Close task**.
+Pass `canKeepOpen` to include **Keep open** for temporary tasks.
+`closed` limits the menu to branch copy in archived history.
+An optional parent breadcrumb sits above it. In All projects, the connected
+header also shows the project mark when space permits. The Link action appears
+on hover or keyboard focus when linking is available and no link is set.
+In narrow panes the branch label and Git action words give way to icons.
+Branch rename/copy and Git actions keep their accessible names. The Git bar's
+toolbar presentation compacts the measured and painted labels together.
+At pane widths of 360px or less, the toolbar puts identity and actions on
+separate lines. Its height within each layout stays fixed as Git state changes.
+The optional `[gitStatus]` projection sits beside Git actions in the toolbar.
+Owners can show bounded loading, retry or upstream controls there;
+asynchronous status must not add rows below the header and displace a conversation.
+Keep projected content to one line, with long messages truncated visually while
+retaining their accessible text.
+`TaskHeader.disabled`, `canRenameBranch`, `canLink`, `gitAllowedActions` and
+`gitQuietLabel` let a production adapter expose only supported actions.
+`gitActionsDisabled` blocks Git writes independently of the change-review button.
+`BranchChip.canRename` disables rename while keeping copy available.
+`TaskStage.disabled` blocks stage edits. `GitBar.allowedActions` filters its
+secondary menu. An empty `quietLabel` hides the quiet status when the owner supplies its own.
+The connected workspace uses **Pull** in this slot. Its count comes from the
+latest Git summary, and its tooltip names the configured upstream and checked-out
+branch. Pull fetches the tracked branch when remote and fast-forwards locally.
+Divergence and existing worktree conflicts block Pull. A rejected pull leaves
+review and commit available, with a Git status check before another pull attempt.
+Defaults preserve existing preview consumers. `CloseTask` accepts real
+`terminals`, `actions`, `busy` and `error` inputs in addition to session and
+unpushed counts; busy confirmation controls reject duplicate submissions.
+
+`apps/renderer/preview/task-update-demo.component.*` exercises sub-task depth/overflow/merging, parent context, automatic git-helper sessions and new-task repository/skip/disabled states.
+
+`apps/renderer/preview/git-motion-demo.component.*` provides the full Git sequence, count changes and rapid interruption controls. The reusable `scripts/desktop-capture/scenarios/git-motion.mjs` probes real animation frames in both themes and compact modes, checks width interpolation and endpoint continuity, and verifies that the task context and right edge stay fixed. Long intervals between sampled frames are reported separately from animation discontinuities.
+
+## Updated task preview fixtures
+
+The **Task changes** preview section renders `TaskUpdateDemoComponent`. The lifecycle controls (`work`, `deep`, `deeper`, `ready`, `merged`, `overflow`) replace supplied sub-task data while preserving keyed identities. Deep selection is `s22`; overflow selection is `s24`, beyond the initial three rows. Hover/focus a sub-task for its 500ms path hint, select a session to change the lit ancestry, use its plus to emit the sub-task ID, and expand the finished count to reveal merged diffs. The sample header emits its supplied parent context and git action.
+
+The draft controls recreate the card by a version key. **Several repositories** supplies `repos`, initial `repo` and a pure `branchesFor` lookup; **Existing branch** begins on Branch with an exact existing match; **Empty / disabled** starts without a title. The footer's Next follows the same answer as Enter. Existing branch → From moves focus to Create task. Every completion is displayed as an intent below the card. None of these fixtures enter the production app's import graph.
+
+`ProjectRail.addProject` returns the actual + button. Pass it as `ModalLayer.from`
+when opening NewProject. On successful Create, clear `from` while closing, append
+the supplied project and set its active ID. Existing tiles glide down; later
+additions spring in after a short delay with one ring in the project hue. Initial
+history stays still, and the first project retains its separate jumpHome owner.
+The rail owns and cleans up insertion animations and handles reduced motion.
+Workbench forwards the same element through `projectAdded`. `/projects` demonstrates
+first-project flight, later creation, controlled selection and cancellation.
+
+## Commit panel and task-screen update (2026-10-27)
+
+`closeSuggested` replaces the quiet Git label with a labeled **Close task**
+shortcut. The same action stays available in the task menu.
+The owner checks authoritative close counts: a clean, idle task closes directly
+with Toast/Undo, while running, uncommitted or unpushed work opens `CloseTask`.
+`CloseTask.uncommitted` explains why a dirty workspace stays on disk.
+
+Task and sub-task header + buttons stay visible whenever adding a session is
+allowed, regardless of selection, hover or focus. This is an intentional product
+override of the supplied design's hover-only buttons on other tasks.
+The task header + has a **New session in this task** tooltip on hover and keyboard
+focus. Populated tasks have no trailing creation row, so changing selection keeps
+the outline height stable. Empty tasks without sub-tasks or more session pages
+show a labeled **+ New session** action, independent of selection; it uses the
+existing retained outline/Fold ownership, hides while filtering or creation is
+unavailable, and emits the same `addSession(taskId)` intent. The connected
+workspace owns ⌥⌘N (Ctrl Alt N on other platforms); ⌘N still creates a task.
+
+`CommitPanelComponent` is exported with `CommitFile`, `CommitIntent`,
+`CommitSelection`, `CommitFileWindow` and `CommitFileProvider`. Project it into
+GitBar or TaskHeader using the `gitPanel` attribute:
+
+```html
+<ex-task-header [title]="title" [git]="git" (gitAction)="gitAction($event)">
+  <ex-commit-panel gitPanel [open]="commitOpen()" [files]="files"
+    [running]="runningNames" [push]="pushAfter()"
+    (pushChange)="pushAfter.set($event)" (closeRequested)="commitOpen.set(false)"
+    (commitRequested)="commit($event)" />
+</ex-task-header>
+```
+
+The owner toggles `open` on Commit and closes it after a successful submission.
+Supply `busy` and `busyLabel` while saving; the panel prevents duplicate submissions
+and keeps its draft and file selection. Supply `submissionError` on failure.
+`blocked` disables resubmission for an unconfirmed outcome, with `statusRequested`
+asking the owner to reconcile Git status. Otherwise **Refresh files** rechecks
+the current selection and emits `errorDismissed`. Reads never replay a commit.
+The error recovery and confirmation controls remain visible when the panel body
+needs to scroll. An empty message means generate the message after submission. Supply `GitState.busyLabel` (or
+`GitBar.busyLabel`) with `busy='commit'` for **Writing the message…**. The same
+primary button carries on through committing, Push, or remaining changes.
+
+For supplied-data previews, `files` and `running` are readonly inputs. For large
+repositories, supply `fileProvider(query, signal)` instead. It returns at most
+100 rows, the next cursor, complete match/selection counts, a snapshot revision,
+and bounded running-session names. Filtering, staged-only mode, secret defaults
+and explicit exceptions apply to the whole repository on the server. The panel
+retains one page; **Next files** replaces it inside the same six-row scroll area.
+The owner must honor abort/stale scope checks. Paged owners commit the explicit
+`selection` and `revision`; `intent.files` is complete only for supplied-data use.
+Exceptions are limited to 1,000 paths and 64 KiB per list by the platform boundary.
+The panel opens immediately while the provider checks files. The message stays
+editable during loading; submission remains disabled until the check succeeds.
+Owners may supply `initialWindow` with the default first page (all unstaged files
+included, no filter or exceptions). It seeds counts, rows and warnings on a fresh
+opening while the provider resolves the current window. The provider may reuse
+a recent validated window; expired data must be checked before submission. Later input updates do not overwrite an
+open panel’s selection, filter or page; interrupted reopening retains its draft.
+
+The panel owns draft/filter/disclosures, focus trapping, Escape/outside dismissal,
+resize observation and its retained exit. Its content stays frozen while closing.
+`MorphFromMotion` shares ModalLayer's launch geometry with `noFace` and `fadeIn`:
+560ms opening, 500ms closing, a fade for reduced motion, no cloned Commit button.
+The connected preview demonstrates the production composition. Run
+`task-screen-update.mjs` through the desktop capture tool for both themes,
+keyboard/focus, filtering, secret opt-in, staged-only, motion and narrow layouts.
+
+For a remote `fileProvider`, entry begins before the initial window resolves.
+The morph observes the surface while moving and updates its geometry and shadow
+on the existing animation clock when summary/notices arrive. The opener stays
+available for a second click/Escape during the read. Subsequent queries keep the
+panel mounted and disable confirmation. A completed exit hides its retained
+layer before cancelling the filled animation, preventing a full-size flash before
+Angular removes it. Reopening during an exit preserves the current draft; a
+fresh open after the exit resets it. `commit-panel-motion.mjs` verifies arriving
+content, entry/exit boundaries, reversals, focus and narrow reduced-motion states
+in both themes.
+
+## Detached commands
+
+`TaskSession.commands` is the number of shell commands still running after the
+agent's turn, such as a dev server or a watcher. It is independent of `status`:
+the glyph keeps describing the agent (working, needs you, new reply, done), and
+a static terminal icon with a count, shown from two commands up, sits before the
+diff. Its name and tooltip say that the agent may resume when a command
+finishes. Nothing animates, because motion means an agent is working. Delegated
+agents are not commands; they remain part of the agent's own `running` state.
+The owner decides what to count; omit the field when none run.
+
+## Session archiving and working window
+
+Opt into archive actions with `allowArchive` and handle `archiveRequested` in the
+owner. The action is absent by default. Running rows, and rows with detached
+`commands`, require a second activation in the expanding Stop and archive
+button; Escape, blur and outside pointer input cancel it. Pointer leave retains
+confirmation. Other rows emit immediately.
+A session with owner-supplied `canDelete: true`
+shows a trash icon and Delete session tooltip instead, emitting `deleteRequested`
+in one activation. Handle that intent separately: permanent removal offers no Undo.
+Omitted or false eligibility retains Archive, including queued work with history.
+Sub-task rows forward both intents. Consumers resolve the session's owning task
+when integrating a hierarchy. The connected workspace validates task/session
+ownership and current activity again in main/backend, retains history and edits,
+then removes the row and offers Undo. Restoring a stopped turn never restarts it.
+
+`TaskList.loading` folds in a loading status when the supplied task window is
+empty and suppresses the settled empty message during reads. Keep the TaskList
+mounted across project reads so its outgoing rows can fold away and returning
+identities can reverse their exit. The workspace mounts initial history after
+the first read, then retains the outline through subsequent active-project reads.
+
+`TaskGroup.cap` / `TaskList.sessionCap` reserve the five default root slots for
+running, attention, failed and unseen-reply sessions, then fill any remaining
+slots with the newest ordinary sessions. Priority rows can overflow the cap.
+Selected and fresh rows also stay visible. All rows keep their supplied
+chronological order. Older inserts each reveal around the rows already visible. A nested priority
+session reserves a slot for its parent, with the priority child visible while
+the group is folded. Expanding the group reveals its recent ordinary children
+and keeps priority rows visible. Show more reveals the remaining loaded
+children, and Earlier child sessions loads the next bounded page.
+Each Older click reveals at most `capStep` more hidden sessions. Show fewer
+resets that disclosure; filters and cap 0 show every supplied match.
+The disclosure snapshots the remaining hidden IDs, so adding, removing or
+refreshing sessions never hides a previously revealed survivor. Showing all
+also keeps subsequent new sessions visible. `TaskGroup.sessionDisclosure` is an
+optional model of `TaskSessionDisclosure | null`; null uses the default cap.
+`TaskList.sessionDisclosures` is a model of a readonly task-ID map. It retains at
+most 200 task disclosures, evicting the least recently changed entry. Bind it to
+an owner that outlives project views when the list itself can be recreated, e.g.
+`[(sessionDisclosures)]="store.sessionDisclosures"`. The workspace owns this
+view-state map for one backend scope, preserving it between All projects and a
+specific project and clearing it when that scope changes. Standalone groups
+retain their own disclosure until their task identity or cap no longer matches.
+Hidden sessions keep their activity and contribute to task counts; their DOM is
+created on reveal. A quiet 26px “› N older” button replaces the ghost pill, with
+an accurate next-batch accessible label and `aria-expanded`. Partial reveals
+show a separate Show fewer button. After the last loaded row, Older loads the
+next batch in place while history remains. Fully revealed lists use “⌄ Show fewer”.
+Only the first title below a remaining cap is muted with `ink-muted`; selected,
+attention/failed and fresh rows retain their normal color. Titles ease color.
+
+The internal `WorkingSessionsComponent` owns placement and disclosure;
+`SessionBatchComponent` owns one pixel-height scroll and its cleanup. Revealed
+batches snapshot identities, so selecting or changing a revealed row's status
+keeps its component and position. Archive gaps draw from the next older rows
+across batches. A reveal splits into multiple animated runs when it crosses an
+already-visible row. New arrivals stay in their chronological position.
+Show fewer retains closing batches until they settle and keeps the selected row
+in the main list. Rapid reveals reverse from the painted height. A batch pins
+its rows to the bottom and masks its top 18px only while moving. Open batches
+release height, mask and overflow after settling; closed batches stay clipped
+until removal so retained rows cannot flash outside their zero-height box.
+The duration is `clamp(440, 320 + 1.3 × pixels,
+760)` on `cubic-bezier(0.33, 0, 0.15, 1)`; closing batches share their total travel
+so the list closes as one surface. Rows inside a batch retain the existing
+ListPresence/Fold archive behavior. Reduced motion is instant, including when
+its preference changes during a scroll. No per-row unroll delays remain.
+
+The cap applies to the supplied history and priority rows. Priority data from
+outside the current history page is supplied by the owner.
+Production opens with the newest 20 sessions. Each Older request beyond that
+window adds a bounded batch. Show fewer restores the cap over the loaded rows.
+Project settings → Tasks stores the device-local
+user cap (5, 10, 20 or all loaded sessions), shared across project views/windows.
+The Tasks preview includes A busy task; `/connected-workspace` exercises the full
+backend-backed owner using an isolated fixture.
+
+Supply `TaskOutline.archive` to add the collapsible Archived section. Its
+`TaskSessionArchive` contains a separate bounded `sessions` window plus `loaded`,
+`loading`, `error`, `more` and `earlier` flags. Archived sessions never enter the
+normal session array, activity counts, attention shortcuts or status filters.
+The section loads on first open through `archivedSessionsRequested`; the owner
+supplies replacement pages and handles restore/selection intents. A selected
+archived conversation reveals its disclosure when the selection changes; manual
+collapse remains available and survives history refreshes. Closed folds remain inert, and
+removed history rows retain their exit before disposal. `archiveDisabled`
+disables the TaskGroup archive controls during mutations; TaskList forwards its
+`disabled` input. `SessionRow.archived` uses the archive glyph and suppresses
+archive actions; `allowRestore` exposes the separate restore intent.
+
+`GitBar.unreachable` names the machine. Primary and menu actions explain that
+nothing was sent instead of emitting a git mutation; the note expires after
+seven seconds or the next action. `TaskHeader.unreachable` forwards the value.
+`NewTask.waitingFor` names the offline machine, and `[taskWaiting]` projects the
+owner's local waiting drafts above the form. Platform dispatch and exact request
+identity reconciliation belong to the workspace owner.
+
+## Session grouping
+
+Delegated rows carry the caller's identity independently of their outline parent.
+Use the supplied agent selection for the harness mark and the caller, current
+activity and wait metadata for the hover and focus tooltip. Collapsed groups use
+the most urgent child state, in needs-you, failed, running and finished order.
+Opening a child group shows the last two sessions in the supplied order, reserving
+a slot for the selected child when needed. Show more reveals every child in the
+current page, including running sessions. Children keep their place when their
+status changes. Dragging a session into a group reveals the full page so the
+dropped row has a visible destination.
+
+When a parent has running delegated children, the archive confirmation names
+the number of affected agents. The engine verifies the exact approved child IDs
+before stopping those turns. For group archives the owner also supplies
+`childStopRequired` for live subsession work, including detached commands.
+
+The connected desktop uses two sidebar levels: root sessions and child sessions.
+`TaskSession.parentId` describes organization; fork `kind` still describes transcript
+provenance. `childCount` is authoritative for a root; the owner supplies only the
+current bounded child window with `childrenLoading`, `childrenError` and
+`moreChildren`. TaskList/TaskGroup accept `allowNesting` and emit
+`moveSessionRequested({taskId, sessionId, parentSessionId})` and
+`sessionChildrenRequested({taskId, sessionId, earlier?})`.
+
+Drag a leaf anywhere over another root's visible group in the same task to nest
+it (the Magnetic dock). The whole group is the destination: it takes an accent
+tint and outline, its title and tree guide turn accent, and its count fills with
+the pending total. The group's outline extends downward as a pointer-transparent
+overlay, and the dragged chip snaps from the pointer into that slot at child
+depth, so no row moves while aiming. The docked ghost breathes immediately to
+reveal the covered row, which remains a valid target. Groups that cannot accept
+the session recede. Reduced motion removes the reach, snap and breath and keeps a
+steady translucent ghost. Collapsed groups stay collapsed while aiming and show a
+stacked edge. On drop the ghost holds its slot (bounded to 1.5s) until the
+confirmed row arrives, then the row glides from the ghost into place and the
+destination opens. While a child is dragged its task header shows a quiet ready
+outline; holding it over the header lights the header and previews the moved row
+at task level in place, without implying a sort position. Edge scrolling never
+inserts padding into the list.
+
+The task-scoped `SessionNestingDragDirective` owns native transfer, overlay,
+announcements, edge scrolling and cancellation/cleanup. It keeps the existing
+session MIME data and copy/move semantics, so dragging into a composer still
+copies a mention. `TaskSession.childrenAppendOrder=false` supports older engines:
+the group still highlights, but the preview stays at the pointer rather than
+promising an unsupported landing position. Other supplied-data owners default
+to append placement. Each row's
+Move menu provides the keyboard alternative and “Move to task level”. A populated
+group must release its children before becoming a child itself. Disclosure never
+selects the parent; selected children reveal their group, and closed children are
+inert. Existing caps count root groups. Filtering retains loaded matching children
+with their parent context. Menus offer at most 20 roots from the loaded window.
+
+`session-nesting-dock.mjs` checks stable geometry, the joined group/extension and
+docked chip, both breathing phases, covered row targeting, receding groups,
+landing and append placement, header drag-out, composer mentions and reduced
+motion in both themes. `session-nesting.mjs` exercises the connected preview with native drops, keyboard
+moves, both themes and narrow reduced-motion layouts.

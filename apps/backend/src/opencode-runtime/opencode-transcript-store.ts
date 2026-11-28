@@ -15,6 +15,7 @@ export interface OpenCodeMessage {
 export class OpenCodeTranscriptStore {
   private readonly messageMap = new Map<string, Message>();
   private partMap = new Map<string, Part>();
+  private readonly awaitingMessage = new Map<string, Set<string>>();
   private cachedHistory: ClaudeTranscriptItem[] | null = null;
 
   get messages(): ReadonlyMap<string, Message> {
@@ -23,12 +24,20 @@ export class OpenCodeTranscriptStore {
   get parts(): ReadonlyMap<string, Part> {
     return this.partMap;
   }
-  putMessage(message: Message): void {
+  putMessage(message: Message): Part[] {
     this.messageMap.set(message.id, message);
     this.cachedHistory = null;
+    const waiting = this.awaitingMessage.get(message.id);
+    this.awaitingMessage.delete(message.id);
+    return waiting ? [...waiting].flatMap(id => this.partMap.get(id) ?? []) : [];
   }
   putPart(part: Part): void {
     this.partMap.set(part.id, part);
+    if (!this.messageMap.has(part.messageID)) {
+      const waiting = this.awaitingMessage.get(part.messageID) ?? new Set<string>();
+      waiting.add(part.id);
+      this.awaitingMessage.set(part.messageID, waiting);
+    }
     this.cachedHistory = null;
   }
   appendDelta(id: string, delta: string): Part | undefined {
@@ -48,6 +57,7 @@ export class OpenCodeTranscriptStore {
     persisted: OpenCodeMessage[],
     before: OpenCodeTranscriptSnapshot,
     revertMessageID?: string,
+    liveMessages?: ReadonlySet<string>,
   ): void {
     const revertIndex = revertMessageID
       ? persisted.findIndex((message) => message.info.id === revertMessageID)
@@ -58,29 +68,39 @@ export class OpenCodeTranscriptStore {
     const partIDs = new Set(
       visible.flatMap((message) => message.parts.map((part) => part.id)),
     );
+    const keepLive = (id: string) => !revertMessageID && liveMessages?.has(id);
     for (const { info, parts } of visible) {
       if (this.messageMap.get(info.id) === before.messages.get(info.id))
-        this.messageMap.set(info.id, info);
-      for (const part of parts)
-        if (this.partMap.get(part.id) === before.parts.get(part.id))
+        this.putMessage(info);
+      for (const part of parts) {
+        const current = this.partMap.get(part.id);
+        const sameTextKind = (part.type === 'text' && current?.type === 'text') ||
+          (part.type === 'reasoning' && current?.type === 'reasoning');
+        // A restore can lag the socket even before it starts. Preserve
+        // observed text and completed tools while this message is live.
+        if (keepLive(part.messageID) &&
+            ((sameTextKind && current.text !== part.text && current.text.startsWith(part.text)) ||
+             (current?.type === 'tool' && part.type === 'tool' &&
+              (current.state.status === 'completed' || current.state.status === 'error') &&
+              (part.state.status === 'pending' || part.state.status === 'running'))))
+          continue;
+        if (current === before.parts.get(part.id))
           this.partMap.set(part.id, part);
-        else {
-          const current = this.partMap.get(part.id);
-          // Recover missed tokens only when the snapshot contains every token observed live.
-          if (
-            (part.type === 'text' || part.type === 'reasoning') &&
-            current?.type === part.type &&
-            part.text.startsWith(current.text)
-          )
-            this.partMap.set(part.id, part);
-        }
+        // Recover missed tokens only when the snapshot contains every token observed live.
+        else if (sameTextKind && part.text.startsWith(current.text))
+          this.partMap.set(part.id, part);
+      }
     }
     for (const [id, message] of before.messages)
-      if (!messageIDs.has(id) && this.messageMap.get(id) === message)
+      if (!messageIDs.has(id) && !keepLive(id) && this.messageMap.get(id) === message)
         this.messageMap.delete(id);
-    for (const [id, part] of before.parts)
-      if (!partIDs.has(id) && this.partMap.get(id) === part)
+    for (const [id, part] of before.parts) {
+      if (!partIDs.has(id) && !keepLive(part.messageID) && this.partMap.get(id) === part) {
         this.partMap.delete(id);
+        const waiting = this.awaitingMessage.get(part.messageID);
+        if (waiting?.delete(id) && !waiting.size) this.awaitingMessage.delete(part.messageID);
+      }
+    }
     // Native order is authoritative; streaming-only parts follow recovered content.
     const ordered = new Map<string, Part>();
     for (const { parts } of visible)
@@ -99,13 +119,18 @@ export class OpenCodeTranscriptStore {
     );
   }
   removeMessages(messages: Message[]): void {
-    for (const message of messages) this.messageMap.delete(message.id);
+    for (const message of messages) {
+      this.messageMap.delete(message.id);
+      this.awaitingMessage.delete(message.id);
+    }
     for (const [id, part] of this.partMap)
       if (!this.messageMap.has(part.messageID)) this.partMap.delete(id);
     this.cachedHistory = null;
   }
   partItems(part: Part): ClaudeTranscriptItem[] {
-    return openCodePartItems(part, this.messageMap.get(part.messageID));
+    const message = this.messageMap.get(part.messageID);
+    // Until the message metadata arrives this part could be a user prompt.
+    return message ? openCodePartItems(part, message) : [];
   }
   history(): ClaudeTranscriptItem[] {
     if (!this.cachedHistory) {
@@ -116,9 +141,14 @@ export class OpenCodeTranscriptStore {
         partsByMessage.set(part.messageID, parts);
       }
       this.cachedHistory = this.orderedMessages().flatMap((message) => {
-        const items = (partsByMessage.get(message.id) ?? []).flatMap((part) =>
+        const parts = partsByMessage.get(message.id) ?? [];
+        const items = parts.flatMap((part) =>
           openCodePartItems(part, message),
         );
+        const unavailableInput = message.role === 'user' && parts.some(part =>
+          part.type === 'file' && !/^data:image\/(png|jpeg|gif|webp);base64,/.test(part.url));
+        if (unavailableInput)
+          for (const item of items) item.editUnsupported = true;
         if (
           message.role === 'assistant' &&
           message.error &&

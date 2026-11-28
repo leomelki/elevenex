@@ -1,0 +1,7 @@
+@for (dock of docks(); track dock.key) {
+  <span class="extension" [class.collapsed]="dock.collapsed" [style.left.px]="dock.left" [style.top.px]="dock.top" [style.width.px]="dock.width"><span class="extension-fill"></span></span>
+}
+<span #chip class="chip" [class.docked]="!!dock()" [class.settling]="settling()" [style.transform]="chipTransform()" [style.width.px]="chipWidth()">
+  <span class="fill"></span>
+  <span class="content"><ex-status-glyph [status]="session().status" [size]="14" /><span class="title">{{ session().title }}</span></span>
+</span>

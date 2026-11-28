@@ -5,6 +5,7 @@ import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { promises as fs } from 'node:fs';
 import {
   mkdtemp,
   mkdir,
@@ -30,6 +31,7 @@ import { TextAgentGenerationService } from '../agent-generation/text-agent-gener
 import { BranchesService } from '../branches/branches.service.js';
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { UserPtyManager } from '../user-terminal/user-pty-manager.service.js';
+import type { TaskAppHost } from '../task-apps/task-app-host.js';
 import { ActionsService } from '../actions/actions.service.js';
 import { TasksService, conciseFailureMessage } from './tasks.service.js';
 import { TasksController } from './tasks.controller.js';
@@ -38,6 +40,9 @@ import { TaskWorktreeAllocator } from './task-worktree-allocator.service.js';
 import { TaskSetup } from './task.types.js';
 import { assertWorkspaceCanExecute } from '../workspaces/workspace-ownership.js';
 import { compareWorkspaceOrder } from '../workspaces/workspace-order.js';
+
+// Terminals are injected stubs in this suite; loading a native PTY is unnecessary.
+jest.mock('node-pty', () => ({ spawn: jest.fn() }));
 
 jest.setTimeout(60000);
 
@@ -91,17 +96,22 @@ describe('Task lifecycle with real Git and migrations', () => {
     getRunningCount: jest.fn(async () => ({ count: 0 })),
     stop: jest.fn(),
   };
+  const apps = { count: jest.fn(() => 0), stopAll: jest.fn(async (_id: number) => undefined) };
   let stopSession: jest.Mock;
   let releaseSession: jest.Mock;
   let reactivateRuntime: jest.Mock;
   let assertWithinWorktreeLimit: jest.Mock;
+  let assertProjectIsActive: jest.Mock;
 
   beforeEach(async () => {
+    apps.count.mockReturnValue(0);
+    apps.stopAll.mockReset().mockResolvedValue(undefined);
     root = await realpath(await mkdtemp(join(tmpdir(), 'elevenex-tasks-')));
     repoPath = join(root, 'repo');
     await mkdir(repoPath);
     const git = worktreeSimpleGit(repoPath);
-    await git.raw(['init', '--initial-branch=main']);
+    await git.raw(['init']);
+    await git.raw(['symbolic-ref', 'HEAD', 'refs/heads/main']);
     await git.addConfig('user.name', 'Task tests');
     await git.addConfig('user.email', 'tasks@example.test');
     await git.raw(['commit', '--allow-empty', '-m', 'Initial']);
@@ -202,11 +212,12 @@ describe('Task lifecycle with real Git and migrations', () => {
       sessions as unknown as SessionsService,
       { generate: jest.fn() } as unknown as TextAgentGenerationService,
     );
+    assertProjectIsActive = jest.fn();
     service = new TasksService(
       db,
       gitService,
       allocator,
-      { assertProjectIsActive: jest.fn() } as unknown as ProjectsService,
+      { assertProjectIsActive } as unknown as ProjectsService,
       sessions as unknown as SessionsService,
       {
         invalidateCache: jest.fn(),
@@ -216,6 +227,7 @@ describe('Task lifecycle with real Git and migrations', () => {
       terminals as unknown as UserPtyManager,
       actions as unknown as ActionsService,
       worktreeContext,
+      apps as unknown as TaskAppHost,
     );
     service.onModuleInit();
   });
@@ -242,16 +254,541 @@ describe('Task lifecycle with real Git and migrations', () => {
     }
     throw new Error('Task preparation did not settle');
   }
-  async function create(branchName: string, patch: Partial<TaskSetup> = {}) {
+  async function create(branchName: string, patch: Partial<TaskSetup> = {}, creatorId?: number) {
     const task = await service.create(repo.id, {
       requestId: randomUUID(),
       mode: 'new',
       branchName,
       baseRef: 'main',
       ...patch,
-    });
+    }, creatorId);
     return settled(task.id);
   }
+
+  it('retains the checkout when an app is still starting or its stop fails', async () => {
+    const task = await create('release-app');
+    apps.count.mockReturnValue(1);
+    expect(await service.releasePreview(task.id)).toMatchObject({ apps: 1 });
+    await expect(service.releaseWorktree(task.id)).rejects.toMatchObject({ response: { code: 'running_work' } });
+    expect(apps.stopAll).not.toHaveBeenCalled();
+    apps.stopAll.mockRejectedValueOnce(new Error('App still stopping'));
+    await expect(service.releaseWorktree(task.id, true)).rejects.toThrow();
+    expect((await service.record(task.id)).linkStatus).toBe('linked');
+    expect(apps.stopAll).toHaveBeenCalledWith(task.id);
+  });
+
+  it('lets the creating session finish a clean temporary task and preserves conversation history', async () => {
+    const owner = (await create('temporary-task-owner')).sessions[0]!;
+    const task = await create('temporary-review', {}, owner.id);
+    expect(task).toMatchObject({ taskCreatedBySessionId: owner.id, taskTemporary: true });
+
+    await expect(service.finish(task.id, false, undefined, {
+      agent: { sessionId: task.sessions[0]!.id, userRequested: false },
+    })).rejects.toMatchObject({ response: { code: 'task_finish_requires_user' } });
+
+    const finished = await service.finish(task.id, false, undefined, {
+      agent: { sessionId: owner.id, userRequested: false },
+    });
+    expect(finished).toMatchObject({ taskTemporary: false, linkStatus: 'unlinked' });
+    expect(finished.archivedAt).toBeTruthy();
+    expect(finished.sessions[0]).toMatchObject({ id: task.sessions[0]!.id, status: 'archived' });
+    expect((await service.get(owner.workspaceId!)).archivedAt).toBeNull();
+  });
+
+  it('keeps temporary work open when dirty, running or kept open during the finish check', async () => {
+    const owner = (await create('temporary-task-owner')).sessions[0]!;
+    const task = await create('temporary-review', {}, owner.id);
+    const options = { agent: { sessionId: owner.id, userRequested: false } };
+    const localFile = join(task.path, 'uncommitted.txt');
+    await writeFile(localFile, 'preserve these edits');
+    await expect(service.finish(task.id, false, undefined, options))
+      .rejects.toMatchObject({ response: { code: 'temporary_checkout_dirty' } });
+    expect(await readFile(localFile, 'utf8')).toBe('preserve these edits');
+    await rm(localFile);
+
+    hooks.getActivity.mockReturnValueOnce({ activityStatus: 'running', backgroundActive: false });
+    await expect(service.finish(task.id, true, undefined, options))
+      .rejects.toMatchObject({ response: { code: 'running_work' } });
+
+    apps.count.mockReturnValueOnce(1);
+    await expect(service.finish(task.id, true, undefined, options))
+      .rejects.toMatchObject({ response: { code: 'running_work', apps: 1 } });
+    expect(apps.stopAll).not.toHaveBeenCalled();
+
+    const finishPreview = service.finishPreview.bind(service);
+    const preview = jest.spyOn(service, 'finishPreview').mockImplementationOnce(async id => {
+      await service.keepOpen(id);
+      return finishPreview(id);
+    });
+    try {
+      await expect(service.finish(task.id, false, undefined, options))
+        .rejects.toThrow('This task changed while checking whether it could close.');
+    } finally {
+      preview.mockRestore();
+    }
+    await expect(service.finish(task.id, false, undefined, options))
+      .rejects.toMatchObject({ response: { code: 'task_finish_requires_user' } });
+    expect(await service.record(task.id)).toMatchObject({ archivedAt: null, taskTemporary: false });
+    expect(stopSession).not.toHaveBeenCalled();
+  });
+
+  it('skips a missing path reserved by a failed task without stealing its assignment', async () => {
+    const reservedPath = join(root, '.worktrees', 'repo', 'repo-1');
+    const [missing] = await db
+      .insert(schema.workspaces)
+      .values({
+        repoId: repo.id,
+        name: 'Missing checkout',
+        path: reservedPath,
+        linkStatus: 'unlinked',
+        taskState: 'failed',
+      })
+      .returning();
+    await db.insert(schema.taskReservations).values({
+      taskId: missing.id,
+      repositoryKey: await gitService.repositoryKey(repoPath),
+      branchName: null,
+      path: reservedPath,
+    });
+    const task = await create('after-missing');
+    expect(task).toMatchObject({
+      taskState: 'ready',
+      path: join(root, '.worktrees', 'repo', 'repo-2'),
+    });
+    expect(
+      await db
+        .select()
+        .from(schema.taskReservations)
+        .where(eq(schema.taskReservations.taskId, missing.id)),
+    ).toEqual([expect.objectContaining({ path: reservedPath })]);
+  });
+
+  it('reports the owning task for a reserved branch even when its directory is absent', async () => {
+    const [owner] = await db
+      .insert(schema.workspaces)
+      .values({
+        repoId: repo.id,
+        name: 'Interrupted',
+        path: '',
+        taskState: 'failed',
+        linkStatus: 'unlinked',
+      })
+      .returning();
+    await db.insert(schema.taskReservations).values({
+      taskId: owner.id,
+      repositoryKey: await gitService.repositoryKey(repoPath),
+      branchName: 'reserved-branch',
+      path: join(root, 'absent'),
+    });
+    const task = await create('reserved-branch');
+    expect(task).toMatchObject({
+      taskState: 'failed',
+      error: { code: 'branch_in_use', existingTaskId: owner.id },
+    });
+    expect(await new WorktreesService().listWorktrees(repoPath)).toHaveLength(
+      1,
+    );
+    await service.retry(task.id, { checkoutMode: 'snapshot' });
+    expect(await settled(task.id)).toMatchObject({
+      taskState: 'ready',
+      checkoutMode: 'snapshot',
+    });
+  });
+
+  it('chooses another name if a second backend reserves the selected path', async () => {
+    const [competitor] = await db
+      .insert(schema.workspaces)
+      .values({
+        repoId: repo.id,
+        name: 'Concurrent setup',
+        path: '',
+        taskState: 'preparing',
+        linkStatus: 'unlinked',
+      })
+      .returning();
+    const original = fs.lstat.bind(fs);
+    let contended = false;
+    const stat = jest.spyOn(fs, 'lstat').mockImplementation((async (
+      ...args: Parameters<typeof fs.lstat>
+    ) => {
+      if (!contended && String(args[0]).endsWith('/repo-1')) {
+        contended = true;
+        await db.insert(schema.taskReservations).values({
+          taskId: competitor.id,
+          repositoryKey: await gitService.repositoryKey(repoPath),
+          branchName: 'other-branch',
+          path: String(args[0]),
+        });
+      }
+      return original(...args);
+    }) as typeof fs.lstat);
+    let task: Awaited<ReturnType<typeof create>>;
+    try {
+      task = await create('concurrent-path');
+    } finally {
+      stat.mockRestore();
+    }
+    expect(task).toMatchObject({
+      taskState: 'ready',
+      path: join(root, '.worktrees', 'repo', 'repo-2'),
+    });
+  });
+
+  it('preserves storage errors rather than disguising them as reservation conflicts', async () => {
+    sqlite.exec(`CREATE TRIGGER reject_lease BEFORE INSERT ON task_reservations
+      BEGIN SELECT RAISE(ABORT, 'reservation storage unavailable'); END;`);
+    const task = await create('storage-failure');
+    expect(task).toMatchObject({
+      taskState: 'failed',
+      error: {
+        message: expect.stringContaining('reservation storage unavailable'),
+      },
+    });
+    expect(task.error?.code).not.toBe('environment_reserved');
+    expect(await new WorktreesService().listWorktrees(repoPath)).toHaveLength(
+      1,
+    );
+  });
+  it('does not declare a failed checkout successful merely because Git registered the directory', async () => {
+    const hooksPath = join(root, 'hooks'); await mkdir(hooksPath);
+    await writeFile(join(hooksPath, 'post-checkout'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    await worktreeSimpleGit(repoPath).addConfig('core.hooksPath', hooksPath);
+    const task = await create('checkout-hook-failure');
+    expect(task.taskState).toBe('failed');
+    const [lease] = await db.select().from(schema.taskReservations).where(eq(schema.taskReservations.taskId, task.id));
+    expect(lease).toBeDefined();
+    expect(await new WorktreesService().listWorktrees(repoPath)).toHaveLength(2);
+    await worktreeSimpleGit(repoPath).raw(['config', '--unset', 'core.hooksPath']);
+    await service.retry(task.id);
+    expect(await settled(task.id)).toMatchObject({ taskState: 'ready', path: lease.path });
+  });
+
+  it.each(['environment_missing', 'legacy'])(
+    'recovers a %s missing checkout at the latest branch commit and keeps history',
+    async (kind) => {
+      const task = await create('recover-missing');
+      await writeFile(join(task.path, 'committed.txt'), 'newer branch work');
+      await worktreeSimpleGit(task.path).raw(['add', '.']);
+      await worktreeSimpleGit(task.path).raw([
+        'commit',
+        '-m',
+        'Work after task creation',
+      ]);
+      const latest = await gitService.resolve(task.path, 'HEAD');
+      await worktreeSimpleGit(repoPath).raw(['worktree', 'remove', task.path]);
+      await db
+        .update(schema.workspaces)
+        .set({
+          linkStatus: 'unlinked',
+          taskState: 'failed',
+          poolWorktreeId: null,
+          taskError: JSON.stringify(
+            kind === 'legacy'
+              ? {
+                  message:
+                    'The task worktree is missing. Reopen or choose another worktree.',
+                }
+              : { code: 'environment_missing', message: 'Missing checkout' },
+          ),
+        })
+        .where(eq(schema.workspaces.id, task.id));
+      expect((await service.get(task.id)).error?.code).toBe(
+        'environment_missing',
+      );
+      await Promise.all([service.retry(task.id), service.retry(task.id)]);
+      const restored = await settled(task.id);
+      expect(restored).toMatchObject({
+        taskState: 'ready',
+        taskBranch: 'recover-missing',
+        startingCommit: task.startingCommit,
+      });
+      expect(await gitService.resolve(restored.path, 'HEAD')).toBe(latest);
+      expect(await readFile(join(restored.path, 'committed.txt'), 'utf8')).toBe(
+        'newer branch work',
+      );
+      expect(restored.sessions[0]).toMatchObject({
+        id: task.sessions[0].id,
+        worktreePath: restored.path,
+        transcriptWorktreePath: task.path,
+      });
+      expect(await new WorktreesService().listWorktrees(repoPath)).toHaveLength(
+        2,
+      );
+    },
+  );
+
+  it.each(['clean', 'dirty', 'busy'])(
+    'revalidates an interrupted checkout before the pool row exists (%s)',
+    async (kind) => {
+      sqlite.exec(`CREATE TRIGGER reject_pool BEFORE INSERT ON repo_worktrees
+        BEGIN SELECT RAISE(ABORT, 'pool insert interrupted'); END;`);
+      const task = await create('interrupted-pool');
+      expect(task.taskState).toBe('failed');
+      const [lease] = await db
+        .select()
+        .from(schema.taskReservations)
+        .where(eq(schema.taskReservations.taskId, task.id));
+      sqlite.exec('DROP TRIGGER reject_pool');
+      if (kind === 'dirty')
+        await writeFile(join(lease.path, 'keep.txt'), 'unsaved work');
+      if (kind === 'busy')
+        actions.getRunningCount.mockResolvedValue({ count: 1 });
+      try {
+        if (kind === 'busy') {
+          await expect(service.retry(task.id)).rejects.toMatchObject({
+            response: { code: 'environment_busy' },
+          });
+          expect((await service.record(task.id)).taskState).toBe('failed');
+          return;
+        }
+        await service.retry(task.id);
+        const retried = await settled(task.id);
+        expect(retried).toMatchObject(
+          kind === 'clean'
+            ? { taskState: 'ready', path: lease.path }
+            : {
+                taskState: 'failed',
+                error: {
+                  code:
+                    kind === 'dirty'
+                      ? 'worktree_not_clean'
+                      : 'environment_busy',
+                },
+              },
+        );
+        expect(
+          await new WorktreesService().listWorktrees(repoPath),
+        ).toHaveLength(2);
+        if (kind === 'dirty')
+          expect(await readFile(join(lease.path, 'keep.txt'), 'utf8')).toBe(
+            'unsaved work',
+          );
+      } finally {
+        actions.getRunningCount.mockResolvedValue({ count: 0 });
+      }
+    },
+  );
+
+  it('offers the saved revision when a missing checkout also lost its branch', async () => {
+    const task = await create('deleted-branch');
+    await worktreeSimpleGit(repoPath).raw(['worktree', 'remove', task.path]);
+    await worktreeSimpleGit(repoPath).raw(['branch', '-D', 'deleted-branch']);
+    await service.get(task.id);
+    await service.retry(task.id);
+    const failed = await settled(task.id);
+    expect(failed).toMatchObject({
+      taskState: 'failed',
+      error: { code: 'branch_missing', savedCommit: task.startingCommit },
+    });
+    await service.retry(task.id, {
+      mode: 'new',
+      baseRef: failed.error!.savedCommit as string,
+      branchName: 'deleted-branch',
+    });
+    expect(await settled(task.id)).toMatchObject({
+      taskState: 'ready',
+      taskBranch: 'deleted-branch',
+    });
+  });
+
+  it('recovers after manual folder deletion without leaving the branch checked out elsewhere', async () => {
+    const task = await create('manually-removed');
+    await rm(task.path, { recursive: true });
+    expect(
+      await worktreeSimpleGit(repoPath).raw([
+        'worktree',
+        'list',
+        '--porcelain',
+      ]),
+    ).toContain(task.path);
+    await service.get(task.id);
+    await service.retry(task.id);
+    const restored = await settled(task.id);
+    expect(restored).toMatchObject({
+      taskState: 'ready',
+      taskBranch: 'manually-removed',
+    });
+    expect(restored.sessions[0].id).toBe(task.sessions[0].id);
+    expect(await gitService.status(restored.path)).toMatchObject({
+      branch: 'manually-removed',
+    });
+  });
+  it.each(['branch', 'snapshot'] as const)('recovers the last registered %s revision after manual checkout changes', async (checkoutMode) => {
+    const task = await create('original-branch', { checkoutMode });
+    const git = worktreeSimpleGit(task.path);
+    if (checkoutMode === 'branch') await git.raw(['checkout', '-b', 'user-switched-branch']);
+    await writeFile(join(task.path, 'latest.txt'), 'Keep the latest committed work');
+    await git.raw(['add', '.']); await git.raw(['commit', '-m', 'Commit after checkout change']);
+    const head = await gitService.resolve(task.path, 'HEAD');
+    await rm(task.path, { recursive: true }); await service.get(task.id);
+    await service.retry(task.id); const restored = await settled(task.id);
+    expect(restored.taskState).toBe('ready');
+    expect(await gitService.resolve(restored.path, 'HEAD')).toBe(head);
+    expect(restored.startingCommit).toBe(task.startingCommit);
+    if (checkoutMode === 'branch') expect(restored.taskBranch).toBe('user-switched-branch');
+    expect(restored.sessions[0].id).toBe(task.sessions[0].id);
+  });
+
+  it('rejects consent for an old failure if setup changed before the recovery acquired its lock', async () => {
+    assertWithinWorktreeLimit.mockRejectedValueOnce(new Error('Initial failure'));
+    const task = await create('stale-recovery');
+    await db.update(schema.workspaces).set({ taskError: JSON.stringify({ code: 'environment_busy' }) }).where(eq(schema.workspaces.id, task.id));
+    await expect(service.retry(task.id, { confirmExternal: true }, task.taskError)).rejects.toThrow('setup changed');
+    expect((await service.record(task.id)).taskState).toBe('failed');
+  });
+
+  it('keeps locked missing registrations and offers a revision snapshot', async () => {
+    const task = await create('locked-missing');
+    const git = worktreeSimpleGit(repoPath);
+    await git.raw(['worktree', 'lock', task.path]);
+    await rm(task.path, { recursive: true });
+    await service.get(task.id);
+    await service.retry(task.id);
+    expect(await settled(task.id)).toMatchObject({
+      taskState: 'failed',
+      error: { code: 'checkout_unavailable', canSnapshot: true },
+    });
+    await service.retry(task.id, { checkoutMode: 'snapshot' });
+    expect(await settled(task.id)).toMatchObject({
+      taskState: 'ready',
+      checkoutMode: 'snapshot',
+    });
+    // Git 2.25 omits lock status from the list output. Unlocking succeeds only
+    // if the original worktree registration still exists and is locked.
+    await git.raw(['worktree', 'unlock', task.path]);
+  });
+
+  it('skips missing paths still registered in Git even without a database lease', async () => {
+    const removedPath = join(root, '.worktrees', 'repo', 'repo-1');
+    await worktreeSimpleGit(repoPath).raw([
+      'worktree',
+      'add',
+      '--detach',
+      removedPath,
+      'main',
+    ]);
+    await rm(removedPath, { recursive: true });
+    const task = await create('after-stale-registration');
+    expect(task).toMatchObject({
+      taskState: 'ready',
+      path: join(root, '.worktrees', 'repo', 'repo-2'),
+    });
+    expect(
+      await worktreeSimpleGit(repoPath).raw([
+        'worktree',
+        'list',
+        '--porcelain',
+      ]),
+    ).toContain(removedPath);
+  });
+
+  it('does not treat an access error as a free path', async () => {
+    const original = fs.lstat.bind(fs);
+    const stat = jest.spyOn(fs, 'lstat').mockImplementation((async (
+      ...args: Parameters<typeof fs.lstat>
+    ) => {
+      if (String(args[0]).endsWith('/repo-1'))
+        throw Object.assign(new Error('Access denied to worktree parent'), {
+          code: 'EACCES',
+        });
+      return original(...args);
+    }) as typeof fs.lstat);
+    try {
+      const task = await create('permission-error');
+      expect(task).toMatchObject({
+        taskState: 'failed',
+        error: { message: expect.stringContaining('Access denied') },
+      });
+      expect(await db.select().from(schema.taskReservations)).toHaveLength(0);
+    } finally {
+      stat.mockRestore();
+    }
+  });
+
+  it('can allocate elsewhere when an unrelated worktree cannot be accessed', async () => {
+    const other = join(root, 'unreadable');
+    await worktreeSimpleGit(repoPath).raw([
+      'worktree',
+      'add',
+      '-b',
+      'other',
+      other,
+    ]);
+    const original = fs.realpath.bind(fs);
+    const real = jest.spyOn(fs, 'realpath').mockImplementation((async (
+      ...args: Parameters<typeof fs.realpath>
+    ) => {
+      if (String(args[0]) === other)
+        throw Object.assign(new Error('Access denied'), { code: 'EACCES' });
+      return original(...args);
+    }) as typeof fs.realpath);
+    try {
+      expect(await create('available-branch')).toMatchObject({
+        taskState: 'ready',
+      });
+    } finally {
+      real.mockRestore();
+    }
+  });
+
+  it.each([true, false])(
+    'does not move a missing assignment while its background work is still active (lease: %s)',
+    async (hasLease) => {
+      const task = await create('missing-with-background');
+      const [lease] = await db.select().from(schema.taskReservations);
+      if (!hasLease)
+        await db
+          .delete(schema.taskReservations)
+          .where(eq(schema.taskReservations.taskId, task.id));
+      await rm(task.path, { recursive: true });
+      await service.get(task.id);
+      hooks.getActivity.mockReturnValue({
+        activityStatus: 'idle',
+        backgroundActive: true,
+      });
+      await expect(service.retry(task.id)).rejects.toMatchObject({
+        response: { code: 'environment_busy' },
+      });
+      expect(await db.select().from(schema.taskReservations)).toEqual(
+        hasLease ? [lease] : [],
+      );
+    },
+  );
+
+  it('preserves new-branch setup when an availability failure occurred during preparation', async () => {
+    assertWithinWorktreeLimit.mockRejectedValueOnce(
+      new ConflictException({
+        code: 'environment_missing',
+        message: 'Storage unavailable during setup',
+      }),
+    );
+    const task = await create('setup-availability');
+    expect(task.taskState).toBe('failed');
+    await service.retry(task.id);
+    const ready = await settled(task.id);
+    expect(ready).toMatchObject({
+      taskState: 'ready',
+      taskBranch: 'setup-availability',
+    });
+    expect(JSON.parse(ready.taskConfig!).mode).toBe('new');
+  });
+
+  it('releases the branch lease as soon as setup is ready, before any further task read', async () => {
+    const task = await service.create(repo.id, {
+      requestId: randomUUID(),
+      mode: 'new',
+      branchName: 'ready-lease',
+      baseRef: 'main',
+    });
+    for (let attempt = 0; attempt < 300; attempt++) {
+      if ((await service.record(task.id)).taskState !== 'preparing') break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect((await service.record(task.id)).taskState).toBe('ready');
+    expect(await db.select().from(schema.taskReservations)).toEqual([
+      expect.objectContaining({ taskId: task.id, branchName: null }),
+    ]);
+  });
 
   it('previews release without changing ownership or stopping processes, and reports actual local edits', async () => {
     const task = await create('release-preview');
@@ -536,7 +1073,8 @@ describe('Task lifecycle with real Git and migrations', () => {
     await rm(task.path, { recursive: true, force: true });
     await mkdir(task.path);
     const replacement = worktreeSimpleGit(task.path);
-    await replacement.raw(['init', '--initial-branch=unrelated']);
+    await replacement.raw(['init']);
+    await replacement.raw(['symbolic-ref', 'HEAD', 'refs/heads/unrelated']);
     await replacement.addConfig('user.name', 'Task tests');
     await replacement.addConfig('user.email', 'tasks@example.test');
     await replacement.raw(['commit', '--allow-empty', '-m', 'Replacement']);
@@ -975,7 +1513,21 @@ describe('Task lifecycle with real Git and migrations', () => {
 
   it('reuses a clean environment without transferring archived conversations to its next task', async () => {
     const one = await create('first');
-    const finished = await service.finish(one.id);
+    const cleanupStarted = Promise.withResolvers<number>();
+    const cleaned = Promise.withResolvers<void>();
+    const unsubscribe = service.onFinishing(async taskId => {
+      cleanupStarted.resolve(taskId);
+      await cleaned.promise;
+    });
+    const closing = service.finish(one.id);
+    try {
+      expect(await cleanupStarted.promise).toBe(one.id);
+      expect(await service.record(one.id)).toMatchObject({ taskState: 'finishing', linkStatus: 'linked' });
+    } finally {
+      unsubscribe();
+      cleaned.resolve();
+    }
+    const finished = await closing;
     expect(finished).toMatchObject({
       linkStatus: 'unlinked',
       finalCommit: one.startingCommit,
@@ -1294,7 +1846,8 @@ describe('Task lifecycle with real Git and migrations', () => {
         targetPath = task.path;
         expectedBranch = 'unrelated';
         const replacement = worktreeSimpleGit(targetPath);
-        await replacement.raw(['init', '--initial-branch=unrelated']);
+        await replacement.raw(['init']);
+        await replacement.raw(['symbolic-ref', 'HEAD', 'refs/heads/unrelated']);
         await replacement.addConfig('user.name', 'Task tests');
         await replacement.addConfig('user.email', 'tasks@example.test');
         await replacement.raw(['commit', '--allow-empty', '-m', 'Replacement']);
@@ -1532,6 +2085,99 @@ describe('Task lifecycle with real Git and migrations', () => {
     expect((await gitService.status(repoPath)).branch).toBe('main');
   });
 
+  it('recovers an external existing branch in the same task only after confirmation and preserves local work', async () => {
+    const git = worktreeSimpleGit(repoPath),
+      externalPath = join(root, 'external');
+    await git.raw([
+      'worktree',
+      'add',
+      '-b',
+      'existing-external',
+      externalPath,
+      'main',
+    ]);
+    await writeFile(
+      join(externalPath, 'local-work.txt'),
+      'Keep this local work',
+    );
+    const head = await gitService.resolve(externalPath, 'HEAD');
+    const task = await create('existing-external', { mode: 'existing' });
+    expect(task).toMatchObject({
+      taskState: 'failed',
+      path: '',
+      error: {
+        code: 'external_checkout',
+        path: externalPath,
+        canSnapshot: true,
+      },
+    });
+    expect(await db.select().from(schema.taskReservations)).toHaveLength(0);
+    await service.retry(task.id, { confirmExternal: true });
+    const ready = await settled(task.id);
+    expect(ready).toMatchObject({
+      id: task.id,
+      taskState: 'ready',
+      path: externalPath,
+      taskBranch: 'existing-external',
+    });
+    expect(await readFile(join(externalPath, 'local-work.txt'), 'utf8')).toBe(
+      'Keep this local work',
+    );
+    expect(await gitService.resolve(externalPath, 'HEAD')).toBe(head);
+    expect(ready.sessions).toHaveLength(1);
+    expect(
+      (await db.select().from(schema.workspaces)).filter(
+        (row) => !row.isDefault,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('can recover at the committed revision without adopting or changing an external workspace', async () => {
+    const git = worktreeSimpleGit(repoPath),
+      externalPath = join(root, 'external');
+    await git.raw([
+      'worktree',
+      'add',
+      '-b',
+      'existing-snapshot',
+      externalPath,
+      'main',
+    ]);
+    await writeFile(
+      join(externalPath, 'local-only.txt'),
+      'Uncommitted external work',
+    );
+    const head = await gitService.resolve(externalPath, 'HEAD');
+    const task = await create('existing-snapshot', { mode: 'existing' });
+    expect(task.error?.code).toBe('external_checkout');
+    await service.retry(task.id, {
+      checkoutMode: 'snapshot',
+      environment: 'automatic',
+    });
+    const ready = await settled(task.id);
+    expect(ready).toMatchObject({
+      id: task.id,
+      taskState: 'ready',
+      checkoutMode: 'snapshot',
+    });
+    expect(ready.path).not.toBe(externalPath);
+    expect(await gitService.status(ready.path)).toMatchObject({
+      branch: null,
+      head,
+    });
+    await expect(
+      readFile(join(ready.path, 'local-only.txt')),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(join(externalPath, 'local-only.txt'), 'utf8')).toBe(
+      'Uncommitted external work',
+    );
+    expect(await gitService.status(externalPath)).toMatchObject({
+      branch: 'existing-snapshot',
+      dirty: true,
+      head,
+    });
+  });
+
   it('coalesces opening an empty task into one conversation', async () => {
     const task = await create('review');
     await db
@@ -1676,6 +2322,50 @@ describe('Task lifecycle with real Git and migrations', () => {
     expect(await gitService.resolve(repoPath, 'refs/heads/review')).toBe(
       remote.startingCommit,
     );
+
+    const basedOnRemote = await create('new-from-remote', {
+      baseRef: 'refs/remotes/upstream/review',
+    });
+    expect(basedOnRemote).toMatchObject({
+      taskState: 'ready',
+      taskBranch: 'new-from-remote',
+      startingCommit: await gitService.resolve(
+        repoPath,
+        'refs/remotes/upstream/review',
+      ),
+    });
+  });
+
+  it('starts a new branch at the committed tip of a branch held by an active task', async () => {
+    const owner = await create('held-source');
+    await worktreeSimpleGit(owner.path).raw([
+      'commit',
+      '--allow-empty',
+      '-m',
+      'Work on source',
+    ]);
+    await writeFile(join(owner.path, 'pending-edit.txt'), 'Uncommitted work');
+    const source = await gitService.resolve(repoPath, 'refs/heads/held-source');
+
+    const child = await create('new-from-held', {
+      baseRef: 'refs/heads/held-source',
+    });
+    expect(child).toMatchObject({
+      taskState: 'ready',
+      taskBranch: 'new-from-held',
+      startingCommit: source,
+    });
+    expect(child.path).not.toBe(owner.path);
+    expect(await gitService.status(child.path)).toMatchObject({
+      branch: 'new-from-held',
+      head: source,
+      dirty: false,
+    });
+    expect(await gitService.status(owner.path)).toMatchObject({
+      branch: 'held-source',
+      head: source,
+      dirty: true,
+    });
   });
 
   it('does not release an environment when process cleanup fails, and can retry safely', async () => {
@@ -2273,6 +2963,98 @@ describe('Task lifecycle with real Git and migrations', () => {
     await expect(assertWorkspaceCanExecute(db, task.id)).resolves.toMatchObject(
       { taskState: 'ready' },
     );
+  });
+
+  it('only permits archived-project cleanup through confirmed project deletion', async () => {
+    const task = await create('archived-project');
+    await db
+      .update(schema.projects)
+      .set({ archivedAt: new Date().toISOString() })
+      .where(eq(schema.projects.id, repo.projectId));
+    assertProjectIsActive.mockRejectedValue(
+      new ConflictException('Archived projects are read-only.'),
+    );
+    await expect(service.finish(task.id, true)).rejects.toThrow(
+      'Archived projects are read-only.',
+    );
+    expect((await service.get(task.id)).archivedAt).toBeNull();
+    const finished = await service.finish(task.id, true, undefined, {
+      allowArchivedProject: true,
+    });
+    expect(finished.archivedAt).toBeTruthy();
+    expect(stopSession).toHaveBeenCalled();
+  });
+
+  it('does not revive a deleted project when a cancelled task refresh returns', async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const entering = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    jest.spyOn(gitService, 'refresh').mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+          entered();
+        }),
+    );
+    const task = await service.create(repo.id, {
+      requestId: randomUUID(),
+      mode: 'new',
+      branchName: 'deleted-while-refreshing',
+      baseRef: 'main',
+    });
+    await entering;
+    try {
+      await service.finish(task.id, true);
+      await db
+        .delete(schema.projects)
+        .where(eq(schema.projects.id, repo.projectId));
+    } finally {
+      release();
+    }
+    // Drain the resumed refresh's microtasks, including its rejected record read.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await expect(service.get(task.id)).rejects.toThrow('Task not found.');
+    expect(
+      await gitService.hasLocalBranch(repoPath, 'deleted-while-refreshing'),
+    ).toBe(false);
+    expect(await db.select().from(schema.workspaces)).toHaveLength(0);
+  });
+
+  it('reports a setup waiting for the repository checkout lock, then completes it', async () => {
+    // Another setup in the same repository holds the checkout lock.
+    const blocker = gate();
+    const holding = gate();
+    const held = gitService.exclusive(await gitService.repositoryKey(repoPath), async () => {
+      holding.release();
+      await blocker.promise;
+    });
+    await holding.promise;
+    const queued = gate();
+    const original = gitService.exclusive.bind(gitService);
+    const exclusive = jest
+      .spyOn(gitService, 'exclusive')
+      .mockImplementation((lockKey, operation) => {
+        queued.release();
+        return original(lockKey, operation);
+      });
+    const preparing = await service.create(repo.id, {
+      requestId: randomUUID(),
+      mode: 'new',
+      branchName: 'waits-for-checkout',
+      baseRef: 'main',
+    });
+    try {
+      await queued.promise;
+      expect((await service.get(preparing.id)).preparationStage).toBe('waiting_for_checkout');
+    } finally {
+      exclusive.mockRestore();
+      blocker.release();
+      await held;
+    }
+    await Promise.allSettled([...(service as any).operations.values()]);
+    expect(await service.get(preparing.id)).toMatchObject({ taskState: 'ready', preparationStage: null });
   });
 
   it('allows finishing other tasks and cancelling setup during a stalled remote refresh', async () => {

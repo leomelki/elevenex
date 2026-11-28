@@ -2,9 +2,11 @@ import {
   elevenexMcpUrl,
   SESSION_TOOL_INSTRUCTIONS,
 } from '../mcp/session-tool-context.js';
-import type { OpenCodeClient } from './opencode-client.js';
+import { setTimeout as delay } from 'node:timers/promises';
+import type { OpenCodeClient, OpenCodeSteerReceipt, OpenCodeTurnSelection } from './opencode-client.js';
 import { OpenCodeTranscriptStore } from './opencode-transcript-store.js';
 import { OpenCodeSessionTree } from './opencode-session-tree.js';
+import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 import {
   BadRequestException,
@@ -29,9 +31,11 @@ import type {
   AgentRuntimeProvider,
   AgentRuntimeProviderInfo,
   AgentImageInput,
+  AgentPromptOptions,
   AgentForkConversationRequest,
   AgentLoginMode,
 } from '../agent-runtime/agent-runtime.types.js';
+import { QueuedPromptDispatches } from '../agent-runtime/queued-prompt-dispatches.js';
 import type {
   ClaudeRuntimeStatePayload,
   ClaudeTranscriptItem,
@@ -72,6 +76,9 @@ interface RuntimeEntry {
   permissions: PermissionRequest[];
   questions: QuestionRequest[];
   run: Promise<void> | null;
+  turnSelection?: OpenCodeTurnSelection;
+  steering: Set<Promise<void>>;
+  steerReceipts: Set<OpenCodeSteerReceipt>;
   restoring: Promise<void> | null;
   idleTimer: NodeJS.Timeout | null;
   lastUsedAt: number;
@@ -110,8 +117,10 @@ export class OpenCodeAgentRuntimeProvider
     },
   };
   private readonly entries = new Map<number, RuntimeEntry>();
+  private readonly rewinding = new Set<number>();
   private readonly starts = new Map<number, Promise<RuntimeEntry>>();
   private readonly states = new Map<number, ClaudeRuntimeStatePayload>();
+  private readonly queuedDispatches = new QueuedPromptDispatches();
   private readonly clients = new Map<number, number>();
   private readonly generations = new Map<number, number>();
   private readonly interruptions = new Map<number, number>();
@@ -164,8 +173,11 @@ export class OpenCodeAgentRuntimeProvider
     return this.catalog.continueLogin(options);
   }
 
-  private async state(sessionId: number): Promise<ClaudeRuntimeStatePayload> {
-    const session = await this.sessions.findOne(sessionId);
+  private async state(
+    sessionId: number,
+    session?: Awaited<ReturnType<SessionsService['findOne']>>,
+  ): Promise<ClaudeRuntimeStatePayload> {
+    session ??= await this.sessions.findOne(sessionId);
     let state = this.states.get(sessionId);
     if (!state) {
       const catalog = await this.catalog.getModelCatalog();
@@ -173,6 +185,7 @@ export class OpenCodeAgentRuntimeProvider
         this.settings.getAgentProviderDefaults('opencode'),
         catalog.models,
         catalog.providerDefaultModelId,
+        session.agentSelection?.provider === 'opencode' ? session.agentSelection : undefined,
       );
       state = {
         sessionId,
@@ -232,29 +245,32 @@ export class OpenCodeAgentRuntimeProvider
     }
     return state;
   }
-  async getRuntimeState(sessionId: number) {
+  async getRuntimeState(sessionId: number, options?: { initialize?: boolean }) {
     const state = await this.state(sessionId);
     const [auth, catalog] = await Promise.all([
       this.catalog.getAuthStatus(),
       this.catalog.getModelCatalog(),
     ]);
     state.authStatus = auth;
-    if (auth.installed) await this.ensure(sessionId).catch(() => undefined);
+    if (auth.installed && options?.initialize !== false) await this.ensure(sessionId).catch(() => undefined);
     const entry = this.entries.get(sessionId);
     if (!entry) state.availableModels = catalog.models;
     else if (entry.models.size) {
       const projectAuth = { ...auth, authenticated: true };
       state.authStatus = projectAuth;
     }
-    return { ...state, liveItems: [...state.liveItems] };
+    return {
+      ...state, backgroundWork: this.backgroundWork(state), liveItems: [...state.liveItems],
+      dispatchingPrompts: this.queuedDispatches.current(state),
+    };
   }
-  async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
+  async getHistory(sessionId: number, options?: { changeDetails?: 'summary' }): Promise<ClaudeTranscriptItem[]> {
     const state = await this.state(sessionId);
     if (!state.claudeSessionId) return [];
     const entry = await this.ensure(sessionId);
     if (!entry.historyLoaded) await this.restore(entry);
     const history = this.history(entry);
-    return this.turnChanges?.attachHistory(sessionId, 'opencode', state.claudeSessionId, history) ?? history;
+    return this.turnChanges?.attachHistory(sessionId, 'opencode', state.claudeSessionId, history, options?.changeDetails) ?? history;
   }
   async getSnapshot(sessionId: number) {
     const history = await this.getHistory(sessionId);
@@ -319,6 +335,8 @@ export class OpenCodeAgentRuntimeProvider
       permissions: [],
       questions: [],
       run: null,
+      steering: new Set(),
+      steerReceipts: new Set(),
       restoring: null,
       idleTimer: null,
       lastUsedAt: Date.now(),
@@ -348,6 +366,7 @@ export class OpenCodeAgentRuntimeProvider
       entry.resources = resources;
       entry.agent = resources?.defaultAgent;
       state.availableModels = loaded.catalog.models;
+      const selection = session.agentSelection?.provider === 'opencode' ? session.agentSelection : undefined;
       if (!state.claudeSessionId && !this.selectionChanged.has(sessionId))
         Object.assign(
           state,
@@ -355,6 +374,7 @@ export class OpenCodeAgentRuntimeProvider
             this.settings.getAgentProviderDefaults('opencode'),
             loaded.catalog.models,
             loaded.catalog.providerDefaultModelId,
+            selection,
           ),
         );
       if (
@@ -363,8 +383,12 @@ export class OpenCodeAgentRuntimeProvider
         !this.selectionChanged.has(sessionId)
       ) {
         const selected = await entry.client.selection(state.claudeSessionId);
-        state.selectedModel = selected.model;
-        state.reasoningEffort = selected.variant;
+        if (!this.selectionChanged.has(sessionId)) {
+          state.selectedModel = selection?.model === undefined ? selected.model : selection.model;
+          state.reasoningEffort = selection?.reasoningEffort === undefined
+            ? selected.variant
+            : selection.reasoningEffort;
+        }
         entry.agent = selected.agent ?? entry.agent;
       }
       state.sessionMetadata = {
@@ -422,10 +446,12 @@ export class OpenCodeAgentRuntimeProvider
             : undefined,
         ]);
       if (entry.controller.signal.aborted) return;
+      const streaming = !!entry.run || (recoverRuntime && statuses?.data?.[sessionID]?.type === 'busy');
       entry.transcript.reconcile(
         messages.data ?? [],
         before,
         session.data?.revert?.messageID,
+        streaming ? new Set(entry.state.liveItems.flatMap(item => item.sourceMessageId ?? [])) : undefined,
       );
       entry.historyLoaded = true;
       if (recoverRuntime) this.syncSubagents(entry, statuses?.data);
@@ -433,7 +459,7 @@ export class OpenCodeAgentRuntimeProvider
         .orderedMessages()
         .findLast((message) => message.role === 'assistant');
       if (latestAssistant?.role === 'assistant')
-        this.updateContextUsage(entry, latestAssistant);
+        entry.state.contextUsage = this.contextUsage(entry, latestAssistant);
       if (
         !entry.client!.selection &&
         (entry.run || statuses?.data?.[sessionID]?.type === 'busy')
@@ -497,18 +523,28 @@ export class OpenCodeAgentRuntimeProvider
       entry.state.subagents.map((agent) => [agent.agentId, agent]),
     );
     entry.state.subagents = entry.state.claudeSessionId
-      ? entry.tree.descendants(entry.state.claudeSessionId).map((child) => ({
-          agentId: child.id,
-          agentType: child.title,
-          status: statuses
-            ? statuses[child.id]?.type === 'busy'
-              ? 'started'
-              : 'stopped'
-            : (previous.get(child.id)?.status ?? 'started'),
-          timestamp: new Date(child.time.created).toISOString(),
-        }))
-      : [];
+      ? entry.tree.descendants(entry.state.claudeSessionId).map(child => {
+          const old = previous.get(child.id);
+          const active = statuses ? !!statuses[child.id] && statuses[child.id].type !== 'idle' : old?.status !== 'stopped';
+          const timestamp = old?.timestamp ?? new Date(child.time.created).toISOString();
+          return { ...old, agentId: child.id, agentType: child.title,
+            status: active ? 'started' as const : 'stopped' as const,
+            executionStatus: active ? old?.executionStatus === 'waiting' ? 'waiting' as const : 'running' as const : old?.status === 'stopped' ? old.executionStatus ?? 'completed' as const : 'completed' as const,
+            startedAt: old?.startedAt ?? timestamp,
+            timestamp: !active && old?.status !== 'stopped' ? new Date().toISOString() : timestamp,
+            ...(!active ? { completedAt: old?.completedAt ?? new Date().toISOString() } : { completedAt: undefined }),
+            canStop: active,
+          };
+        }) : [];
   }
+  private backgroundWork(state: ClaudeRuntimeStatePayload) {
+    return state.subagents.filter(agent => agent.status === 'started').map(agent => ({
+      id: `subagent:${agent.agentId}`, kind: 'subagent' as const,
+      label: agent.displayName ?? agent.agentType, detail: agent.lastAssistantMessage,
+      startedAt: agent.startedAt ?? agent.timestamp, updatedAt: agent.timestamp,
+    }));
+  }
+
   private emitHistory(entry: RuntimeEntry): void {
     this.emit('event', {
       type: 'history_snapshot',
@@ -530,15 +566,15 @@ export class OpenCodeAgentRuntimeProvider
     if (!entry.controller.signal.aborted) this.emitState(entry);
   }
 
-  private updateContextUsage(
+  private contextUsage(
     entry: RuntimeEntry,
     message: Message & { role: 'assistant' },
-  ): void {
+  ) {
     const model = entry.models.get(`${message.providerID}/${message.modelID}`);
     const tokens = message.tokens;
     const totalTokens =
       tokens.input + tokens.output + tokens.cache.read + tokens.cache.write;
-    entry.state.contextUsage = {
+    return {
       model: `${message.providerID}/${message.modelID}`,
       totalTokens,
       maxTokens: model?.limit.context ?? 0,
@@ -626,20 +662,45 @@ export class OpenCodeAgentRuntimeProvider
       }
       case 'message.updated': {
         const message = event.properties.info;
-        if (message.sessionID !== state.claudeSessionId) break;
-        entry.transcript.putMessage(message);
+        if (message.sessionID !== state.claudeSessionId) {
+          const agent = state.subagents.find(agent => agent.agentId === message.sessionID);
+          if (agent && message.role === 'assistant') {
+            agent.model = `${message.providerID}/${message.modelID}`;
+            agent.contextUsage = this.contextUsage(entry, message);
+            this.emitState(entry);
+          }
+          break;
+        }
+        for (const part of entry.transcript.putMessage(message))
+          this.emitPart(entry, part);
         // V1 changes primary agents through user messages, including native plan_exit.
         if (message.role === 'user' && !entry.client!.selection)
           await this.syncNativeAgent(entry, message.agent);
         if (message.role === 'assistant') {
-          this.updateContextUsage(entry, message);
+          state.contextUsage = this.contextUsage(entry, message);
           this.emitState(entry);
         }
         break;
       }
       case 'message.part.updated': {
         const part = event.properties.part;
-        if (part.sessionID !== state.claudeSessionId) break;
+        if (part.sessionID !== state.claudeSessionId) {
+          const agent = state.subagents.find(agent => agent.agentId === part.sessionID);
+          if (agent) {
+            if (part.type === 'text') agent.lastAssistantMessage = part.text.slice(0, 240);
+            else if (part.type === 'tool') agent.lastToolName = part.tool;
+            this.emitState(entry);
+          }
+          break;
+        }
+        if (this.turnChanges && part.type === 'tool' && part.state.status !== 'pending') {
+          const capture = this.turnChanges.forSession(state.sessionId, 'opencode');
+          if (capture && part.state.time.start >= Date.parse(capture.startedAt)) {
+            const tool = canonicalizeAgentTool(part.tool, part.state.input);
+            this.turnChanges.openCodeTool(capture, part.callID, tool.toolDisplayName, tool.toolKind,
+              part.state.status, tool.toolInput, part.state.metadata, part.messageID);
+          }
+        }
         entry.transcript.putPart(part);
         this.emitPart(entry, part);
         break;
@@ -649,9 +710,11 @@ export class OpenCodeAgentRuntimeProvider
         if (sessionID !== state.claudeSessionId || field !== 'text') break;
         const part = entry.transcript.parts.get(partID);
         if (part?.type === 'text' || part?.type === 'reasoning') {
-          if (!state.liveItems.some((item) => item.id === partID))
-            this.emitPart(entry, part);
-          entry.transcript.appendDelta(partID, delta);
+          const updated = entry.transcript.appendDelta(partID, delta);
+          if (!state.liveItems.some(item => item.id === partID)) {
+            if (updated) this.emitPart(entry, updated);
+            break;
+          }
           state.liveItems = state.liveItems.map((item) =>
             item.id === partID
               ? { ...item, content: (item.content ?? '') + delta }
@@ -726,10 +789,17 @@ export class OpenCodeAgentRuntimeProvider
           );
           if (agent) {
             agent.status = status.type === 'idle' ? 'stopped' : 'started';
+            agent.executionStatus = status.type === 'idle' ? agent.executionStatus === 'error' ? 'error' : agent.stoppedByUser ? 'interrupted' : 'completed' : 'running';
+            if (status.type !== 'idle') agent.stoppedByUser = false;
+            agent.canStop = status.type !== 'idle';
+            agent.timestamp = new Date().toISOString();
+            if (status.type === 'idle') agent.completedAt = agent.timestamp;
+            else agent.completedAt = undefined;
             this.emitState(entry);
           }
           break;
         }
+        if (status.type !== 'retry') state.latestApiRetry = null;
         if (status.type === 'retry') {
           state.latestApiRetry = {
             attempt: status.attempt,
@@ -761,16 +831,25 @@ export class OpenCodeAgentRuntimeProvider
         }
         break;
       }
-      case 'session.error':
+      case 'session.error': {
+        const child = state.subagents.find(agent => agent.agentId === event.properties.sessionID);
+        if (child && event.properties.error?.name !== 'MessageAbortedError') {
+          child.status = 'stopped'; child.executionStatus = 'error'; child.canStop = false;
+          child.timestamp = new Date().toISOString(); child.completedAt = child.timestamp;
+          this.emitState(entry);
+          break;
+        }
         if (
           event.properties.sessionID === state.claudeSessionId &&
           event.properties.error?.name !== 'MessageAbortedError'
         )
           this.fail(entry, new Error(JSON.stringify(event.properties.error)));
         break;
+      }
       case 'session.compacted':
         if (event.properties.sessionID === state.claudeSessionId) {
           state.runtimeStatus = { status: null, compactResult: 'success' };
+          state.notifications = [...state.notifications.filter(note => note.key !== 'compaction'), { key: 'compaction', text: 'Context compacted', priority: 'low' as const, timestamp: new Date().toISOString() }].slice(-8);
           this.emitState(entry);
         }
         break;
@@ -783,6 +862,7 @@ export class OpenCodeAgentRuntimeProvider
     }
   }
   private emitPart(entry: RuntimeEntry, part: Part): void {
+    let settled = false;
     for (const item of entry.transcript.partItems(part)) {
       const index = entry.state.liveItems.findIndex(
         (existing) => existing.id === item.id,
@@ -804,7 +884,19 @@ export class OpenCodeAgentRuntimeProvider
                 : 'message_start',
         payload: { sessionId: entry.state.sessionId, item },
       });
+      const result = item.kind === 'system' ? item.nativeTask : undefined;
+      if (result?.status !== 'completed' && result?.status !== 'error') continue;
+      const agent = entry.state.subagents.find(child => child.agentId === result.agentId);
+      if (!agent || (agent.status === 'stopped' && agent.executionStatus === result.status &&
+          (!result.detail || agent.lastAssistantMessage === result.detail))) continue;
+      agent.status = 'stopped';
+      agent.executionStatus = result.status;
+      agent.lastAssistantMessage = result.detail ?? agent.lastAssistantMessage;
+      agent.completedAt = item.timestamp;
+      agent.canStop = false;
+      settled = true;
     }
+    if (settled) this.emitState(entry);
   }
   private syncRequests(entry: RuntimeEntry): void {
     entry.state.pendingPermissionRequest = entry.permissions[0]
@@ -825,6 +917,13 @@ export class OpenCodeAgentRuntimeProvider
   }
   private emitState(entry: RuntimeEntry): void {
     const state = entry.state;
+    for (const agent of state.subagents) {
+      if (agent.status !== 'started') continue;
+      const waiting = entry.permissions.some(request => request.sessionID === agent.agentId) || entry.questions.some(request => request.sessionID === agent.agentId);
+      if (waiting) agent.executionStatus = 'waiting';
+      else if (agent.executionStatus === 'waiting') agent.executionStatus = 'running';
+    }
+    state.backgroundWork = this.backgroundWork(state);
     state.sessionState =
       state.runPhase === 'waiting'
         ? 'requires_action'
@@ -843,11 +942,15 @@ export class OpenCodeAgentRuntimeProvider
         : state.pendingUserInputRequest
           ? 'Input needed'
           : null,
-      backgroundActive: false,
-    });
+      backgroundActive: state.backgroundWork.length > 0,
+    }, { authoritative: true, provider: 'opencode' });
     this.emit('event', {
       type: 'runtime_snapshot',
-      payload: { ...state, liveItems: [...state.liveItems] },
+      payload: {
+        ...state,
+        liveItems: [...state.liveItems],
+        dispatchingPrompts: this.queuedDispatches.current(state),
+      },
     });
   }
   private fail(entry: RuntimeEntry, error: unknown): void {
@@ -871,10 +974,13 @@ export class OpenCodeAgentRuntimeProvider
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
+    options?: AgentPromptOptions,
   ): Promise<void> {
+    this.assertNotRewinding(sessionId);
     if (!prompt.trim() && !images?.length)
       throw new BadRequestException('Prompt must not be empty.');
     const state = await this.state(sessionId);
+    this.assertNotRewinding(sessionId);
     if (
       this.entries.get(sessionId)?.interruptRequested &&
       state.runPhase === 'error'
@@ -882,12 +988,34 @@ export class OpenCodeAgentRuntimeProvider
       throw new ConflictException(
         'OpenCode has not confirmed that the previous turn stopped. Retry stopping it before continuing.',
       );
+    const active = this.entries.get(sessionId);
+    if (
+      options?.preferSteering &&
+      !options.queue &&
+      !images?.length &&
+      active?.run &&
+      active.client?.steerPrompt &&
+      active.turnSelection &&
+      state.claudeSessionId &&
+      !active.interruptRequested &&
+      !active.controller.signal.aborted &&
+      !state.queuePaused &&
+      (options.requireSteering || !state.pendingPrompts.length) &&
+      !this.interrupts.has(sessionId)
+    ) {
+      await this.steerActivePrompt(active, state.claudeSessionId, prompt);
+      options.onAccepted?.('steered');
+      return;
+    }
+    if (options?.requireSteering)
+      throw new ConflictException('No active turn can accept live steering.');
     if (
       state.canInterrupt ||
       state.queuePaused ||
       this.interrupts.has(sessionId) ||
-      this.entries.get(sessionId)?.run
+      active?.run
     ) {
+      options?.beforeDispatch?.();
       state.pendingPrompts = [
         ...state.pendingPrompts,
         {
@@ -904,6 +1032,7 @@ export class OpenCodeAgentRuntimeProvider
       )
         state.queuePaused = true;
       this.emit('event', { type: 'run_state', payload: state });
+      options?.onAccepted?.('queued');
       return;
     }
     state.canInterrupt = true;
@@ -941,9 +1070,17 @@ export class OpenCodeAgentRuntimeProvider
       entry.controller.signal,
       turnController.signal,
     ]);
-    entry.run = this.run(entry, signal, prompt, titlePrompt, images).finally(
+    let acknowledge!: () => void;
+    const receipt = options?.beforeDispatch ? new Promise<void>(resolve => { acknowledge = resolve; }) : undefined;
+    entry.run = this.run(entry, signal, prompt, titlePrompt, images, options?.beforeDispatch ? {
+      beforeDispatch: options.beforeDispatch,
+      acknowledge: () => { options.onAccepted?.('running'); acknowledge(); },
+    } : undefined).finally(
       () => {
+        this.queuedDispatches.clear(state);
         entry.run = null;
+        entry.turnSelection = undefined;
+        entry.steerReceipts.clear();
         if (entry.turnController === turnController)
           entry.turnController = null;
         if (entry.controller.signal.aborted) return;
@@ -965,13 +1102,77 @@ export class OpenCodeAgentRuntimeProvider
     void entry.run.catch((error) => {
       if (!entry.controller.signal.aborted) this.fail(entry, error);
     });
+    if (receipt) await Promise.race([receipt, entry.run]);
+    else options?.onAccepted?.('running');
   }
+  private async steerActivePrompt(entry: RuntimeEntry, nativeId: string, prompt: string): Promise<void> {
+    const { client, turnController, turnSelection } = entry;
+    if (!client?.steerPrompt || !turnController || !turnSelection)
+      throw new ConflictException('No active OpenCode turn can accept live steering.');
+    // Preserve the active prompt's model, variant and mode, even if the user
+    // has already selected new settings for the next turn.
+    const signal = AbortSignal.any([entry.controller.signal, turnController.signal]);
+    const send = client.steerPrompt(nativeId, prompt, turnSelection, { signal })
+      .then(receipt => {
+        if (receipt && entry.turnController === turnController && !signal.aborted)
+          entry.steerReceipts.add(receipt);
+      });
+    entry.steering.add(send);
+    try {
+      await send;
+    } finally {
+      entry.steering.delete(send);
+    }
+  }
+
+  private async settleSteers(entry: RuntimeEntry, nativeId: string, signal: AbortSignal): Promise<void> {
+    // V1's blocking prompt can return while the separately admitted input is
+    // still generating. Keep one owner for the transcript and local queue.
+    let deadline = Date.now() + 5_000;
+    let observedReceipt = false;
+    for (;;) {
+      if (entry.steering.size) {
+        await Promise.allSettled(entry.steering);
+        deadline = Date.now() + 5_000;
+      }
+      if (signal.aborted || (!observedReceipt && !entry.steerReceipts.size && !entry.steering.size)) {
+        entry.turnSelection = undefined;
+        return;
+      }
+      if (entry.steering.size) continue;
+      const status = await entry.client!.session.status({}, { signal });
+      if (entry.steering.size) continue;
+      const phase = status.data?.[nativeId]?.type;
+      if (!phase || phase === 'idle') {
+        for (const receipt of entry.steerReceipts) {
+          if (await receipt(signal)) {
+            entry.steerReceipts.delete(receipt);
+            observedReceipt = true;
+          }
+        }
+        if (!entry.steerReceipts.size) {
+          // A receipt can appear between the status read and lookup.
+          const confirmed = await entry.client!.session.status({}, { signal });
+          const currentPhase = confirmed.data?.[nativeId]?.type;
+          if ((!currentPhase || currentPhase === 'idle') && !entry.steering.size && !entry.steerReceipts.size) {
+            entry.turnSelection = undefined;
+            return;
+          }
+        } else if (Date.now() >= deadline) {
+          throw new ConflictException('OpenCode did not confirm delivery of the steered prompt.');
+        }
+      }
+      await delay(500, undefined, { signal });
+    }
+  }
+
   private async run(
     entry: RuntimeEntry,
     signal: AbortSignal,
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
+    delivery?: { readonly beforeDispatch: () => void; readonly acknowledge: () => void },
   ): Promise<void> {
     const state = entry.state;
     const client = entry.client!;
@@ -1044,16 +1245,20 @@ export class OpenCodeAgentRuntimeProvider
           throw new BadRequestException(
             'Choose an available primary OpenCode agent.',
           );
+        delivery?.beforeDispatch();
         entry.agent = agent.id;
         await client.selectAgent?.(state.claudeSessionId, agent.id, { signal });
         if (signal.aborted) return;
         await this.setPlanMode(state.sessionId, agent.id === 'plan');
+        delivery?.acknowledge();
         return;
       }
       const skill =
         command &&
         entry.resources?.skills.find((skill) => skill.name === command[1]);
       const selection = { ...common, model, system: entry.system };
+      entry.turnSelection = selection;
+      delivery?.beforeDispatch();
       const result =
         command?.[1] === 'compact' && client.compact
           ? (await client.compact(state.claudeSessionId, selection, { signal }),
@@ -1086,9 +1291,12 @@ export class OpenCodeAgentRuntimeProvider
                   },
                   { signal },
                 );
+      if (delivery && 'error' in result && result.error) throw new Error('OpenCode did not confirm the message.');
+      delivery?.acknowledge();
       if (signal.aborted) return;
       if (result.data) {
-        entry.transcript.putMessage(result.data.info);
+        const buffered = entry.transcript.putMessage(result.data.info);
+        for (const part of buffered) this.emitPart(entry, part);
         for (const part of result.data.parts) {
           entry.transcript.putPart(part);
           this.emitPart(entry, part);
@@ -1099,6 +1307,8 @@ export class OpenCodeAgentRuntimeProvider
         )
           throw new Error(JSON.stringify(result.data.info.error.data));
       }
+      await this.settleSteers(entry, state.claudeSessionId, signal);
+      if (signal.aborted) return;
       // An earlier reconnect snapshot may have started before this turn finished.
       // Wait for it before fetching the authoritative completed transcript.
       await entry.restoring;
@@ -1209,23 +1419,36 @@ export class OpenCodeAgentRuntimeProvider
     const state = await this.state(sessionId);
     state.pendingPrompts = [];
     state.queuePaused = false;
+    this.queuedDispatches.clear(state);
     this.emit('event', { type: 'run_state', payload: state });
   }
   async steerPendingPrompt(sessionId: number, id: string) {
     const state = await this.state(sessionId);
     const prompt = state.pendingPrompts.find((item) => item.id === id);
     if (!prompt) throw new BadRequestException('Queued prompt was not found.');
-    // V2 has native steering; V1 resumes the selected prompt after a clean abort.
+    // Promote text into a ready native turn without interrupting it.
     const entry = this.entries.get(sessionId);
-    if (entry?.client?.steerPrompt && entry.run && !prompt.images?.length) {
-      await entry.client.steerPrompt(state.claudeSessionId!, prompt.prompt);
+    if (
+      entry?.client?.steerPrompt && entry.run && entry.turnSelection &&
+      !entry.interruptRequested && state.claudeSessionId && !prompt.images?.length
+    ) {
+      const finishDispatch = this.queuedDispatches.begin(state, prompt);
+      state.pendingPrompts = state.pendingPrompts.filter(item => item !== prompt);
+      try {
+        await this.steerActivePrompt(entry, state.claudeSessionId, prompt.prompt);
+      } catch (error) {
+        if (finishDispatch() && this.states.get(sessionId) === state) {
+          state.pendingPrompts = [prompt, ...state.pendingPrompts];
+          state.queuePaused = true;
+          this.emitState(entry);
+        }
+        throw error;
+      }
       await this.cancelPendingPrompt(sessionId, id);
       return;
     }
-    await this.interrupt(sessionId);
-    await this.cancelPendingPrompt(sessionId, id);
-    state.queuePaused = false;
-    await this.submitPrompt(sessionId, prompt.prompt, undefined, prompt.images);
+    state.pendingPrompts = [prompt, ...state.pendingPrompts.filter(item => item !== prompt)];
+    await this.resumePendingPrompts(sessionId);
   }
   async resumePendingPrompts(sessionId: number) {
     const state = await this.state(sessionId);
@@ -1239,24 +1462,42 @@ export class OpenCodeAgentRuntimeProvider
       return;
     const [next, ...remaining] = state.pendingPrompts;
     state.pendingPrompts = remaining;
-    await this.submitPrompt(sessionId, next.prompt, undefined, next.images);
+    await this.sendQueuedPrompt(sessionId, state, next);
+  }
+
+  private async sendQueuedPrompt(
+    sessionId: number,
+    state: ClaudeRuntimeStatePayload,
+    prompt: ClaudeRuntimeStatePayload['pendingPrompts'][number],
+  ): Promise<void> {
+    const finishDispatch = this.queuedDispatches.begin(state, prompt);
+    try {
+      await this.submitPrompt(sessionId, prompt.prompt, undefined, prompt.images);
+    } finally {
+      // A startup failure or interruption before the turn registered has no run cleanup.
+      if (!this.entries.get(sessionId)?.run && finishDispatch() && this.states.get(sessionId) === state)
+        this.emit('event', { type: 'run_state', payload: state });
+    }
   }
 
   async setSelectedModel(sessionId: number, model: string | null) {
-    const state = await this.state(sessionId);
-    this.selectionChanged.add(sessionId);
     if (model) openCodeModel(model);
+    const session = await this.sessions.findOne(sessionId);
+    const state = await this.state(sessionId, session);
+    this.selectionChanged.add(sessionId);
     state.selectedModel = model;
     if (!model) state.reasoningEffort = null;
     const known = state.availableModels.find((item) => item.id === model);
     if (known && !known.reasoningEfforts?.includes(state.reasoningEffort ?? ''))
       state.reasoningEffort = null;
+    if (session.agentSelection?.provider === 'opencode')
+      this.sessions.updateSessionAgentSelection(sessionId, 'opencode', { model, reasoningEffort: state.reasoningEffort ?? null });
     this.emit('event', { type: 'run_state', payload: state });
     return state;
   }
   async setReasoningEffort(sessionId: number, effort: string | null) {
-    const state = await this.state(sessionId);
-    this.selectionChanged.add(sessionId);
+    const session = await this.sessions.findOne(sessionId);
+    const state = await this.state(sessionId, session);
     const known = state.availableModels.find(
       (item) => item.id === state.selectedModel,
     );
@@ -1264,6 +1505,9 @@ export class OpenCodeAgentRuntimeProvider
       throw new BadRequestException(
         'This model does not support that OpenCode variant.',
       );
+    this.selectionChanged.add(sessionId);
+    if (session.agentSelection?.provider === 'opencode')
+      this.sessions.updateSessionAgentSelection(sessionId, 'opencode', { reasoningEffort: effort });
     state.reasoningEffort = effort;
     this.emit('event', { type: 'run_state', payload: state });
     return state;
@@ -1432,6 +1676,24 @@ export class OpenCodeAgentRuntimeProvider
       });
     return commands;
   }
+  async stopSubagent(sessionId: number, agentId: string): Promise<void> {
+    const entry = this.entries.get(sessionId);
+    const agent = entry?.state.subagents.find(agent => agent.agentId === agentId);
+    if (!entry || !agent || agent.status !== 'started' || agentId === entry.state.claudeSessionId || !entry.tree.owns(entry.state.claudeSessionId, agentId))
+      throw new BadRequestException('This agent is no longer available to stop.');
+    const response = await entry.client!.session.abort({ sessionID: agentId });
+    if (response.data !== true) throw new Error('OpenCode did not confirm stopping this agent.');
+    const statuses = await entry.client!.session.status();
+    const nativeStatus = statuses.data?.[agentId]?.type;
+    if (!statuses.data || (nativeStatus && nativeStatus !== 'idle'))
+      throw new ConflictException('OpenCode has not confirmed that this agent stopped. Refresh before retrying.');
+    if (this.entries.get(sessionId) !== entry || entry.controller.signal.aborted) return;
+    agent.status = 'stopped'; agent.executionStatus = 'interrupted'; agent.stoppedByUser = true;
+    agent.canStop = false; agent.timestamp = new Date().toISOString(); agent.completedAt = agent.timestamp;
+    entry.permissions = entry.permissions.filter(request => request.sessionID !== agentId);
+    entry.questions = entry.questions.filter(request => request.sessionID !== agentId);
+    this.syncRequests(entry);
+  }
   async getSubagentHistory(sessionId: number, agentId: string) {
     const entry = await this.ensure(sessionId);
     if (
@@ -1443,10 +1705,21 @@ export class OpenCodeAgentRuntimeProvider
       );
     const messages =
       (await entry.client!.session.messages({ sessionID: agentId })).data ?? [];
+    if (this.entries.get(sessionId) !== entry || entry.controller.signal.aborted || !this.owns(entry, agentId))
+      throw new BadRequestException('Agent is no longer available.');
+    this.syncSubagents(entry);
+    const subagent = entry.state.subagents.find(agent => agent.agentId === agentId);
+    if (!subagent) throw new BadRequestException('Agent is no longer available.');
+    const transcript = new OpenCodeTranscriptStore();
+    for (const { info, parts } of messages) {
+      if (info.sessionID !== agentId) continue;
+      transcript.putMessage(info);
+      for (const part of parts)
+        if (part.sessionID === agentId && part.messageID === info.id) transcript.putPart(part);
+    }
     return {
-      history: messages.flatMap((message) =>
-        message.parts.flatMap((part) => openCodePartItems(part, message.info)),
-      ),
+      subagent: { ...subagent },
+      history: transcript.history(),
       transcriptAvailable: true,
     };
   }
@@ -1498,34 +1771,92 @@ export class OpenCodeAgentRuntimeProvider
     };
   }
   async rewindConversation(sessionId: number, messageId: string) {
+    this.assertNotRewinding(sessionId);
+    this.rewinding.add(sessionId);
+    try {
+      return await this.rewindIdleConversation(sessionId, messageId);
+    } finally {
+      this.rewinding.delete(sessionId);
+    }
+  }
+
+  private assertNotRewinding(sessionId: number): void {
+    if (this.rewinding.has(sessionId))
+      throw new ConflictException('An OpenCode message edit is already in progress.');
+  }
+
+  private async rewindIdleConversation(sessionId: number, messageId: string) {
     const entry = await this.ensure(sessionId);
-    if (entry.state.canInterrupt)
-      throw new ConflictException('Stop the current turn before rewinding.');
+    const client = entry.client!, state = entry.state;
+    await entry.restoring;
+    if (entry.run || state.canInterrupt || entry.interruptRequested || this.interrupts.has(sessionId) ||
+        state.subagents.some(agent => agent.status === 'started'))
+      throw new ConflictException('Stop the current turn and background work before editing.');
+    if (state.pendingPrompts.length || this.queuedDispatches.current(state).length)
+      throw new ConflictException('Resolve queued messages before editing.');
     const anchor = this.history(entry).find(
       (item) => item.id === messageId || item.sourceMessageId === messageId,
     );
-    if (!anchor?.sourceMessageId || !entry.state.claudeSessionId)
+    const source = state.claudeSessionId;
+    if (!anchor?.sourceMessageId || !source)
       throw new BadRequestException('Rewind anchor was not found.');
-    // Rewind only conversation history; native revert also modifies files owned by Elevenex's Git UI.
     const ordered = entry.transcript.orderedMessages();
-    const messages = ordered.slice(
-      ordered.findIndex((message) => message.id === anchor.sourceMessageId),
-    );
-    if (entry.client!.rewindHistory)
-      await entry.client!.rewindHistory(
-        entry.state.claudeSessionId,
-        anchor.sourceMessageId,
-      );
-    else
-      for (const message of messages)
-        await entry.client!.session.deleteMessage({
-          sessionID: entry.state.claudeSessionId,
-          messageID: message.id,
-        });
-    entry.transcript.removeMessages(messages);
-    entry.state.liveItems = [];
-    entry.state.pendingPrompts = [];
-    const history = this.history(entry);
+    const index = ordered.findIndex(message => message.id === anchor.sourceMessageId);
+    if (index < 0 || ordered[index].role !== 'user' || anchor.kind !== 'user' || anchor.isSynthetic)
+      throw new BadRequestException('Only user messages can be edited.');
+    const assertCurrent = () => {
+      if (this.entries.get(sessionId) !== entry || entry.controller.signal.aborted)
+        throw new ConflictException('The OpenCode session closed while editing.');
+    };
+    const [nativeSession, statuses] = await Promise.all([client.session.get({ sessionID: source }), client.session.status()]);
+    const status = statuses.data?.[source]?.type;
+    if (!nativeSession.data || !statuses.data || (status && status !== 'idle'))
+      throw new ConflictException('Wait for OpenCode to finish before editing.');
+    if (nativeSession.data.revert)
+      throw new ConflictException('Finish or clear the staged OpenCode revert before editing.');
+    assertCurrent();
+    let history: ClaudeTranscriptItem[];
+    if (client.rewindHistory) {
+      // V2 can commit a history-only revert without touching the checkout.
+      try {
+        await client.rewindHistory(source, anchor.sourceMessageId);
+      } catch (error) {
+        await this.restore(entry).catch(() => undefined);
+        throw error;
+      }
+      assertCurrent();
+      entry.transcript.removeMessages(ordered.slice(index));
+      history = this.history(entry);
+    } else {
+      // V1's revert changes files, and per-message deletion can stop halfway.
+      // Switch to a validated native fork of the retained prefix instead.
+      const fork = (await client.session.fork({ sessionID: source, messageID: anchor.sourceMessageId })).data;
+      if (!fork?.id || fork.id === source) throw new Error('OpenCode did not create the edited conversation.');
+      try {
+        const copied = (await client.session.messages({ sessionID: fork.id })).data;
+        if (!copied || copied.length !== index)
+          throw new Error('OpenCode did not retain the requested conversation prefix.');
+        history = copied.flatMap(({ info, parts }) => parts.flatMap(part => openCodePartItems(part, info)));
+        const session = await this.sessions.findOne(sessionId);
+        await client.session.update({ sessionID: fork.id, title: session.name ?? undefined, permission: openCodePermissionRules(state.permissionMode) });
+        assertCurrent();
+        this.sessions.replaceEditedConversation(sessionId, 'opencode', source, fork.id,
+          new Date(ordered[index].time.created).toISOString());
+      } catch (error) {
+        await client.session.delete({ sessionID: fork.id }).catch(() => undefined);
+        throw error;
+      }
+      this.stop(sessionId);
+      state.claudeSessionId = fork.id;
+    }
+    state.liveItems = [];
+    state.queuePaused = false;
+    state.runPhase = 'idle';
+    state.sessionState = 'idle';
+    state.lastError = null;
+    state.contextUsage = null;
+    state.subagents = [];
+    this.emit('event', { type: 'conversation_rewound', payload: { sessionId } });
     this.emit('event', {
       type: 'history_snapshot',
       payload: { sessionId, history },

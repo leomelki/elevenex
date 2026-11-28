@@ -1,0 +1,947 @@
+# Desktop captures for agents
+
+Run ordinary JavaScript against one real Angular renderer in native Electron.
+Yield names to capture precise checkpoints. No Playwright, Chrome installation,
+backend, accounts, production debugging hooks or new dependencies are required.
+Use the Node version required by `apps/desktop/README.md`.
+
+Omit `--fixture` to capture the normal product renderer through Electron main
+and its sandboxed preload. For supplied-data component states, start
+`pnpm desktop:preview` and pass `--url http://127.0.0.1:4310`. This uses the real
+components under an isolated development entry. The explicit `--fixture` mode
+only verifies this tool using a synthetic Angular component and never supplies
+product visual evidence.
+
+## Quick start
+
+```sh
+pnpm desktop:capture scripts/desktop-capture/scenarios/check.mjs --fixture
+```
+
+Or pass a disposable scenario through stdin, without creating a script file:
+
+```sh
+pnpm desktop:capture --fixture <<'JS'
+export default async function* (capture) {
+  await capture.waitFor(() => document.querySelector('ex-capture-fixture h1'));
+  await capture.component('ex-capture-fixture', (component, state) => {
+    component.count.set(state.count);
+    component.status.set(state.status);
+  }, { count: 42, status: 'Needs you' });
+  yield {name: 'needs-you', inspect: ['[role=status]']};
+
+  await capture.motion.freeze();
+  await capture.click('#toggle');
+  yield* capture.frames('opening', [0, 140, 280, 500, 1000], ['#panel']);
+}
+JS
+```
+
+Scenario paths resolve from the repository root. Saved modules can use normal
+relative imports. Inline modules can import Node built-ins or absolute file
+URLs; their code lives in memory and has no directory for relative imports.
+Keep disposable files in ignored `artifacts/desktop-capture/scenarios/`. Only
+reusable regression scenarios belong in `scripts/desktop-capture/scenarios/`.
+
+Use `--out artifacts/desktop-capture/my-check` to choose an **empty** directory;
+the default creates a unique run directory. Existing outputs are never replaced.
+The CLI prints `CAPTURE_IMAGE`, `CAPTURE_REPORT` and `CAPTURE_GALLERY` paths.
+Read `report.json` and require `verified: true` before claiming success. Use the
+image-viewing tool on the relevant PNGs; embed images in chat when showing them
+to the user. Artifacts are gitignored. Never use fixture images as evidence that
+the product shell looks correct.
+
+## Fast iteration
+
+One invocation reuses the same Electron window, Angular app, state, fonts and
+loaded assets across all its checkpoints. It recompiles main/preload/shared only
+when their source/configuration/lockfile changes. It starts an Angular server
+on an available loopback port and stops its owned processes on completion,
+failure, Ctrl+C or the overall deadline (120 seconds by default).
+
+For repeated invocations, keep Angular/HMR warm in a terminal:
+
+```sh
+pnpm desktop:capture:serve --fixture --port 4310
+# In another terminal:
+pnpm desktop:capture scripts/desktop-capture/scenarios/check.mjs --fixture --url http://127.0.0.1:4310
+```
+
+After the shell is available, omit `--fixture` from both commands, or reuse
+`pnpm desktop:dev` with `--url http://127.0.0.1:4300`. The runner never stops a
+server supplied with `--url`. Each invocation gets a fresh Electron profile and
+storage, independent of the user's app. The persistent server keeps compilation
+and asset caches warm; no persistent automation daemon or remote-debugging port
+is opened. Stop the serve terminal when finished.
+
+On the development Mac, a warm regression run captured eight states in about
+1.8 seconds end-to-end; a warm one-shot stdin capture took about 0.6 seconds.
+These are tool iteration measurements, not product frame-rate benchmarks.
+
+`--built` uses the existing `apps/desktop/renderer` through the real `app://`
+handler instead of starting Angular. Build the product first. Component state
+access requires Angular development mode; production captures use input and DOM
+inspection. This is an unpackaged native launch, not packaged-app validation.
+
+## Define states using real code
+
+The scenario runs in Electron **main** and can import Node's `assert` or local
+scenario helpers. Functions passed to `evaluate`, `component`, and `waitFor`
+execute in the renderer. They cannot close over scenario variables; pass data
+as explicit arguments and return serializable results. Await operations in order.
+
+| API | Behavior |
+| --- | --- |
+| `evaluate(fn, ...data)` | Execute a function in the renderer; return its serializable result. Promises and original error messages are preserved. |
+| `component(selector, (component, data) => ..., data?)` | Find one real Angular component through its development debug API; call public methods, set signals, or inspect state. Apply change detection and settle afterward. No app-specific registry or global test hook is needed. |
+| `waitFor(predicate, ...data)` | Retry a renderer condition for up to ten seconds. Prefer actual ready/empty/error selectors over sleeps. |
+| `settle()` | Await fonts, decoded DOM images and two paint frames. Does not finish or advance paused animations; does not wait for network/business operations. |
+| `click(css)`, `hover(css)` | Trusted Chromium mouse input. Clicks reject ambiguous, hidden, disabled or covered targets. Scroll off-screen targets into view explicitly. |
+| `fill(css, text)` | Select an editable input/textarea and send trusted text input, including Unicode. |
+| `press(key, modifiers = 0)` | Key down/up, with Tab/Enter/Escape support. Modifier mask follows CDP. |
+| `theme('light' \| 'dark')` | Update native theme and `prefers-color-scheme`. Product code must own its `data-theme` update. |
+| `reducedMotion(boolean)` | Set `prefers-reduced-motion`. |
+| `viewport(width, height)` | Change content viewport at 1× CSS pixel scale. |
+| `inspect(css[])` | Return layout boxes, computed styles, relevant attributes, focus, media and animation state. Up to 100 matches per selector. |
+| `accessibility()` | Return the accessible Chromium tree (up to 2,000 nonignored nodes). It aids inspection; it is not a WCAG audit. |
+| `cdp(method, params?)` | Raw Chromium command targeting this window. Use for wheel/drag/touch, advanced key events, or tracing, rather than growing action-specific tool handlers. |
+
+Define feature states through the actual owning component or service methods,
+then assert the resulting DOM. Prefer public domain operations over mutating
+internal fields. Feature-specific fake data and providers belong in isolated
+development/test entry points; do not add mock modes or evaluators to the
+production bridge. The normal `git:status` currently returns the foundation's
+existing stub; this tool does not implement repository or agent features.
+
+Changing the route or selected task can launch asynchronous work. Await a
+specific resulting state before yielding. For asynchronous error/loading states,
+use a feature's real test provider or controlled promise rather than arbitrary
+timeouts or screenshots of replacement HTML.
+
+Viewport changes resize the native window as well as the renderer. Chromium
+device emulation can suppress native child compositor frames, so it is not used.
+Checkpoints containing visible `WebContentsView` children capture their actual
+pixels separately and composite them at their live bounds; the report records
+those surfaces. Await the child feature's usable state before yielding. DOM and
+accessibility diagnostics still describe the trusted shell; native feature smoke
+checks must inspect the isolated child separately.
+
+## Motion
+
+`scenarios/browser-stream.mjs` checks the production remote-display component
+through `/browser-video`, with real Chromium pixels and managed FFmpeg H.264,
+trusted keyboard/IME input, both themes, narrow reduced motion and display pause.
+Use `--url http://127.0.0.1:4310` against `pnpm desktop:preview`. The bridge is an
+isolated preview provider; host input/transport and profiles have native integration
+tests. This capture is not an external SSH/WAN or packaged-app test.
+It also interrupts one input receipt while retaining the picture, then checks
+that a new trusted wheel gesture resumes scrolling without a click or replay.
+
+`scenarios/browser-overlay-input.mjs` checks the real task-browser layout owner
+with CDK tooltips and dialogs on `/task-browser`: an overlapping informational
+tooltip preserves input readiness and hit testing; dialogs block input and
+restore focus/readiness on exit. It covers both themes and narrow reduced motion.
+Its preview records layout receipts without a website or browser engine.
+
+`scenarios/browser-agent-policy.mjs` checks the production browser owner on
+`/task-browser`: code-first host access wording, older-host fallback, both themes,
+narrow layouts and reduced motion. It changes only the preview store’s advertised
+capability; native browser behavior has separate Electron/Chromium regressions.
+
+`scenarios/browser-tabs.mjs` checks the shared Browser/Terminal tab strip through
+the Browser preview: middle selection, idle dividers and hover suppression,
+natural wheel/trackpad scrolling, metadata refreshes, keyboard selection/closing,
+animated and interrupted new-tab entry, empty state and narrow reduced motion
+in both themes. Run it against `pnpm desktop:preview` with
+`--url http://127.0.0.1:4310`.
+
+`scenarios/composer-input-motion.mjs` checks trusted multiline edits through the
+connected workspace preview. It asserts text/box alignment before, during and
+after growth, shrinkage and interrupted newlines, plus native scrolling at the
+height cap and narrow reduced-motion layouts in both themes. Run it with
+`--url http://127.0.0.1:4310`.
+
+`scenarios/prompt-edit.mjs` checks the saved-message edit action through the
+connected workspace preview. It covers keyboard focus, cancellation, a stale
+revision, successful resend with an independent composer draft, and disabled
+editing during a turn. Run it with `--url http://127.0.0.1:4310`.
+
+`scenarios/chat-reminder.mjs` checks the real conversation components for delayed
+context reminders, one-line geometry, boundary reversals, visible neighbouring
+prompts, short replies, the charge-then-open peek and keyboard return. Wide runs
+scrub the entry, exchange swap, charge and spring release frame by frame. It
+covers both themes, narrow layouts
+and reduced motion against `pnpm desktop:preview` with
+`--url http://127.0.0.1:4310`.
+
+`scenarios/review-peek.mjs` checks that wider review and compact takeovers leave
+the receded chat's edge in view, that hovering and pressing it bring the chat
+back, keyboard focus on the peek, both themes, a compact layout and reduced
+motion. It scrubs the entry and return frames. Run it with
+`--url http://127.0.0.1:4310`.
+
+`scenarios/composer-queue-motion.mjs` checks optimistic queue receipt handoffs
+through the connected workspace preview. It samples each real animation frame
+for excess rows, changing DOM identity and height overshoot, with repeated text,
+keyboard removal, both themes and narrow reduced-motion layouts. Run it with
+`--url http://127.0.0.1:4310`.
+
+`scenarios/session-chat-queue-delivery.mjs` holds harness receipts while the
+connected chat moves a steered or automatically dispatched message into the
+transcript. It checks the bubble and queue exit, keyboard focus, repeated text,
+native receipt reconciliation, both themes and narrow reduced-motion layouts.
+Run it against the same component preview URL.
+
+The connected workspace regression uses the production composition and its
+isolated typed backend adapter:
+
+`scenarios/workspace-pull.mjs` checks the production task header with a tracked
+upstream distinct from the local branch. It covers keyboard activation and
+progress, commit availability after a rejection, long branch names and divergence.
+It captures both themes and a compact reduced-motion layout. Run it against
+`pnpm desktop:preview` with `--url http://127.0.0.1:4310`.
+
+`scenarios/session-opening-scroll.mjs` checks the first paint of the default
+progressive page during session switches. `scenarios/session-loading-policy.mjs`
+uses the preview's `?chatLoading=window` override to check adaptive slow openings,
+quiet background reads, 10,000-record windowing, and retained turn/tool
+and composer identities through IPC-style updates. It samples the loading
+crossfade and checks that the interactive composer holds its bounds. It also
+checks that fallback follows different chats/tasks and recreated workspace owners,
+then resets on reconnect and application reload. Its metadata records local
+preview opening/update timings; these exclude real backend hydration and WAN
+latency. It covers both themes and narrow/reduced-motion layouts.
+
+`scenarios/session-history-stability.mjs` checks short collapsed openings and
+repeated raw-window eviction across long turns, with trusted upward/downward
+wheel input, retained drafts and stable final-answer identities. It covers both
+themes and narrow reduced-motion layouts against the preview URL.
+
+`scenarios/session-history-scrollbar.mjs` samples visible reply offsets and
+native scrollbar geometry frame by frame as older and following pages swap
+into a bounded window. It checks a keyboard reversal during a held page and
+in-range wheel input without a scrollbar snap. It also checks immediate range updates
+with a stable reading anchor in the narrow reduced-motion layout. Run both
+themes against the preview URL.
+
+`scenarios/session-live-transcript.mjs` opens a running conversation, verifies
+that a patch updates in place between two messages, and checks that a background
+prompt preserves the visible reply's position. Reopening the running session
+keeps one copy of every prompt. Run against the preview URL in both themes,
+including the narrow reduced-motion layout.
+
+```sh
+pnpm desktop:capture scripts/desktop-capture/scenarios/connected-workspace.mjs --url http://127.0.0.1:4310 --timeout 240
+```
+
+It checks both themes, panel width/tabs/takeover and focus restoration, native
+Enter submission, project settings, new tasks, project creation
+and handoff, error recovery, narrow layouts and reduced motion. It uses actual
+components rather than `--fixture`; its backend is controlled preview data.
+`scenarios/panel-reflow.mjs` uses the same preview with thirty longer replies.
+It checks that repeated/interrupted panel toggles do not start competing content
+height animations, and preserves drafts, end-following and keyboard focus in
+both themes, narrow layouts and reduced motion. Its report records frame timings
+as diagnostics rather than a hardware-independent FPS guarantee.
+`scenarios/new-project.mjs` focuses on project creation in both themes: nested
+Escape and focus restoration, empty/failed folder results, keyboard retry, Git
+URLs, multiple repositories, name and appearance, retained rejection/uncertain
+outcome drafts, explicit reconciliation, narrow reduced-motion layouts and the
+explicit trailing-slash browsing, pending Tab completion and the visible New task
+action after creation, with no automatic dialog. Run it against the same preview URL.
+`scenarios/folder-typing.mjs` exercises the same production picker with bounded
+preview-only latency. It checks retained popup identity, immediate compatible
+filtering/backtracking, preserved caret and highlight, delayed loading, tilde
+completion, direct Enter, reopening after Escape and narrow reduced-motion states
+in both themes.
+`scenarios/new-task-existing.mjs` verifies existing-branch selection, the
+history-preserving From message, enabled Create focus and native Enter task
+creation in both themes.
+`scenarios/new-task-branches.mjs` checks disabled held targets, selectable held
+sources, the remote default, retry after a branch search failure and the full
+refs sent by the connected form. It covers both themes and a narrow
+reduced-motion viewport using the component preview.
+`scenarios/new-task-project-menu.mjs` checks direct header-menu opening with
+unchanged dialog/form geometry, keyboard project selection, Escape/focus and
+draft retention, same-project selection and cleanup on close in both themes,
+including narrow reduced-motion layouts. Run it against the same preview URL.
+`scenarios/task-setup-recovery.mjs` verifies saved-task external-checkout
+recovery, explicit existing-workspace/committed-revision choices, unchanged task
+identity and narrow reduced-motion layouts in both themes. Real Git preservation
+is checked separately by the backend task lifecycle tests.
+`scenarios/task-workspace-limit.mjs` checks the quota explanation, explicit
+keyboard consent to create above the limit, unchanged saved-task identity and
+narrow reduced-motion layouts in both themes, using the same preview URL.
+The production smoke separately mounts the deferred workspace through `app://`
+and the real sandboxed bridge. The tool's `check.mjs --fixture` regression also
+verifies native Enter click synthesis, using complete CDP key/character events.
+
+`scenarios/workspace-resume.mjs` recreates the production workspace owner while
+retaining the preview platform's saved per-backend context. It checks selected
+project/session, Browser and Changes tabs, open/closed panels, wider-review
+keyboard focus and Escape, plus narrow reduced-motion layouts in both themes.
+Disk persistence, window/backend isolation and invalid layout payloads are
+covered separately by the desktop tests and native IPC smoke.
+
+`scenarios/machine-first-open.mjs` exercises the production machine owner with
+preview-only backend replies. It checks inert workspace preparation before the
+launch, cold and warm openings (including an already-ready backend), focus,
+interruptions and narrow reduced motion in both themes. Frame intervals and long
+animation frames are recorded as diagnostics; timings depend on the host and
+are not a general FPS guarantee. Run it against the same preview URL, sequentially
+with other native captures.
+
+`scenarios/status-motion.mjs` checks the connected workspace with a bounded
+20-task sidebar and at least 30 running indicators. It measures idle rendering
+work without an rAF sampling loop, rejects per-frame SVG layout, and records
+first/warm task-dialog frame intervals separately. It also checks focus return,
+both themes, narrow reduced motion and animation cleanup after resource removal.
+Run against the preview URL, sequentially with other native captures. Frame
+timings are diagnostics, not hardware-independent performance thresholds.
+
+The title island has complementary state and motion regressions:
+
+```sh
+pnpm desktop:capture scripts/desktop-capture/scenarios/title-island-states.mjs --url http://127.0.0.1:4310 --timeout 180
+pnpm desktop:capture scripts/desktop-capture/scenarios/title-island.mjs --url http://127.0.0.1:4310 --timeout 180
+```
+
+They check every tone, machine/guest panel, keyboard and disabled focus, hover,
+progress interpolation, long names and narrow containing regions, plus frozen
+spring/blur frames, opening/closing, interruptions, reduced motion and the actual
+workspace title-bar composition, in both themes.
+
+Two reusable component regressions run against `pnpm desktop:preview`:
+
+`scenarios/sidebar-states.mjs` checks the connected sidebar's single/multiple
+repository hints, attention/failure hover, full-title hints, keyboard focus and
+menu restoration, empty/filtered/closed states, a scrollable 20-task window,
+narrow reduced-motion layout and disabled actions in both themes. Its bounded
+backend data stays in the preview fixture.
+
+`scenarios/sidebar-session-creation.mjs` checks stable task geometry when
+switching sessions, the persistent header + tooltip on hover and keyboard focus,
+native Enter creation, empty-task discovery, unavailable actions and narrow
+reduced-motion layouts in both themes, using the same preview URL.
+
+`scenarios/task-setup-progress.mjs` drives the `/task-setup` preview through
+each workspace setup step, a failed step with its recovery, the older-runtime
+fallback and the sidebar's workspace signals (no overlap with task titles) in
+both themes and a narrow reduced-motion layout. Use the same preview URL with
+`--timeout 180`.
+
+```sh
+pnpm desktop:capture scripts/desktop-capture/scenarios/sidebar-motion.mjs --url http://127.0.0.1:4310 --timeout 180
+pnpm desktop:capture scripts/desktop-capture/scenarios/git-motion.mjs --url http://127.0.0.1:4310 --timeout 180
+```
+
+The current machine onboarding regression uses the same preview:
+
+```sh
+pnpm desktop:capture scripts/desktop-capture/scenarios/machine-onboarding.mjs --url http://127.0.0.1:4310 --timeout 180
+pnpm desktop:capture scripts/desktop-capture/scenarios/machine-motion.mjs --url http://127.0.0.1:4310 --timeout 180
+```
+
+It checks first run, card preparation, SSH host/key keyboard flow, pairing,
+failures, last selection, launch/return, open-machine updates, search/empty state,
+both themes, reduced motion and a narrow dialog with restored focus. The focused
+motion scenario measures card/trigger origins, uniform view scaling, interrupted
+launch/modal reversals and focus after reopening, in both themes.
+
+The Browser state regression uses the same preview:
+
+```sh
+pnpm desktop:capture scripts/desktop-capture/scenarios/browser-view.mjs --url http://127.0.0.1:4310
+```
+
+It checks target alignment at full, phone and 440px panel widths, cursor
+interpolation, takeover/hand-back, needs-you, point-and-ask focus restoration,
+and reduced motion in both themes. Its checkout data stays in the preview.
+
+The Changes review regression also runs against the component preview:
+
+```sh
+pnpm desktop:capture scripts/desktop-capture/scenarios/changes-review.mjs --url http://127.0.0.1:4310 --timeout 180
+```
+
+It checks compact/wide layouts, exact code whitespace, line gutters, wrapping,
+keyboard file selection and focus restoration, full-file reading position,
+loading/error/deleted/empty states, Viewed folding and a virtualized 1,000-file
+list in both themes. Its supplied content stays outside production.
+
+`scenarios/changes-headers.mjs` checks single-row headers, hover stability,
+320px/440px/wide layouts, pinned styling and file-to-file handoff, plus collapse
+and Viewed from a pinned header in both themes. Run it with the same preview URL.
+
+Run them sequentially so another Electron capture window does not throttle the
+one being measured. They sample in the renderer before mutation and at each real
+animation frame, then continue through retained-row and animation cleanup.
+Each final checkpoint includes the complete probe in its report metadata.
+They check both themes and reduced motion, first-paint/settled continuity, stable
+identities, and interrupted changes. Bulk sidebar travel can be large while
+remaining continuous; sampled frame times and speeds distinguish that movement
+from an abrupt boundary jump. A long frame interval is reported separately from
+the component's motion curve; these checks are not a general FPS benchmark.
+
+Freeze **before** triggering an action, then seek each CSS/WAAPI animation to a
+known age in milliseconds. Named screenshots preserve the frozen frame:
+
+```js
+await capture.motion.freeze();
+await capture.click('#toggle');
+await capture.motion.seek(500);
+const halfway = await capture.inspect(['#panel']);
+yield {name: 'halfway', inspect: ['#panel'], metadata: {halfway}};
+yield* capture.frames('opening', [750, 1000], ['#panel']);
+await capture.motion.finish();
+await capture.motion.play();
+```
+
+`freeze()` sets Chromium's animation playback rate to zero and starts a new
+sample sequence, forgetting animations tracked before it. `seek(ms)` gives
+each currently tracked CSS transition/animation/WAAPI animation that elapsed
+age, including its delay; it rejects when no animation exists. Use one action
+per sample sequence. New animations created at different times are not a shared
+simulation clock. `finish()` completes finite document animations, leaving
+infinite loops alone. `play(rate = 1)` resumes browser animation time.
+
+To inspect frame-to-frame movement in real time:
+
+```js
+await capture.motion.play();
+await capture.click('#toggle');
+const probe = await capture.measureMotion(['#panel'], 600);
+yield {name: 'after-motion', metadata: {probe}};
+```
+
+The bounded rAF probe returns sampled rectangles, the largest displacement
+between samples, and the longest observed frame interval. Compare against the
+component's expectations in a scenario assertion. Sampling starts when called;
+it is diagnostic, not a full profiler or an FPS guarantee. Use raw CDP tracing
+when investigating performance in depth.
+
+JavaScript timers, `Date`, network responses, canvas rendering, View Transition
+pseudo-elements and agent processes are **not** made deterministic by animation
+scrubbing. Drive their state explicitly, or record live behavior using CDP.
+No MP4 encoder is included; screenshot sequences are cheap, directly inspectable
+filmstrips. Screenshots capture web content, excluding native OS title-bar buttons.
+
+`scenarios/commit-panel-motion.mjs` runs against the connected workspace preview.
+It checks file-preview growth on the existing morph clock, late entry/exit
+frames, interrupted reopening with retained draft, focus return, and hidden
+visibility at animation cancellation before Angular removes the panel. It
+includes both themes and narrow reduced-motion states.
+
+`scenarios/commit-panel-preload.mjs` holds the connected preview's file check
+after its initial preload. It verifies recent-cache opening without a round trip,
+five-second expiry, immediately visible cached rows, counts
+and secret warnings, disabled submission until revalidation, retained typing,
+focus restoration and narrow reduced-motion layouts in both themes.
+
+## Output and failures
+
+`scenarios/terminal-rendering.mjs` runs against `/terminal-rendering` in the
+component preview. It checks actual rounded-cap pixels at compact/default/spaced
+cell sizes, native-density canvas scaling, both themes, narrow/reduced-motion
+layouts, keyboard input, Find selection, retained output/selection through
+reattachment, GPU context release and input after GPU-loss fallback. It uses the
+production `TerminalSurface` with preview-only ANSI samples. Native display
+density is retained because Chromium's device-pixel ResizeObserver boxes do not
+follow the capture driver's default 1x CDP emulation on Retina displays.
+
+`scenarios/terminal-startup.mjs` checks zsh's 80-column startup spacer in a narrow
+pane through the production adapter. It verifies row-zero prompts, resizing and
+detachment between replay pages, preserved intentional blank lines, filled and
+scrolled output, trusted keyboard input, both themes and reduced motion. Run it
+with `--url http://127.0.0.1:4310`; its ANSI samples stay in the capture scenario.
+
+`scenarios/session-mentions.mjs` checks sidebar transfer data and trusted Chromium
+drops against the connected workspace preview, with drop-entry frames, duplicate
+prevention, focus handoff, draft navigation, keyboard insertion and narrow
+reduced-motion layouts in both themes. Source `dragstart` is dispatched through
+the row's DOM boundary; drop input is trusted CDP. Use the preview URL above.
+It also sends session context and verifies read-only chips inside the saved user
+message, including after leaving and reopening the conversation.
+
+`scenarios/turn-navigation.mjs` checks the compact message rail with 1 and 10,000
+targets: bounded height/DOM, keyboard browsing and jumps, stable pointer targets,
+local wheel scrolling, both themes, narrow/short/reduced-motion layouts and real
+Chat selection. Run it against the component preview URL, with live reload
+disabled if the development server's blob worker is rejected by the capture CSP.
+
+Every checkpoint yields a numbered PNG plus `.json` (layout/state/focus) and
+`.a11y.json`. `index.html` compares images, links to snapshots, and shows errors;
+`report.json` records timings, theme, viewport, metadata and verification status.
+Yield `{name, selector}` for an element crop, `{name, inspect: [...]}` for targeted
+diagnostics, or a string for a full viewport screenshot. Names must be unique,
+contain only letters/digits/`-`/`_`, and be at most 80 characters.
+
+Assertions, uncaught renderer exceptions, console errors and failed resources
+fail the run. Warnings are retained. Caught scenario evaluation failures can be
+asserted without being mistaken for uncaught product errors. Completed images,
+diagnostics and a best-effort `failure.png` survive failure. Startup errors also
+write a failed report. A hard OS kill can interrupt artifact writes.
+
+Results are bounded to 300 checkpoints per run, 200 errors and 200 warnings,
+120 frames per sample sequence, and 64 KiB of checkpoint metadata. Split larger
+investigations into focused scenarios. Do not dump an entire repository or long
+chat transcript into inspection output.
+
+## Ownership and checks
+
+- `cli.mjs`: composition, options/stdin, cancellation, isolated temporary profile
+  and run-level results.
+- `processes.mjs`: owns launched child processes and idempotent shutdown. It never
+  registers global signal handlers or stops processes it did not launch.
+- `compilation.mjs`: main/preload/shared compilation and source freshness checks.
+- `renderer-server.mjs`: Angular startup/readiness, token synchronization and
+  explicit reuse of an existing server.
+- `apps/desktop/test/capture-runner.cjs`: tool-only Electron entry. Loads the
+  unchanged production main/preload, owns the capture lifetime and saves failures.
+- `scenario.mjs`: scenario iteration and checkpoint artifact writing.
+- `driver.mjs`: stable scenario API, renderer evaluation, Angular state and native
+  media settings. It composes capability modules and disposes them in order.
+- `connection.mjs`: debugger attachment and bounded renderer diagnostics.
+- `input.mjs`: trusted input, target validation and element geometry.
+- `motion.mjs`: owns animation subscriptions, playback and frame/layout probes.
+- `inspection.mjs`: self-contained renderer callback for bounded DOM snapshots.
+- `options.mjs` / `report.mjs`: validation and escaped standalone gallery.
+- `apps/renderer/capture/`: explicit Angular fixture configuration, outside the
+  product source/build graph. No design-system implementation is implied.
+
+Extend the module that owns a behavior; keep browser input out of startup code
+and artifact writing out of page evaluation. Capability modules receive their
+page/connection dependencies explicitly and must not import the CLI or create a
+second window. Keep scenario-facing methods stable through `Capture`; its small
+delegations intentionally preserve the public API. Renderer callbacks are
+serialized into the page, so they must be self-contained and cannot close over
+module imports. Prefer extending a reusable scenario for feature-specific setup
+over adding feature-specific branches to the runner. The Angular fixture already
+separates its component behavior, template, and styles; keep it synthetic.
+
+`pnpm desktop:test` runs existing IPC/security/type/Angular tests and capture
+validation/lifecycle tests. `pnpm desktop:lint` includes this tool and fixture templates.
+Run the native regression command above after changing automation behavior.
+It checks signal updates, trusted text and Tab focus, rejected interactions,
+CSS and WAAPI midpoint sampling, frozen frame stability, both themes, reduced
+motion, resizing, cropping and layout probes, using the real sandboxed preload.
+It intentionally remains opt-in because it launches a native window.
+
+Automation code is absent from `src/` and from electron-builder's `dist/` and
+`renderer/` inputs. Production still exposes exactly `window.elevenex`; no raw
+IPC, generic evaluator, remote-debugging endpoint, security relaxation, or
+capture flag is introduced. Local scenario modules are trusted executable code.
+
+The updated project/machine design regression uses the production machine owner
+with its isolated platform adapter, then the project creation preview:
+
+```sh
+pnpm desktop:capture scripts/desktop-capture/scenarios/design-system-projects-machines.mjs --url http://127.0.0.1:4310 --timeout 180
+```
+
+It covers Home pings, failure nudges, stopped progress/retry, host-key safety and
+measured contrast, Back, Find/focus, narrow reduced motion, anchored project
+opening, plain Create exit, rail insertion and cancellation in both themes.
+
+`scenarios/sidebar-sessions.mjs` covers the production session archive/Undo owner
+with a bounded busy-task fixture: default cap and pinned attention, repeated
+five-row reveals, Older/count and Show fewer, filters, hover, running confirmation,
+Escape/blur/Enter, selected-session handoff/focus, attention shortcut archiving,
+device-local cap choice, reduced motion and interrupted reveals in both themes.
+It records live geometry probes; timer-driven Ticker cleanup is intentionally not
+frozen by the animation scrubber. Run it with the preview URL above.
+
+`scenarios/sidebar-session-disclosure.mjs` regresses session reveal persistence
+through creation, archive, refresh and project navigation in both directions,
+with and without a retained selected task. It also covers fully revealed tasks,
+filter round trips and explicit Show fewer, in light and dark/reduced motion.
+
+`scenarios/sidebar-project-retention.mjs` samples both project-switch directions
+through delayed backend reads beyond the row cleanup deadline. It checks retained
+task/session DOM identities, uninterrupted outer folds, manual collapsed state,
+stable header/title/filter/task-list geometry, and removal of other projects,
+with no selection and with another project selected,
+in both themes and a narrow reduced-motion layout.
+
+`scenarios/sidebar-project-switching.mjs` samples frame geometry from before
+trusted rail input through loading and cleanup. It checks exits and entries
+between distinct projects and All projects in both directions, retained shared
+rows, interrupted returns, stale reads and a narrow reduced-motion layout in
+both themes. Run against the connected-workspace preview.
+
+`scenarios/sidebar-session-cap.mjs` measures the replacement cap scroll in both
+themes: five-row opening and ten-row closing from before trusted input through
+cleanup, revealed selection DOM identity, muted title movement, selected-session
+retention after Show fewer and narrow reduced motion. It uses the connected
+preview's bounded busy-task fixture; run with `--url http://127.0.0.1:4310`.
+
+`scenarios/sidebar-session-cap-label.mjs` verifies both Older/Show fewer text-swap
+directions in light/dark: outgoing count snapshots, blur/slide and width motion,
+stable action/Ticker identities, cleanup and narrow reduced motion. Use
+`--url http://127.0.0.1:4310/connected-workspace`. It freezes the containing
+scroll and seeks only live label animation objects to avoid stale debugger IDs
+from timer-driven ticker cleanup elsewhere.
+
+`scenarios/session-chat.mjs` exercises the production session chat through its
+preview-only provider adapter: both themes, tool input/output, approvals and
+questions, keyboard sending, editable drafts while streaming, navigation retention,
+uncertain delivery, paged original content, bounded history and narrow reduced
+motion states. It uses the connected workspace at the same preview URL.
+
+`scenarios/session-unseen-reply.mjs` verifies the quiet New reply dot, keyboard
+opening and automatic acknowledgment through the production chat owner. It
+checks stable row geometry, preservation while reading earlier content, and
+clearing on return to latest, in both themes and narrow reduced-motion layouts.
+Run against the connected workspace preview URL.
+
+`scenarios/session-status-recovery.mjs` covers legacy idle/active conversations,
+genuinely new sessions, unseen replies and live work together. It verifies
+refresh/reopening, keyboard viewing, stable settled row positions and both themes
+with narrow reduced-motion layouts against the connected workspace preview.
+
+`scenarios/session-delete.mjs` checks engine-confirmed unstarted sessions: the
+trash icon and Delete label, keyboard deletion, next-session selection/focus,
+absence after refresh and no archive Undo. Started sessions retain Archive and
+running-session confirmation. Both themes and narrow reduced-motion layouts run
+against the connected workspace preview with `--url`.
+
+`scenarios/background-refresh.mjs` samples real frames during delayed background
+navigation and Git reads, transient failures and recovery. It checks retained
+chat/sidebar DOM, reading position, draft/cursor/focus, enabled controls and
+stable geometry in both themes and narrow reduced-motion layouts. Run against
+the connected workspace preview with `--url`.
+
+`scenarios/session-opening-scroll.mjs` checks that switching and reopening long
+sessions starts at the end on the first rendered frame. It also checks reading
+position through refresh, both themes, narrow layouts and reduced motion using
+the connected workspace preview.
+
+`scenarios/session-loading-stability.mjs` holds cold and cached chat reads through
+the production owner and checks the cold-open skeleton, cached reopening,
+first-frame composer/editor geometry, end following, reading position and inline
+Git feedback in both themes and narrow reduced motion. Run against the connected
+preview with `--url`. Optional
+`ELEVENEX_SESSION_CAPTURE_PAGES` points to an ignored JSON array of bounded
+`{id, items, state}` recorded pages for transcript replay; this is preview evidence,
+not a live backend or packaged-app test.
+
+`scenarios/session-media-loading.mjs` checks full-width image, gallery,
+comparison and recording geometry through loading, out-of-order readiness and errors, plus image-viewer
+keyboard navigation and focus restoration in both themes and narrow reduced
+motion. Run it against the same preview URL.
+
+`scenarios/session-reply-layout.mjs` measures reply and media positions, natural
+scroll height and unwanted reply height animations from the first painted frame
+of cold and cached openings. It covers normal motion at wide/narrow widths and
+narrow reduced motion in both themes. Its default generated-image reply catches
+collapsed Markdown margins. A held refresh also adds a table to an existing saved
+reply and checks that its first frame is fully laid out and pinned to the end.
+`ELEVENEX_SESSION_CAPTURE_PAGES` can replay a bounded
+recorded page through the same production components.
+
+`scenarios/session-tool-media.mjs` checks viewed images in their tool details
+with keyboard expansion, loading, viewer focus restoration and collapse. It
+also checks chronological inline previews in both themes and a narrow
+reduced-motion layout.
+
+`scenarios/chat-scroll-return.mjs` checks the floating return control without
+incoming content, scrubbed entrance frames, native smooth scrolling, keyboard
+focus handoff, interrupted exits and unread indicators on the arrow-only button.
+It covers both themes and narrow reduced-motion layouts against the same
+connected preview.
+
+`scenarios/session-harness.mjs` verifies the connected composer's pre-start harness
+choice, registry labels, keyboard operation, draft retention, model refresh,
+started-session locking and narrow layouts in both themes. Use the same preview
+URL as the connected workspace scenarios.
+
+`scenarios/session-reply-boundaries.mjs` verifies final replies outside collapsed
+work, output arriving before its user receipt, one current reply cursor, immediate
+first-send welcome removal, and narrow/reduced-motion rendering in both themes.
+
+`scenarios/session-work-completion.mjs` checks the empty live heading's fade and
+height collapse with frozen frames and real-time answer geometry. It covers
+retained DOM, no first-frame jump, interrupted reopening, composer draft/focus,
+closing-control focus handoff, both themes and narrow reduced-motion layouts.
+It also submits through the real composer and delivers the durable prompt receipt
+with completion, ensuring reconciliation preserves the animated turn.
+Run against the connected-workspace preview URL.
+
+
+`scenarios/session-presets.mjs` checks the connected blank-chat cards, one-command
+selection, Custom opening the creator with the current mix, cancellation without
+changing the chat, Option shortcuts from the composer, retained typing, duplicate names,
+the compact creator form, model/thinking controls, native form submission, Escape and
+focus restoration, both themes and narrow reduced-motion layouts. It also
+captures the modal opening at 0/140/280ms and verifies starting choices disappear
+after the first message. Use the connected workspace preview URL.
+
+`scenarios/session-preset-surfaces.mjs` covers the first-use empty catalog,
+stable card widths and selection on hover, visible Custom keyboard focus,
+independent dim/surface opening at 0/140/280ms, focus trapping/restoration,
+Escape during entry, duplicate-name validation, and a scrollable 420×360 dialog
+with its actions visible. It checks both themes and reduced motion against the
+same connected workspace preview.
+
+
+`scenarios/session-preset-default.mjs` verifies the quiet default selector and its
+keyboard menu, persisted default versus current selection, Undo, creator opt-in,
+retained drafts and new-session defaults in both themes. It includes narrow,
+reduced-motion checkpoints using the connected workspace preview backend, and
+checks Use this preset is initially selected when no default exists, respects
+cancellation, and becomes the default for a new session only after Create.
+
+
+`scenarios/preset-creator-harness.mjs` checks the creator's shared harness rail,
+keyboard choice, delayed/cancelled model reads, retry, per-harness draft recovery,
+Cancel isolation and applying a chosen harness only on Create. It covers both
+themes, narrow/compact reduced-motion layouts and retained message/name drafts.
+Run it against the connected-workspace preview URL.
+
+
+`scenarios/session-changes.mjs` exercises the production reply outcome and its
+connected Changes panel using preview-only backend data: file chips and counts,
+mouse/keyboard Review, exact file selection, wide/compact panels, 1,001-file
+summaries, bounded line paging, errors and narrow reduced-motion states in both
+themes. Run against the same preview URL, sequentially with native captures.
+
+
+`scenarios/session-tools.mjs` covers every normalized tool family through the
+connected production chat, plus generic/MCP nested results, running inputs, failed
+commands, shortened output and unknown completion. It checks parsed content
+separately from original data, keyboard disclosure, inert closing, proposed diffs,
+plan statuses, both themes and narrow reduced-motion layouts. Use
+`--url http://127.0.0.1:4310/connected-workspace` with the preview server.
+
+
+`scenarios/session-codex-patches.mjs` regresses actual Codex raw add/delete
+contents, unified updates, empty additions and rename-only receipts. It checks
+primary/full diff signs and token colors, whitespace/CRLF/blank lines, neutral
+headers versus literal triple-prefix hunk content, lazy Details, keyboard/inert
+behavior and both themes/narrow reduced motion. Use the connected-workspace
+preview URL. Its added-file fixture reproduces the Hello sentence that exposed
+the original raw-content-versus-patch bug.
+
+
+`scenarios/message-send.mjs` verifies send-source and landing geometry, the
+380ms glide, 340ms conversation slide, button press, keyboard focus, queue and
+long-message fallbacks, scrolled-up sends, interrupted cleanup, both themes and
+narrow reduced-motion fades. It also submits through the connected production
+chat owner. Run against the component preview URL, sequentially with other native
+captures.
+
+
+`scenarios/message-working.mjs` checks the connected send and Working entrance
+together: first-frame opacity, reserved layout and a steady bubble destination,
+mark spring, immediate receipts, keyboard Stop, navigation during entry, both
+themes and a narrow reduced-motion fade. Run against the component preview URL
+and sequentially with other native motion captures.
+
+`scenarios/agent-reply-marks.mjs` checks the connected reply's harness identity,
+all four bundled logos, missing/unknown harness monograms, accessible names,
+28px tinted tiles with optically balanced glyphs, theme-resolved glyph/tile
+contrast (including each Codex gradient stop), `img` roles, keyboard reply
+actions and standalone agent messages.
+It covers both themes and narrow reduced-motion layouts against the component
+preview URL. Pair it with `message-working.mjs` for reply entrance/cleanup checks.
+
+`scenarios/agent-picker-recovery.mjs` checks search/focus retention through a
+shrinking catalog and query clearing, native Space selection, first keyboard and
+pointer selection from unset thinking, tooltip cleanup on scroll detachment,
+harness/menu resets and narrow reduced motion in both themes. Run against the
+component preview URL.
+
+
+`scenarios/message-bottom-scroll.mjs` starts at the bottom of a full history
+window. Natural frames begin before submission and check the first painted row,
+progressive viewport scrolling, early growth/composer shrink, flight landing and
+return-control stability. Short and long drafts, both themes, native wheel
+takeover, scrubbed reveal frames and narrow reduced motion are covered. It uses
+rAF timestamps for movement-rate checks; completion has its own regression. Run
+against the preview URL, sequentially with other native captures.
+
+`scenarios/desktop-reconnect.mjs` uses `/reconnect` to exercise the production
+window with preview-controlled SSH/backend replies. It checks retained views and
+drafts, message edit/removal, waiting task/session creates, git blocking, elapsed
+outage escalation, explicit credential opening, Escape/focus/secret clearing,
+once-only recovery, narrow panel takeover and host-trust safety in both themes
+and reduced motion. The scenario also checks that git labels fit after the
+workspace's scaled launch. Disk persistence and real SSH recovery are verified
+separately by desktop regressions and the sandboxed preload smoke.
+
+`scenarios/session-reconnect-reading.mjs` checks same-machine scope recovery while
+reading above the end and inside an earlier-history window. It asserts retained
+scroll position, unread feedback for recovered output, stable history items and
+view identity in both themes through the production window with controlled transport.
+
+`scenarios/session-turn-work.mjs` exercises the connected chat's compact saved
+turns against the preview transport. It checks the collapsed reply and counts,
+an interrupted read, a single response beyond the old batch boundary, lazy
+group rows for more than 600 tools, a late receipt, on-demand evidence,
+cached reopening, oversized activity and error retry. It scrubs
+the first group expansion and interrupts a collapse to check row continuity. It
+checks the Worked control's position both at the live end and while reading above
+it, along with reply identity, keyboard focus and draft retention. Use the
+connected-workspace preview URL. The dark run uses a narrow viewport and reduced
+motion.
+
+`scenarios/session-turn-work-hover.mjs` uses trusted pointer input to warm a
+reply while another turn is loading, opens it from the finished cache while
+the transport is held, and joins an in-flight preload for a larger turn. Run
+it against the connected-workspace preview URL in both themes.
+
+`scenarios/session-tool-details.mjs` expands Worked and its activity group
+before requesting tool evidence by keyboard. It checks request cancellation,
+the direct evidence reveal, retry focus and cached reopen in the
+connected-workspace preview. The dark run uses a narrow viewport and reduced
+motion.
+
+`scenarios/panel-resize.mjs` uses the connected workspace preview to check
+pointer dragging, Escape cancellation, keyboard controls, width retention and
+window constraints in both themes and with reduced motion.
+
+`scenarios/task-code-compact.mjs` verifies the genuine compact Code workbench
+through production UI/IPC against a running disposable Nest backend. Supply
+`ELEVENEX_CODE_CAPTURE_ORIGIN`, `ELEVENEX_CODE_CAPTURE_ACCESS`, the existing
+`ELEVENEX_CODE_CAPTURE_PROJECT/TASK/SESSION` IDs, `ELEVENEX_CODE_SMOKE_CACHE`
+and `ELEVENEX_CODE_TEST_WORKSPACE`. The test-only process adapter connects the
+capture to this backend without starting or changing the user's backend manager.
+It covers both themes, native Quick Open/Quick Search, actual toolbar saving,
+dirty-file retention through expansion/collapse, narrow/reduced-motion layout
+and hidden iframe focus and actual settings layered over the live editor. Use `--built` after `desktop:build`. Its window debugger
+uses focus emulation and trusted input into the focused cross-origin iframe.
+The scenario drags the splitter across the iframe, checks live viewport changes
+and the final Explorer layout, and verifies that focus returns to the same editor.
+It checks the absence of native editor views and retains the same
+frame through tab changes and expansion. It also holds real extension bootstrap
+to check exclusive loading, repeats close/reopen and resizing in both themes,
+scrubs interrupted expansions/collapses, measures exactly one real iframe
+viewport resize per toggle at the predicted destination while a native scoped
+snapshot is retained, records click-to-resize latency, holds back the real
+child-layout acknowledgement without extending the visual animation, checks
+stable pane geometry,
+asserts immediate uncovered Code visibility during ordinary panel opening,
+continuous shell width motion with blur/crossfade on the same clock, a midpoint
+handoff and a sharp final editor without a second reveal,
+checks stretched editor bounds at the shell midpoint in both directions,
+checks opaque retained Code at early/middle/late closing frames in compact/wide
+layouts plus interrupted reopening, and
+asserts zero launch-viewport scrolling and matching iframe/workbench widths. Compact Files coverage includes the initial
+empty tree, single-click acceptance of an already-open file, Escape/Back state,
+keyboard tree navigation, automatic tree return after closing the last editor,
+and restored Explorer after expansion.
+
+`scenarios/task-code-transfers.mjs` uses the same Code capture environment
+variables and a disposable backend/task. It requires unused `upload.bin` and
+`assets` names at the task root and removes its fixtures afterward. It exercises
+the real extension, Explorer commands and backend with a 9 MiB binary, folder
+upload/download including empty directories, picker cancellation, keyboard menu
+navigation, both themes and a narrow reduced-motion layout. Only the native
+picker responses are deterministic, confined to temporary test files; this does
+not verify the operating system's picker appearance. Run sequentially with other
+native captures after building. When starting a disposable backend, set both
+`DB_PATH` and `ELEVENEX_DATA_ROOT` explicitly, as well as its runtime/migrations
+directory, to avoid inheriting a running development session's database.
+### Native task browser integration
+
+`scenarios/browser-agent-feedback.mjs` uses `/browser-agent` to check the real
+BrowserView's independent cursor, sampled glide, interrupted retarget, one-shot
+click pulse, running/waiting/done/error feedback, Stop focus and narrow/reduced
+motion in both themes. Native Electron and backend Chromium tests separately
+verify that the scoped agent API publishes this data during real browser work.
+
+`scenarios/browser-agent-control.mjs` uses the `/task-browser` preview to verify
+the production Stop/Hand back controls without step metadata, keyboard access
+and focus retention in both themes and narrow reduced-motion layouts. The
+preview transport simulates ownership; real acquisition/revocation is exercised
+separately by the native Electron and backend Chromium regressions.
+
+`scenarios/browser-new-tab.mjs` uses `--url http://127.0.0.1:4310/task-browser`
+to check the production default tab, +/Command/Ctrl-T, address focus/drafts,
+Enter navigation, task-server shortcuts, empty tabs and narrow/reduced-motion
+layouts in both themes. Its isolated preview transport does not load websites;
+native Electron and runtime Chromium integration tests verify actual navigation.
+
+`--backend-url http://127.0.0.1:<port>` borrows an already running **isolated**
+backend for live product captures. The capture CLI validates its `/api/info`
+revision; only the test runner substitutes the backend lifecycle composition.
+The production app/preload has no endpoint override. The runner never stops or
+modifies the borrowed backend's lifecycle. Scenarios may make normal domain
+mutations, so use a disposable database/repository rather than a personal backend.
+
+Yield `{ name: 'native-browser', native: true }` to capture actual app and
+WebContentsView page surfaces and compose them at their registered native bounds.
+Electron's root/window screenshot omits child views. Each native source PNG and
+its bounds are retained in `report.json`; the gallery explicitly labels the
+composition. This is **not an OS-compositor screenshot**. Ordinary checkpoints retain
+Chromium screenshots. Native checkpoints require the actual window size to match
+the viewport; use `capture.window.setContentSize(width, height)` together with
+`capture.viewport(width, height)`. No crop is supported for native checkpoints.
+Native page assertions remain separate from app accessibility/layout diagnostics,
+which inspect only the trusted app renderer. This capture-only capability does
+not expose screenshot or DOM observation to agents driving task pages.
+
+Local Browser guests are DOM-composited and use ordinary checkpoints, unlike
+child WebContentsView compositions. For a native guest capture, resize the real
+window and root viewport together, then call
+`await capture.cdp('Emulation.clearDeviceMetricsOverride')`. Root-only device-scale
+emulation otherwise gives a guest a different DPR from the host display and
+misrepresents its size. App layout/AX diagnostics still inspect the trusted app
+only; they do not establish page accessibility or agent observation permission.
+
+`scenarios/session-tool-timeline.mjs` covers the single chronological work
+timeline: message-delimited activity summaries, section-local recent-step budgets,
+inspection through new replies, independent keyboard disclosures, category icons
+with short labels, merged failure counts (including failure-only sections and
+running-to-failed receipts), error detail expansion, running visibility, stable completion,
+paired original input/output, keyboard focus, scoped motion frames, both themes
+and narrow reduced-motion layouts. Run against the connected component preview
+with `--url`. `SessionChatFixture.timeline(scene)` supplies stable harness-shaped
+receipts outside the production graph.
+`scenarios/session-tool-summary-stability.mjs` applies incremental tool starts
+and results while reading collapsed sections in the same turn. It samples
+summary position, height and focus each frame, including a late failure that
+wraps a narrow summary, in both themes with and without reduced motion.
+
+`scenarios/commit-recovery.mjs` checks the production commit owner with controlled
+backend failures: retained messages and selections, duplicate-submit protection,
+session switching during a commit, message failure recovery, unknown-outcome
+reconciliation, successful dismissal, both themes and compact reduced-motion
+layouts. Use the connected-workspace preview URL, and run native captures
+sequentially. `task-screen-update.mjs` and `commit-panel-motion.mjs` cover the
+existing selection and anchored-panel motion contracts.
+
+`scenarios/terminal-tabs.mjs` verifies TerminalView's shared tab strip: repeated
+creation and automatic revelation, edge fades, wheel browsing without
+selection changes, metadata refresh, Home/End/Delete, ancestor scroll and focus retention,
+empty strips and 320px reduced-motion layouts in both themes. Run against the
+component preview with `--url http://127.0.0.1:4310`.
+
+`scenarios/terminal-attachment.mjs` uses `/terminal-stream` to exercise the
+production task-terminal owner and xterm with a preview-only stream transport.
+It checks automatic first creation, retained DOM/focus and native typing through
+metadata/output changes, plus one replacement stream after interruption. Both
+themes and a narrow reduced-motion layout run against the same preview URL.
+
+`scenarios/terminal-recovery.mjs` uses the same production adapter and preview
+transport to check stable terminal geometry during connection notices, persistent
+paused typing across reconnects, keyboard resume/focus restoration, and retained
+failed output without resize/reconnect loops. It covers both themes and a narrow
+reduced-motion layout.
+
+`scenarios/session-creation.mjs` checks immediate local selection and keyboard
+focus, trusted typing before creation, a retained row/composer/caret and fixed
+composer position through confirmation, repeated clicks, explicit rejection retry,
+unconfirmed-write inspection without replay, completion after navigation and
+fast receipts before first paint. It covers both themes and compact reduced-motion
+layouts through the production owners with preview-controlled backend replies.
+Run sequentially with `--url http://127.0.0.1:4310/connected-workspace`.
+
+
+`scenarios/session-history-stress.mjs` covers a turn with 1,000 earlier records,
+held history requests, prompt-reminder retention, mounted-reply identity and
+frame-by-frame scroll offsets, then backward/forward eviction through the bounded
+window. It runs in both themes, with narrow reduced-motion layouts. Optional
+`ELEVENEX_SESSION_CAPTURE_PAGES` points to an ignored JSON array of recorded
+`{ id, items, state }` histories; replay data stays outside the product bundle.
+Run against the warm component preview with `--url http://127.0.0.1:4310`.

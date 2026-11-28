@@ -1,0 +1,5 @@
+:host { display: flex; flex-direction: column; gap: var(--space-4); width: min(720px, calc(100vw - var(--space-8))); max-height: calc(100dvh - var(--space-8)); box-sizing: border-box; padding: var(--space-6); border-radius: var(--radius-lg); color: var(--ink); background: var(--surface); box-shadow: var(--shadow-pop); }
+header { display: flex; align-items: center; gap: var(--space-3); }
+h2 { margin: 0; overflow-wrap: anywhere; font-size: var(--text-title-size); line-height: var(--text-title-line); }
+pre { min-height: 0; margin: 0; padding: var(--space-3); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: var(--radius-sm); background: var(--surface-sunken); font-family: var(--font-mono); font-size: var(--text-code-size); line-height: var(--text-code-line); user-select: text; }
+footer { display: flex; justify-content: flex-end; }

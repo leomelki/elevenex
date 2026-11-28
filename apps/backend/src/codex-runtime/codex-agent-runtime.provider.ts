@@ -11,6 +11,7 @@ import type {
 import type {
   AgentPermissionMode,
   AgentImageInput,
+  AgentPromptOptions,
   AgentForkConversationRequest,
   AgentRuntimeEvent,
   AgentRuntimeProvider,
@@ -40,6 +41,7 @@ export class CodexAgentRuntimeProvider
       multimodalPrompts: true,
       terminalFallback: false,
       rewindConversation: true,
+      nonInterruptingSteering: true,
     },
   };
 
@@ -60,8 +62,12 @@ export class CodexAgentRuntimeProvider
     });
   }
 
-  getHistory(sessionId: number) {
-    return this.runtimeService.getHistory(sessionId);
+  getHistory(sessionId: number, options?: { changeDetails?: 'summary' }) {
+    return this.runtimeService.getHistory(sessionId, options);
+  }
+
+  nativeAppLaunchPolicy(sessionId: number) {
+    return this.runtimeService.nativeAppLaunchPolicy(sessionId);
   }
 
   getRuntimeState(sessionId: number) {
@@ -70,6 +76,10 @@ export class CodexAgentRuntimeProvider
 
   getSnapshot(sessionId: number) {
     return this.runtimeService.getSnapshot(sessionId);
+  }
+
+  stopSubagent(sessionId: number, agentId: string) {
+    return this.runtimeService.stopSubagent(sessionId, agentId);
   }
 
   getSubagentHistory(sessionId: number, agentId: string) {
@@ -160,12 +170,14 @@ export class CodexAgentRuntimeProvider
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
+    options?: AgentPromptOptions,
   ) {
     return this.runtimeService.submitPrompt(
       sessionId,
       prompt,
       titlePrompt,
       images,
+      options,
     );
   }
 

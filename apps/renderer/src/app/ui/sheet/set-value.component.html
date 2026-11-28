@@ -1,0 +1,12 @@
+@if (editing()) {
+  <span class="value editing" [class.mono]="mono()" [class.well]="well()" [class.field]="field()">
+    @if (prompt()) { <span class="prompt" aria-hidden="true">$</span> }
+    <input #input [value]="draft()" [placeholder]="placeholder()" [attr.aria-label]="label()" [disabled]="disabled()" spellcheck="false" (input)="type(input.value)" (blur)="finish(true)" (keydown)="key($event)" />
+  </span>
+} @else {
+  <button #button type="button" class="value" [class.mono]="mono()" [class.well]="well()" [class.field]="field()" [class.empty]="!value()" [disabled]="disabled()"
+    [attr.aria-label]="label() + ': ' + (value() || placeholder() || 'empty') + ', edit'" (click)="begin()">
+    @if (prompt()) { <span class="prompt" aria-hidden="true">$</span> }
+    <span class="text">{{ value() || placeholder() }}</span><ex-icon class="pencil" name="pencil" [size]="12" />
+  </button>
+}

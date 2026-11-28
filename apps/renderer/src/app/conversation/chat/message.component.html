@@ -1,0 +1,30 @@
+@if (role() === "agent") {
+  <ex-reply-mark
+    class="mark"
+    [author]="author()"
+    [time]="time()"
+    [mark]="mark()"
+    [harness]="harness()"
+  />
+}
+<div class="body">
+  <div class="content"><ng-content /></div>
+  @if (role() === "agent") {
+    <footer [class.pinned]="pinned()">
+      <ex-turn-acts (action)="action.emit($event)" />
+      @if (sideChats()) {
+        <button type="button" (click)="action.emit('side-chat')">
+          {{ sideChats() }} side chats
+        </button>
+      }
+    </footer>
+  } @else if (time()) {
+    <time>{{ time() }}</time>
+  }
+</div>
+@if (role() === 'user' && editable()) {
+  <div class="edit" [attr.title]="editDisabledReason() || null">
+    <ex-icon-button icon="pencil" label="Edit message"
+      [disabled]="!!editDisabledReason()" (pressed)="editRequested.emit()" />
+  </div>
+}

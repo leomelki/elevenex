@@ -1,0 +1,123 @@
+import { execFile } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
+import { constants, createReadStream } from 'node:fs';
+import { copyFile, cp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import { buildLinuxDevelopmentRuntime, developmentLinuxArchitecture, linuxRuntimeNodeVersion } from './desktop-backend-linux.mjs';
+
+const sharedWorkspaceId = createHash('sha256').update('elevenex-desktop-shared-development').digest('hex').slice(0, 32);
+const workspaceId = /^[a-f0-9]{32}$/;
+const textSource = /(?:\.(?:[cm]?[jt]sx?|json|sql|md|ya?ml|sh|fish|ps1|txt|css|html|svg|Dockerfile)|\/(?:bashrc|zshenv|zshrc))$/;
+
+export function developmentLaunchOptions(args, shared = false) {
+  if (!shared) return { linuxArchitecture: developmentLinuxArchitecture(args) };
+  const workspaceAt = args.indexOf('--workspace');
+  const workspace = workspaceAt < 0 ? sharedWorkspaceId : args[workspaceAt + 1];
+  if (!workspaceId.test(workspace ?? '')) throw new Error('--workspace requires a 32-character lowercase hexadecimal workspace ID');
+  const targetArgs = workspaceAt < 0 ? args : [...args.slice(0, workspaceAt), ...args.slice(workspaceAt + 2)];
+  return { linuxArchitecture: developmentLinuxArchitecture(targetArgs), workspace };
+}
+
+async function hashSource(hash, path, normalizeText) {
+  const input = createReadStream(path);
+  if (!normalizeText) {
+    for await (const bytes of input) hash.update(bytes);
+    return;
+  }
+  let trailing = '';
+  for await (const text of input.setEncoding('utf8')) {
+    const chunk = trailing + text;
+    trailing = chunk.endsWith('\r') ? '\r' : '';
+    hash.update((trailing ? chunk.slice(0, -1) : chunk).replaceAll('\r\n', '\n'));
+  }
+  hash.update(trailing);
+}
+
+/** Include dirty/untracked backend sources so a development cache cannot hide edits. */
+export async function developmentRevision(root, sharedLinuxArchitecture) {
+  const git = promisify(execFile);
+  const paths = (await git('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--',
+    'apps/backend/src', 'apps/backend/drizzle', 'apps/backend/bin', 'apps/backend/package.json', 'packages/shared/src', 'packages/browser-agent/src', 'packages/browser-agent/build-worker.mjs', 'packages/browser-agent/package.json', 'packages/browser-agent/tsconfig.json', 'packages/browser-inspection/src', 'packages/browser-inspection/package.json', 'packages/browser-inspection/tsconfig.json', 'packages/browser-network/src', 'packages/browser-network/package.json', 'packages/browser-network/tsconfig.json',
+    'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/frontend/proxy.conf.json', 'scripts/bundle-electron-backend.js',
+    'scripts/stage-electron-backend.js', 'scripts/build-task-app-macos.cjs', 'scripts/task-app-macos-signing.cjs', 'scripts/verify-task-app-macos.cjs', 'scripts/desktop-icons.mjs', 'elevenex-logo.svg', 'docs/design-system/project/tokens.css', 'scripts/build-task-app-windows.cjs', 'scripts/prepare-vscode-web-runtime.js',
+    'scripts/desktop-backend-development.mjs', 'scripts/desktop-backend-runtime.mjs', 'scripts/desktop-backend-smoke.mjs', 'scripts/desktop-backend-compatibility.mjs',
+    'scripts/desktop-backend-linux.mjs', 'scripts/desktop-backend-linux.Dockerfile', 'config/vscode-web-runtime.json',
+    'apps/desktop/src/remote/runtime*.ts', 'apps/desktop/src/remote/windows-runtime.ts', 'apps/desktop/src/remote/windows-pipe.ts', 'apps/desktop/src/remote/wire.ts', 'apps/desktop/src/remote/agent-proxy.ts',
+    'scripts/archive-electron-backend.js', 'scripts/rebuild-electron-backend-natives.js',
+  ], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })).stdout.split('\0').filter(Boolean);
+  // The Linux archive uses the same pinned runtime on every client OS. Keep
+  // its revision stable across checkouts with different Git line endings.
+  const runtime = sharedLinuxArchitecture ? `${linuxRuntimeNodeVersion}\0linux\0${sharedLinuxArchitecture}` : `${process.version}\0${process.platform}\0${process.arch}`;
+  const hash = createHash('sha256').update(`${runtime}\0`);
+  for (const file of [...new Set(paths)].sort()) {
+    if (file === 'apps/backend/src/generated/git-sha.ts') continue;
+    hash.update(`${file}\0`);
+    try { await hashSource(hash, join(root, file), sharedLinuxArchitecture !== undefined && textSource.test(file)); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; hash.update('deleted'); }
+    hash.update('\0');
+  }
+  return hash.digest('hex').slice(0, 40);
+}
+
+/** Build checkout code, reusing installed dependencies/assets without a release archive. */
+export async function prepareDevelopmentBackend(root, run, { linuxArchitecture, runCommand, workspace } = {}) {
+  if (workspace !== undefined && !workspaceId.test(workspace)) throw new Error('Invalid shared development workspace');
+  const backend = join(root, 'apps/backend');
+  const require = createRequire(join(backend, 'package.json'));
+  const version = await developmentRevision(root, workspace ? linuxArchitecture : undefined);
+  console.log('Building the local desktop development backend…');
+  await mkdir(join(backend, 'src/generated'), { recursive: true });
+  await writeFile(join(backend, 'src/generated/git-sha.ts'), `// Generated by the desktop development launcher.\nexport const GIT_SHA = '${version}';\n`);
+  // Nest emits files before checking the whole program, which can overflow
+  // TypeScript's stack while resolving Drizzle's recursive schema types.
+  // The TypeScript CLI checks first and uses the same backend build config.
+  await rm(join(backend, 'dist'), { recursive: true, force: true });
+  const networkRequire=createRequire(join(root,'packages/browser-network/package.json'));
+  await run(networkRequire.resolve('typescript/bin/tsc'), ['-p',join(root,'packages/browser-network/tsconfig.json')]);
+  await run(networkRequire.resolve('typescript/bin/tsc'), ['-p',join(root,'packages/shared/tsconfig.json')]);
+  await run(networkRequire.resolve('typescript/bin/tsc'), ['-p',join(root,'packages/browser-inspection/tsconfig.json')]);
+  await run(networkRequire.resolve('typescript/bin/tsc'), ['-p',join(root,'packages/browser-agent/tsconfig.json')]);
+  await run(join(root, 'packages/browser-agent/build-worker.mjs'));
+  await run(require.resolve('typescript/bin/tsc'), ['-p', 'tsconfig.build.json'], backend);
+  await run(join(root, 'scripts/bundle-electron-backend.js'));
+
+  const directory = join(root, 'apps/desktop/.stage', workspace ? `shared-development-${workspace}` : 'development-backend');
+  await rm(directory, { recursive: true, force: true });
+  await mkdir(directory, { recursive: true });
+  for (const file of ['main.cjs', 'main.cjs.map', 'browser-setup.cjs', 'terminal-screen-worker.cjs', 'pi-agent-extension.mjs', 'shell-integration']) {
+    await cp(join(backend, 'bundle', file), join(directory, file), { recursive: true });
+  }
+  // Keep native modules on the launching Node ABI, and serve checkout assets.
+  // These links are development-only; packaging retains its curated assembly.
+  for (const [name, source] of [
+    ['node_modules', join(backend, 'node_modules')],
+    ['drizzle', join(backend, 'drizzle')],
+    ['bin', join(backend, 'bundle', 'bin')],
+  ]) await symlink(source, join(directory, name), process.platform === 'win32' ? 'junction' : 'dir');
+  await cp(join(root, 'apps/frontend/proxy.conf.json'), join(directory, 'proxy.conf.json'));
+  await writeFile(join(directory, 'backend-release.json'), `${JSON.stringify({ version, tag: `runtime-${version}` })}\n`);
+  try {
+    // Curated assembly dereferences only approved runtime dependencies/assets,
+    // includes this Node executable, and validates native modules before tar.
+    if (linuxArchitecture) await buildLinuxDevelopmentRuntime(root, version, linuxArchitecture, runCommand);
+    else await run(join(root, 'scripts/desktop-backend-runtime.mjs'), [version]);
+    const platform = { darwin: 'macos', linux: 'linux', win32: 'windows' }[process.platform];
+    const target = linuxArchitecture ? `linux-${linuxArchitecture}` : `${platform}-${process.arch}`;
+    const archiveName = `elevenex-backend-${target}.tar.gz`;
+    const archive = join(root, 'dist-runtime', archiveName);
+    const checksum = (await readFile(`${archive}.sha256`, 'utf8')).split(/\s/)[0];
+    if (!/^[a-f0-9]{64}$/.test(checksum)) throw new Error('Invalid development runtime checksum');
+    // APFS can clone the large archive without allocating another full copy.
+    await copyFile(archive, join(directory, archiveName), constants.COPYFILE_FICLONE);
+    await writeFile(join(directory, 'remote-archive.json'), `${JSON.stringify({ version, target, digest: checksum })}\n`);
+    console.log(`SSH development build ready for ${target}.`);
+  } catch (error) {
+    // An explicitly requested target must be ready before Electron starts.
+    if (linuxArchitecture) throw error;
+    console.warn(`SSH development build unavailable: ${error.message}. Local development remains available.`);
+  }
+  console.log(`Using local development backend ${version} (no GitHub download).`);
+  return { ELEVENEX_DESKTOP_DEV_BACKEND: directory, ELEVENEX_DESKTOP_DEV_NODE: process.execPath };
+}

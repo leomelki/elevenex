@@ -1,3 +1,6 @@
+import { TaskAppModule } from './task-apps/task-app.module.js';
+import { CodeWorkspaceModule } from './code-workspace/code-workspace.module.js';
+import { DesktopWorkspaceModule } from './desktop-workspace/desktop-workspace.module.js';
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
@@ -40,12 +43,15 @@ import { TasksModule } from './tasks/tasks.module.js';
 @Module({
   imports: [
     DatabaseModule,
+    DesktopWorkspaceModule,
+    CodeWorkspaceModule,
     ProjectsModule,
     ReposModule,
     BranchesModule,
     WorktreesModule,
     WorkspacesModule,
     TasksModule,
+    TaskAppModule,
     SessionsModule,
     NavigationModule,
     TerminalModule,

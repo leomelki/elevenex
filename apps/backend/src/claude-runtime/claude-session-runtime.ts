@@ -6,6 +6,7 @@ import {
   type PermissionMode,
   type Query,
   type SDKControlGetContextUsageResponse,
+  type SDKControlGetUsageResponse,
   type SDKMessage,
   type SDKSessionStateChangedMessage,
   type SDKUserMessage,
@@ -15,10 +16,12 @@ import type { ClaudeRuntimeWarmState } from './claude-runtime.types.js';
 import { claudeVersionAtLeast } from './claude-subagents.js';
 
 interface ActiveTurn {
+  unrestrictedExecution: boolean;
   messageIds: Set<string>;
   resolve: () => void;
   reject: (error: unknown) => void;
   settled: boolean;
+  delivery?: { id: string; beforeDispatch: () => void; accepted?: () => void; dispatched: boolean };
 }
 
 export interface ClaudeSessionRuntimeDeps {
@@ -104,7 +107,7 @@ export class ClaudeSessionRuntime {
     this.clearIdleTimer();
     if (input.uuid)
       (this.activeTurn?.messageIds ?? this.independentInputs).add(input.uuid);
-    this.inputQueue.push({ ...input, priority: 'now' });
+    this.inputQueue.push({ ...input, priority: 'next' });
     this.wakeInput();
   }
 
@@ -165,6 +168,10 @@ export class ClaudeSessionRuntime {
     return this.deps.options.effort;
   }
 
+  get model(): Options['model'] {
+    return this.deps.options.model;
+  }
+
   async ensureStarted(reason: 'prewarm' | 'turn' = 'turn'): Promise<void> {
     if (this.closed) {
       throw new Error('Claude runtime is closed.');
@@ -212,10 +219,10 @@ export class ClaudeSessionRuntime {
     await this.startPromise;
   }
 
-  submitTurn(input: SDKUserMessage, onAccepted?: () => void): Promise<void> {
+  submitTurn(input: SDKUserMessage, onAccepted?: () => void, beforeDispatch?: () => void): Promise<void> {
     const turn = this.turnChain
       .catch(() => undefined)
-      .then(() => this.runTurn(input, onAccepted));
+      .then(() => this.runTurn(input, onAccepted, beforeDispatch));
     this.turnChain = turn.catch(() => undefined);
     return turn;
   }
@@ -256,10 +263,17 @@ export class ClaudeSessionRuntime {
 
   async setModel(model?: string): Promise<void> {
     await this.queryInstance?.setModel?.(model);
+    this.deps.options.model = model;
+  }
+
+  get canLaunchNativeApp(): boolean {
+    return !this.closed && !!this.queryInstance && this.activeTurn?.unrestrictedExecution === true;
   }
 
   async setPermissionMode(mode: PermissionMode): Promise<void> {
+    if (this.activeTurn && mode !== 'bypassPermissions') this.activeTurn.unrestrictedExecution = false;
     await this.queryInstance?.setPermissionMode?.(mode);
+    this.deps.options.permissionMode = mode;
   }
 
   async applyFlagSettings(
@@ -291,6 +305,18 @@ export class ClaudeSessionRuntime {
     return this.queryInstance.getContextUsage({ detail: 'summary' });
   }
 
+  async getUsage(): Promise<SDKControlGetUsageResponse | undefined> {
+    const runtimeQuery = this.queryInstance;
+    await this.startPromise;
+    if (this.closed || !runtimeQuery || this.queryInstance !== runtimeQuery)
+      return undefined;
+    // Optional/experimental in the SDK and absent in older CLIs. Never start
+    // a process for telemetry or scan the last week's transcripts for a meter.
+    return runtimeQuery.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?.(
+      { skipBehaviors: true },
+    );
+  }
+
   async close(): Promise<void> {
     if (this.closed) {
       return;
@@ -316,20 +342,26 @@ export class ClaudeSessionRuntime {
   private async runTurn(
     input: SDKUserMessage,
     onAccepted?: () => void,
+    beforeDispatch?: () => void,
   ): Promise<void> {
     if (this.closed) {
       throw new Error('Claude runtime is closed.');
     }
 
+    if (beforeDispatch && !input.uuid) throw new Error('Tracked Claude prompts require a message UUID.');
     this.clearIdleTimer();
     this.hasSubmittedTurnValue = true;
     this.lastUsedAtMsValue = Date.now();
 
     const turnPromise = new Promise<void>((resolve, reject) => {
       this.activeTurn = {
+        unrestrictedExecution: this.deps.options.permissionMode === 'bypassPermissions',
         resolve,
         reject,
         settled: false,
+        ...(beforeDispatch && input.uuid ? {
+          delivery: { id: input.uuid, beforeDispatch, accepted: onAccepted, dispatched: false },
+        } : {}),
         messageIds: new Set(input.uuid ? [input.uuid] : []),
       };
       this.inputQueue.push(input);
@@ -338,12 +370,18 @@ export class ClaudeSessionRuntime {
 
     try {
       await this.ensureStarted('turn');
-      onAccepted?.();
+      if (!beforeDispatch) onAccepted?.();
       await turnPromise;
     } catch (error) {
       this.rejectActiveTurn(error);
       throw error;
     } finally {
+      if (beforeDispatch) {
+        // Initialization can fail before the SDK takes the input. Never let
+        // a later warm turn pick up a message classified as unsent.
+        const queued = this.inputQueue.indexOf(input);
+        if (queued !== -1) this.inputQueue.splice(queued, 1);
+      }
       this.lastUsedAtMsValue = Date.now();
       if (!this.closed) {
         this.scheduleIdleShutdown();
@@ -355,6 +393,11 @@ export class ClaudeSessionRuntime {
     while (!this.closed) {
       const next = this.inputQueue.shift();
       if (next) {
+        const delivery = this.activeTurn?.delivery;
+        if (delivery && next.uuid === delivery.id) {
+          delivery.beforeDispatch();
+          delivery.dispatched = true;
+        }
         yield next;
         continue;
       }
@@ -368,6 +411,14 @@ export class ClaudeSessionRuntime {
   private async pumpMessages(runtimeQuery: Query): Promise<void> {
     try {
       for await (const message of runtimeQuery) {
+        const delivery = this.activeTurn?.delivery;
+        if (delivery?.dispatched && (
+          (message.type === 'user' && message.uuid === delivery.id) ||
+          (message.type === 'result' && (message.user_message_uuid === delivery.id || message.user_message_uuids?.includes(delivery.id)))
+        )) {
+          delete this.activeTurn?.delivery;
+          delivery.accepted?.();
+        }
         if (message.type === 'result')
           for (const id of message.user_message_uuids ??
             (message.user_message_uuid ? [message.user_message_uuid] : []))

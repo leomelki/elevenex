@@ -1,0 +1,99 @@
+import {
+  Directive,
+  ElementRef,
+  afterRenderEffect,
+  booleanAttribute,
+  inject,
+  input,
+} from "@angular/core";
+
+/** Observe a single content wrapper, never a whole repository or message list. */
+@Directive({ selector: "[exAutoHeight]" })
+export class AutoHeightDirective {
+  readonly enabled = input(true, { alias: "exAutoHeight", transform: booleanAttribute });
+  private readonly element =
+    inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
+
+  constructor() {
+    afterRenderEffect((onCleanup) => {
+      if (!this.enabled()) return;
+      const content = this.element.firstElementChild;
+      if (!content || typeof ResizeObserver === "undefined") return;
+      let active = true;
+      let animation: Animation | undefined;
+      // Projected content can be created before its portal is attached. Its
+      // first visible size is a baseline, not a content change from zero.
+      let previous = this.element.isConnected
+        ? this.element.offsetHeight || this.element.getBoundingClientRect().height
+        : undefined;
+      let previousWidth = this.element.isConnected ? content.clientWidth : undefined;
+      const observer = new ResizeObserver((entries) => {
+        // A queued observation can outlive the current animation scope.
+        if (!active) return;
+        if (!this.element.isConnected) {
+          // Portals can reuse the same view with different content. A detached
+          // view has no painted height to animate from on its next attachment.
+          animation?.cancel();
+          animation = undefined;
+          previous = undefined;
+          previousWidth = undefined;
+          return;
+        }
+        const observed = entries.find(entry => entry.target === content);
+        const width = observed?.contentRect.width ?? content.clientWidth;
+        const widthChanged = previousWidth !== undefined && Math.abs(width - previousWidth) > .01;
+        previousWidth = width;
+        const style = getComputedStyle(this.element);
+        const chrome = [style.paddingTop, style.paddingBottom, style.borderTopWidth, style.borderBottomWidth]
+          .reduce((total, value) => total + (parseFloat(value) || 0), 0);
+        const observedHeight = observed?.borderBoxSize[0]?.blockSize;
+        if (widthChanged) {
+          // Panel/window resizing already owns this reflow. Starting a height
+          // animation for every wrapped reply multiplies layout work per frame.
+          // ResizeObserver supplies the untransformed size without a layout read.
+          previous = observedHeight === undefined ? undefined : observedHeight + chrome;
+          animation?.cancel();
+          animation = undefined;
+          return;
+        }
+        const painted = this.element.getBoundingClientRect().height;
+        const scale = (this.element.offsetHeight ? painted / this.element.offsetHeight : 1) || 1;
+        // Height belongs to the outer border box. Measuring only the inner
+        // content clips padded cards and makes them jump when motion finishes.
+        const next =
+          (observedHeight ?? content.getBoundingClientRect().height / scale) + chrome;
+        const from = animation
+          ? painted / scale
+          : previous ?? next;
+        previous = next;
+        animation?.cancel();
+        animation = undefined;
+        if (
+          Math.abs(from - next) < 8 ||
+          matchMedia("(prefers-reduced-motion: reduce)").matches ||
+          !this.element.animate
+        )
+          return;
+        animation = this.element.animate(
+          [
+            { height: `${from}px`, overflow: "clip", boxSizing: "border-box" },
+            { height: `${next}px`, overflow: "clip", boxSizing: "border-box" },
+          ],
+          {
+            duration: parseFloat(style.getPropertyValue("--auto-height-duration") || style.getPropertyValue("--dur-base")),
+            easing: (style.getPropertyValue("--auto-height-easing") || style.getPropertyValue("--ease-out")).trim(),
+          },
+        );
+        animation.onfinish = () => {
+          animation = undefined;
+        };
+      });
+      observer.observe(content);
+      onCleanup(() => {
+        active = false;
+        observer.disconnect();
+        animation?.cancel();
+      });
+    });
+  }
+}

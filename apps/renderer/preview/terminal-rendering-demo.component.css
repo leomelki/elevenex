@@ -1,0 +1,5 @@
+:host { display: flex; flex-direction: column; min-height: 0; height: 100%; padding: var(--space-4); gap: var(--space-3); }
+.controls { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.controls span { margin-right: auto; color: var(--ink-muted); }
+.terminal { flex: 1; min-height: 0; overflow: hidden; background: var(--surface-sunken); }
+output { min-height: var(--text-code-line); font: var(--text-code-size)/var(--text-code-line) var(--font-mono); }

@@ -1,0 +1,29 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 10px var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-size: 13.5px;
+  line-height: 21px;
+}
+.heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+  color: var(--ink-muted);
+}
+.heading > ex-icon {
+  color: var(--accent);
+  flex: none;
+}
+.heading b {
+  font-weight: 600;
+  color: var(--ink);
+}
+.time {
+  margin-left: auto;
+}

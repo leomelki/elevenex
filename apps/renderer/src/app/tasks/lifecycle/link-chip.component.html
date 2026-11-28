@@ -1,0 +1,18 @@
+<button
+  type="button"
+  [class.merged]="state() === 'merged'"
+  [class.failing]="state() === 'failing'"
+  [title]="description()"
+  [attr.aria-label]="description()"
+  (click)="activated.emit()"
+>
+  <ex-icon
+    [name]="
+      kind() === 'ticket' ? 'ticket' : state() === 'merged' ? 'merged' : 'pr'
+    "
+    [size]="12"
+  /><span class="key">{{ label() }}</span>
+  @if (!compact() && word()) {
+    <span class="state">{{ word() }}</span>
+  }
+</button>

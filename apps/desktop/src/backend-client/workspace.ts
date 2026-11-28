@@ -1,0 +1,984 @@
+import { isWorkspacePriorityStatus, isWorkspaceProjectImage, WORKSPACE_ARCHIVE_AGENT_LIMIT, WORKSPACE_BRANCH_NAME_LIMIT, WORKSPACE_BRANCH_REF_LIMIT, WORKSPACE_PROJECT_IMAGE_LIMIT } from '@elevenex/shared';
+import { parseAgentReference, parseAgentSelection, parseChildSummary } from './session-agent-values';
+import type {
+  BackendResult,
+  InvokeContracts,
+  WorkspaceAppearance,
+  WorkspaceRevision,
+  WorkspacePage,
+  WorkspaceProject,
+  WorkspaceProjectDetail,
+  WorkspaceRepository,
+  WorkspaceRepositorySetup,
+  WorkspaceTask,
+  WorkspaceTaskSetupIssue,
+  WorkspaceSession,
+  WorkspaceStage,
+  WorkspaceGitSummary,
+  WorkspaceCommitPreview,
+  WorkspaceCommitSelection,
+} from '@elevenex/shared';
+import { handleForWindow, type TrustedSender } from '../ipc';
+import type { BackendClient } from './client';
+import {
+  invalidResponse,
+  requestBackendJson,
+  type BackendEndpoint,
+} from './transport';
+
+function object(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw invalidResponse();
+  return value as Record<string, unknown>;
+}
+function text(value: unknown, max = 4096): string {
+  if (typeof value !== 'string' || value.length > max) throw invalidResponse();
+  return value;
+}
+function id(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1)
+    throw invalidResponse();
+  return value;
+}
+function nullable(value: unknown, max = 4096): string | null {
+  return value === null ? null : text(value, max);
+}
+function boolean(value: unknown): boolean {
+  if (typeof value !== 'boolean') throw invalidResponse();
+  return value;
+}
+function stage(value: unknown): WorkspaceStage {
+  if (value !== 'planned' && value !== 'active' && value !== 'waiting')
+    throw invalidResponse();
+  return value;
+}
+function appearance(value: unknown): WorkspaceAppearance {
+  const raw = object(value),
+    look = raw['look'],
+    hue = raw['hue'],
+    image = raw['image'];
+  if (image !== undefined && image !== null && !isWorkspaceProjectImage(image))
+    throw invalidResponse();
+  if (
+    look !== undefined &&
+    look !== 'letters' &&
+    look !== 'emoji' &&
+    look !== 'icon'
+  )
+    throw invalidResponse();
+  if (
+    hue !== undefined &&
+    hue !== 'ocean' &&
+    hue !== 'pine' &&
+    hue !== 'plum' &&
+    hue !== 'rust' &&
+    hue !== 'steel' &&
+    hue !== 'rose'
+  )
+    throw invalidResponse();
+  return {
+    ...(look === undefined ? {} : { look }),
+    ...(hue === undefined ? {} : { hue }),
+    ...(raw['emoji'] === undefined ? {} : { emoji: text(raw['emoji'], 64) }),
+    ...(raw['icon'] === undefined ? {} : { icon: text(raw['icon'], 64) }),
+    ...(image === undefined ? {} : { image }),
+  };
+}
+function parseRevision(value: unknown): WorkspaceRevision {
+  const response = object(value);
+  if (response['version'] !== 1) throw invalidResponse();
+  const revision = count(response['revision']);
+  const rawOpens = response['appOpens'];
+  if (rawOpens !== undefined && (!Array.isArray(rawOpens) || rawOpens.length > 16)) throw invalidResponse();
+  const appOpens = Array.isArray(rawOpens) ? rawOpens.map(value => {
+    const row = object(value);
+    const runId = row['runId'];
+    const eventRevision = count(row['revision']);
+    if (typeof runId !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(runId) || eventRevision > revision)
+      throw invalidResponse();
+    return { runId, revision: eventRevision, taskId: id(row['taskId']), sessionId: id(row['sessionId']) };
+  }) : undefined;
+  for (const capability of ['revisionWait', 'chatStream', 'taskApps', 'sessionPriority', 'sessionNesting', 'sessionNestingOrder', 'sessionArchiveHistory', 'sessionArchive', 'sessionArchiveChildren', 'taskRequests', 'commitPanel', 'projectImages']) {
+    if (response[capability] !== undefined && response[capability] !== true) throw invalidResponse();
+  }
+  return {
+    revision, version: 1,
+    ...(appOpens?.length ? { appOpens } : {}),
+    ...(response['revisionWait'] === true ? { revisionWait: true } : {}),
+    ...(response['taskApps'] === true ? { taskApps: true } : {}),
+    ...(response['chatStream'] === true ? { chatStream: true } : {}),
+    ...(response['sessionPriority'] === true ? { sessionPriority: true } : {}),
+    ...(response['sessionNesting'] === true ? { sessionNesting: true } : {}),
+    ...(response['sessionNestingOrder'] === true ? { sessionNestingOrder: true } : {}),
+    ...(response['sessionArchiveHistory'] === true ? { sessionArchiveHistory: true } : {}),
+    ...(response['sessionArchive'] === true ? { sessionArchive: true } : {}),
+    ...(response['sessionArchiveChildren'] === true ? { sessionArchiveChildren: true } : {}),
+    ...(response['taskRequests'] === true ? { taskRequests: true } : {}),
+    ...(response['commitPanel'] === true ? { commitPanel: true } : {}),
+    ...(response['projectImages'] === true ? { projectImages: true } : {}),
+  };
+}
+
+function project(value: unknown): WorkspaceProject {
+  const raw = object(value);
+  return {
+    id: id(raw['id']),
+    name: text(raw['name'], 100),
+    agentInstructions: nullable(raw['agentInstructions'], 100000),
+    ...(raw['appearance'] === undefined
+      ? {}
+      : { appearance: appearance(raw['appearance']) }),
+  };
+}
+function repository(value: unknown): WorkspaceRepository {
+  const raw = object(value);
+  return {
+    id: id(raw['id']),
+    projectId: id(raw['projectId']),
+    name: text(raw['name'], 256),
+    path: text(raw['path']),
+    defaultBase: nullable(raw['defaultBase'], WORKSPACE_BRANCH_REF_LIMIT),
+  };
+}
+function setupIssue(value: unknown): WorkspaceTaskSetupIssue {
+  const raw = object(value), code = raw['code'];
+  if (code !== 'external-checkout' && code !== 'branch-in-use' && code !== 'environment-busy' && code !== 'other') throw invalidResponse();
+  const path = raw['workspacePath'];
+  const recovery = raw['workspaceRecovery'];
+  if (recovery !== undefined && recovery !== 'prepare' && recovery !== 'restore-branch' && recovery !== 'new-workspace') throw invalidResponse();
+  if (path !== undefined && /[\0\r\n]/.test(text(path, 4096))) throw invalidResponse();
+  if (raw['closeFailed'] !== undefined && raw['closeFailed'] !== true) throw invalidResponse();
+  return {
+    code,
+    message: required(raw['message'], 500),
+    canUseSnapshot: boolean(raw['canUseSnapshot']),
+    ...(raw['closeFailed'] === true ? { closeFailed: true } : {}),
+    ...(raw['canExceedWorktreeLimit'] === undefined ? {} : { canExceedWorktreeLimit: boolean(raw['canExceedWorktreeLimit']) }),
+    ...(path === undefined ? {} : { workspacePath: text(path, 4096) }),
+    ...(recovery === undefined ? {} : { workspaceRecovery: recovery }),
+  };
+}
+export function parseWorkspaceTask(value: unknown): WorkspaceTask {
+  const raw = object(value),
+    state = raw['state'];
+  if (
+    state !== 'preparing' &&
+    state !== 'ready' &&
+    state !== 'failed' &&
+    state !== 'finishing' &&
+    state !== 'releasing' &&
+    state !== 'released' &&
+    state !== 'finished'
+  )
+    throw invalidResponse();
+  if (raw['temporary'] !== undefined && raw['temporary'] !== true) throw invalidResponse();
+  const setupStep = raw['setupStep'];
+  if (setupStep !== undefined && setupStep !== 'queued' && setupStep !== 'fetching' && setupStep !== 'waiting' &&
+    setupStep !== 'checkout' && setupStep !== 'sessions') throw invalidResponse();
+  return {
+    ...(raw['temporary'] === true ? { temporary: true as const } : {}),
+    ...(raw['projectName'] === undefined
+      ? {}
+      : { projectName: text(raw['projectName'], 100) }),
+    ...(raw['projectRepositoryCount'] === undefined
+      ? {}
+      : { projectRepositoryCount: id(raw['projectRepositoryCount']) }),
+    ...(raw['repoName'] === undefined
+      ? {}
+      : { repoName: text(raw['repoName'], 256) }),
+    id: id(raw['id']),
+    repoId: id(raw['repoId']),
+    projectId: id(raw['projectId']),
+    name: text(raw['name'], 160),
+    branchName: text(raw['branchName'], 240),
+    state,
+    ...(raw['setupIssue'] === undefined ? {} : { setupIssue: setupIssue(raw['setupIssue']) }),
+    ...(setupStep === undefined ? {} : { setupStep }),
+    stage: stage(raw['stage']),
+    archivedAt: nullable(raw['archivedAt'], 64),
+    updatedAt: text(raw['updatedAt'], 64),
+  };
+}
+function count(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw invalidResponse();
+  return value;
+}
+function commitSelection(value: unknown): WorkspaceCommitSelection {
+  const raw = object(value);
+  const paths = (value: unknown): readonly string[] => {
+    if (!Array.isArray(value) || value.length > 1000) throw invalidResponse();
+    if (value.reduce((bytes: number, path: unknown) => bytes + (typeof path === 'string' ? path.length : 0), 0) > 65536) throw invalidResponse();
+    return value.map(value => { const path = text(value, 4096); if (!path || path.includes('\0') || path.startsWith('/') || path.split('/').includes('..')) throw invalidResponse(); return path; });
+  };
+  return { includeUnstaged: boolean(raw['includeUnstaged']), excluded: paths(raw['excluded']), includedSecrets: paths(raw['includedSecrets']) };
+}
+function commitPreview(value: unknown): WorkspaceCommitPreview {
+  const raw = object(value), selected = object(raw['selected']);
+  if (!Array.isArray(raw['items']) || raw['items'].length > 100 || !Array.isArray(raw['running']) || raw['running'].length > 20) throw invalidResponse();
+  const revision = text(raw['revision'], 64), cursor = nullable(raw['nextCursor'], 9);
+  if (!/^[a-f0-9]{64}$/.test(revision) || (cursor !== null && !/^[1-9]\d{0,8}$/.test(cursor))) throw invalidResponse();
+  return { taskId: id(raw['taskId']), revision, nextCursor: cursor, total: count(raw['total']), matches: count(raw['matches']), unstaged: count(raw['unstaged']), running: raw['running'].map(name => text(name, 256)), ...(raw['runningCount'] === undefined ? {} : { runningCount: count(raw['runningCount']) }),
+    selected: { files: count(selected['files']), add: count(selected['add']), del: count(selected['del']), staged: count(selected['staged']), unstaged: count(selected['unstaged']) },
+    items: raw['items'].map(value => { const file = object(value); if (!['M','A','D','R','U'].includes(String(file['status'])) || (file['flag'] !== undefined && file['flag'] !== 'secrets')) throw invalidResponse(); return { path: text(file['path'], 4096), status: text(file['status'], 1), add: count(file['add']), del: count(file['del']), staged: boolean(file['staged']), ...(file['flag'] === 'secrets' ? { flag: 'secrets' as const } : {}) }; }),
+  };
+}
+function gitSummary(value: unknown): WorkspaceGitSummary {
+  const raw = object(value);
+  const count = (value: unknown) => {
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0)
+      throw invalidResponse();
+    return value;
+  };
+  return {
+    taskId: id(raw['taskId']),
+    branch: text(raw['branch'], 240),
+    upstream: nullable(raw['upstream'], 480),
+    ahead: count(raw['ahead']),
+    behind: count(raw['behind']),
+    files: count(raw['files']),
+    additions: count(raw['additions']),
+    deletions: count(raw['deletions']),
+    conflicted: boolean(raw['conflicted']),
+    ...(raw['commitPhase'] === undefined ? {} : { commitPhase: commitPhase(raw['commitPhase']) }),
+    ...(raw['changesRevision'] === undefined ? {} : { changesRevision: changesRevision(raw['changesRevision']) }),
+  };
+}
+function changesRevision(value: unknown): string {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) throw invalidResponse();
+  return value;
+}
+function commitPhase(value: unknown): 'writing' | 'committing' | 'pushing' {
+  if (value !== 'writing' && value !== 'committing' && value !== 'pushing') throw invalidResponse();
+  return value;
+}
+function session(value: unknown): WorkspaceSession {
+  const raw = object(value);
+  const sessionId = id(raw['id']), taskId = id(raw['taskId']);
+  const delegatedBy = raw['delegatedBy'] === undefined ? undefined : parseAgentReference(raw['delegatedBy']);
+  if (delegatedBy && (delegatedBy.sessionId === sessionId || delegatedBy.taskId !== taskId)) throw invalidResponse();
+  if (raw['parentWaiting'] !== undefined && (raw['parentWaiting'] !== true || !delegatedBy)) throw invalidResponse();
+  return {
+    id: sessionId,
+    taskId,
+    repoId: id(raw['repoId']),
+    name: text(raw['name'], 160),
+    status: text(raw['status'], 64),
+    ...(raw['turnStatus'] === undefined ? {} : { turnStatus: text(raw['turnStatus'], 64) }),
+    ...(raw['commandCount'] === undefined ? {} : { commandCount: nonnegativeCount(raw['commandCount']) }),
+    provider: text(raw['provider'], 64),
+    updatedAt: text(raw['updatedAt'], 64),
+    ...(raw['canDelete'] === undefined ? {} : { canDelete: boolean(raw['canDelete']) }),
+    ...(raw['parentSessionId'] === undefined ? {} : { parentSessionId: raw['parentSessionId'] === null ? null : id(raw['parentSessionId']) }),
+    ...(raw['childCount'] === undefined ? {} : { childCount: nonnegativeCount(raw['childCount']) }),
+    ...(delegatedBy ? { delegatedBy } : {}),
+    ...(raw['agentSelection'] === undefined ? {} : { agentSelection: parseAgentSelection(raw['agentSelection']) }),
+    ...(raw['childSummary'] === undefined ? {} : { childSummary: parseChildSummary(raw['childSummary']) }),
+    ...(raw['delegationDetail'] === undefined ? {} : { delegationDetail: text(raw['delegationDetail'], 300) }),
+    ...(raw['parentWaiting'] === true ? { parentWaiting: true } : {}),
+    ...(raw['activeChildAgents'] === undefined ? {} : { activeChildAgents: archiveAgents(raw['activeChildAgents'], sessionId) }),
+    ...(raw['childStopRequired'] === undefined ? {} : { childStopRequired: boolean(raw['childStopRequired']) }),
+  };
+}
+function archiveAgents(value: unknown, sessionId: number): readonly number[] {
+  if (!Array.isArray(value) || !value.length || value.length > WORKSPACE_ARCHIVE_AGENT_LIMIT) throw invalidResponse();
+  const ids = value.map(id);
+  if (ids.includes(sessionId) || new Set(ids).size !== ids.length) throw invalidResponse();
+  return ids;
+}
+function nonnegativeCount(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw invalidResponse();
+  return value;
+}
+function validNestingCursor(value: string): boolean {
+  return /^(0|[1-9]\d*):[1-9]\d*$/.test(value) && value.split(':').every(part => Number.isSafeInteger(Number(part)));
+}
+export function parseWorkspacePage<T>(
+  value: unknown,
+  map: (value: unknown) => T,
+  nested = false,
+): WorkspacePage<T> {
+  const raw = object(value);
+  if (!Array.isArray(raw['items']) || raw['items'].length > 100)
+    throw invalidResponse();
+  const cursor = nullable(raw['nextCursor'], nested ? 40 : 20);
+  if (cursor !== null && !(nested ? validNestingCursor(cursor) : /^[1-9]\d*$/.test(cursor))) throw invalidResponse();
+  return { items: raw['items'].map(map), nextCursor: cursor };
+}
+function detail(value: unknown): WorkspaceProjectDetail {
+  const raw = object(value);
+  const result = {
+    project: project(raw['project']),
+    repositories: parseWorkspacePage(raw['repositories'], repository),
+  };
+  if (
+    result.repositories.items.some(
+      (repo) => repo.projectId !== result.project.id,
+    )
+  )
+    throw invalidResponse();
+  return result;
+}
+function accepted(value: unknown): { readonly accepted: true } {
+  if (object(value)['accepted'] !== true) throw invalidResponse();
+  return { accepted: true };
+}
+function required(value: unknown, max: number): string {
+  const result = text(value, max).trim();
+  if (!result) throw new Error('A nonempty value is required.');
+  return result;
+}
+function query(value: unknown, nested = false): { limit: number; cursor?: string } {
+  const raw = object(value),
+    limit = raw['limit'] === undefined ? 50 : id(raw['limit']);
+  if (limit > 100) throw new Error('Page limit exceeds 100.');
+  const cursor =
+    raw['cursor'] === undefined ? undefined : required(raw['cursor'], nested ? 40 : 20);
+  if (cursor && !(nested ? validNestingCursor(cursor) : /^[1-9]\d*$/.test(cursor))) throw new Error('Invalid cursor.');
+  return { limit, ...(cursor === undefined ? {} : { cursor }) };
+}
+function queryString(values: object): string {
+  return new URLSearchParams(
+    Object.entries(values)
+      .filter(([, value]) => value !== undefined && value !== null)
+      .map(([key, value]) => [key, String(value)]),
+  ).toString();
+}
+type WorkspaceChannel = Extract<keyof InvokeContracts, `workspace:${string}`>;
+
+/** Named domain adapters; resource IDs and query bounds are checked before transport. */
+export function registerWorkspaceIpc(
+  client: BackendClient,
+  trusted: TrustedSender,
+  taskFinished?: (windowId: number, scopeId: string, taskId: number) => void,
+): () => void {
+  const stops: (() => void)[] = [];
+  function register<C extends WorkspaceChannel>(
+    channel: C,
+    handler: (
+      windowId: number,
+      scopeId: string,
+      input: InvokeContracts[C]['args'][1],
+    ) => InvokeContracts[C]['result'] | Promise<InvokeContracts[C]['result']>,
+  ) {
+    stops.push(
+      handleForWindow(channel, trusted, (windowId, ...args) => {
+        const scope = args[0];
+        if (
+          args.length !== 2 ||
+          typeof scope !== 'string' ||
+          !/^[a-f0-9-]{36}$/.test(scope)
+        )
+          throw new Error('A backend scope is required.');
+        return handler(windowId, scope, args[1]);
+      }),
+    );
+  }
+  function read<T>(
+    windowId: number,
+    scope: string,
+    path: string,
+    parse: (value: unknown) => T,
+    limit = 768 * 1024,
+  ): Promise<BackendResult<T>> {
+    return client.execute(
+      windowId,
+      scope,
+      path,
+      false,
+      async (endpoint, signal) =>
+        parse(
+          await requestBackendJson(
+            endpoint,
+            { path, limit },
+            signal,
+          ),
+        ),
+    );
+  }
+  function write<T>(
+    windowId: number,
+    scope: string,
+    path: string,
+    body: object | undefined,
+    parse: (value: unknown) => T,
+    method: 'POST' | 'PATCH' = 'POST',
+    timeoutMs = 30000,
+    conflictMessages?: Readonly<Record<string, string>>,
+  ): Promise<BackendResult<T>> {
+    return client.execute(
+      windowId,
+      scope,
+      null,
+      true,
+      async (endpoint: BackendEndpoint, signal) =>
+        parse(
+          await requestBackendJson(
+            endpoint,
+            {
+              path,
+              method,
+              limit: 768 * 1024,
+              ...(conflictMessages === undefined ? {} : { conflictMessages }),
+              ...(body === undefined ? {} : { body }),
+            },
+            signal,
+          ),
+        ),
+      timeoutMs,
+    );
+  }
+  const base = '/api/desktop-workspace';
+  stops.push(
+    handleForWindow('workspace:revision', trusted, (windowId, ...args) => {
+      if (
+        args.length !== 1 ||
+        typeof args[0] !== 'string' ||
+        !/^[a-f0-9-]{36}$/.test(args[0])
+      )
+        throw new Error('A backend scope is required.');
+      return read(windowId, args[0], `${base}/revision`, (value) => {
+        return parseRevision(value);
+      });
+    }),
+  );
+  const waitIdentity = (value: unknown): string => {
+    if (typeof value !== 'string' || !/^[a-f0-9-]{36}$/.test(value)) throw new Error('A backend scope and navigation request identity are required.');
+    return value;
+  };
+  stops.push(handleForWindow('workspace:wait', trusted, (window, ...args) => {
+    if (args.length !== 2) throw new Error('Invalid navigation wait scope or arguments.');
+    const scope = waitIdentity(args[0]), input = object(args[1]);
+    if (Object.keys(input).some(key => key !== 'after' && key !== 'requestId')) throw new Error('Invalid navigation wait scope or arguments.');
+    const after = count(input['after']), requestId = waitIdentity(input['requestId']);
+    // Coalesce duplicate waits; cancellation cannot reach another domain.
+    return client.execute(window, scope, `workspace-wait:${requestId}`, false, async (endpoint, signal) =>
+      parseRevision(await requestBackendJson(endpoint, { path: `${base}/revision?after=${after}`, limit: 4096 }, signal)), 30_000);
+  }));
+  stops.push(handleForWindow('workspace:cancel-wait', trusted, (window, ...args) => {
+    if (args.length !== 2) throw new Error('Invalid navigation cancellation scope or arguments.');
+    client.cancel(window, waitIdentity(args[0]), `workspace-wait:${waitIdentity(args[1])}`);
+  }));
+  register('workspace:close-preview', (window, scope, input) => {
+    const taskId = id(input);
+    return read(
+      window,
+      scope,
+      `${base}/tasks/${taskId}/close-preview`,
+      (value) => {
+        const raw = object(value);
+        const count = (value: unknown) => {
+          if (
+            typeof value !== 'number' ||
+            !Number.isSafeInteger(value) ||
+            value < 0
+          )
+            throw invalidResponse();
+          return value;
+        };
+        if (raw['taskId'] !== taskId) throw invalidResponse();
+        return {
+          taskId,
+          sessions: count(raw['sessions']),
+          running: count(raw['running']),
+          terminals: count(raw['terminals']),
+          actions: count(raw['actions']),
+          ...(raw['apps'] === undefined ? {} : { apps: count(raw['apps']) }),
+          unpushed: count(raw['unpushed']),
+          ...(raw['uncommitted'] === undefined ? {} : { uncommitted: count(raw['uncommitted']) }),
+        };
+      },
+    );
+  });
+  register('workspace:commit-preview', (window, scope, input) => {
+    const raw = object(input), taskId = id(raw['taskId']), selection = commitSelection(raw);
+    const cursor = raw['cursor'] === undefined ? undefined : required(raw['cursor'], 9);
+    if (cursor && !/^[1-9]\d{0,8}$/.test(cursor)) throw invalidResponse();
+    const body = { ...selection, query: raw['query'] === undefined ? '' : text(raw['query'], 4096), ...(cursor ? { cursor } : {}) };
+    const key = JSON.stringify(['commit-preview', taskId, body]);
+    return client.execute(window, scope, key, false, async (endpoint, signal) => {
+      const result = commitPreview(await requestBackendJson(endpoint, { path: base + '/tasks/' + taskId + '/commit-preview', method: 'POST', body, limit: 768 * 1024 }, signal));
+      if (result.taskId !== taskId) throw invalidResponse();
+      return result;
+    }, 30000);
+  });
+  register('workspace:git', (window, scope, input) => {
+    const taskId = id(input);
+    return read(window, scope, `${base}/tasks/${taskId}/git`, (value) => {
+      const result = gitSummary(value);
+      if (result.taskId !== taskId) throw invalidResponse();
+      return result;
+    });
+  });
+  register('workspace:git-action', (window, scope, input) => {
+    const raw = object(input),
+      taskId = id(raw['taskId']),
+      type = raw['type'];
+    if (raw['selection'] !== undefined && (typeof raw['revision'] !== 'string' || !/^[a-f0-9]{64}$/.test(raw['revision']))) throw invalidResponse();
+    if (
+      type !== 'commit' &&
+      type !== 'push' &&
+      type !== 'sync' &&
+      type !== 'rename-branch'
+    )
+      throw new Error('Unsupported git action.');
+    return write(
+      window,
+      scope,
+      `${base}/tasks/${taskId}/git`,
+      {
+        type,
+        ...(type === 'commit'
+          ? { message: text(raw['message'], 4000), ...(raw['selection'] === undefined ? {} : { selection: commitSelection(raw['selection']), revision: required(raw['revision'], 64) }), ...(raw['push'] === undefined ? {} : { push: boolean(raw['push']) }) }
+          : {}),
+        ...(type === 'rename-branch'
+          ? { branchName: required(raw['branchName'], 240) }
+          : {}),
+      },
+      value => { const result = gitSummary(value); if (result.taskId !== taskId) throw invalidResponse(); return result; },
+      'POST',
+      type === 'commit' ? 180000 : 30000,
+      {
+        'branch-detached': 'This checkout is not on a branch. Check out or create a branch, then try again.',
+        'commit-changes-moved': 'The staged changes or branch changed. Refresh files, review your selection, then commit again.',
+        'commit-conflicts': 'Resolve the merge conflicts before committing.',
+        'commit-index-locked': 'Another Git operation is using this workspace. Wait for it to finish, then try again.',
+        'commit-message-failed': 'Elevenex could not write a commit message. Enter a message above and try again.',
+        'commit-no-changes': 'The selected files have no changes Git can commit. Refresh the file list and review your selection.',
+        'commit-rejected': 'Git rejected the commit. Check your Git name/email, commit hooks and signing setup, then try again.',
+        'commit-saved-push-failed': 'Your commit was saved, but the push failed. Refresh status, then use Push to try again.',
+        'git-push-authentication': 'Push failed because Git could not authenticate. Check Git credentials on this machine. For an SSH machine, unlock your local SSH key and reconnect with agent forwarding available. Your commits are still saved locally.',
+        'git-push-behind': 'Push was rejected because the remote branch has newer commits. Fetch and review the remote branch before trying again. Your commits are still saved locally.',
+        'git-push-failed': 'Push failed. Check the remote, network connection, repository permissions and pre-push hooks. Your commits are still saved locally.',
+        'git-pull-upstream': 'The checked-out branch has no available upstream. Check its tracking branch.',
+        'git-pull-fetch': 'Could not fetch the upstream branch. Check the remote, network connection and Git credentials.',
+        'git-pull-fast-forward': 'Could not fast-forward the task branch. Check for divergence, worktree conflicts or local changes that would be overwritten.',
+      },
+    );
+  });
+  register('workspace:restore-project', (window, scope, input) =>
+    write(
+      window,
+      scope,
+      `${base}/projects/${id(input)}/restore`,
+      undefined,
+      accepted,
+    ),
+  );
+  register('workspace:delete-project', (window, scope, input) =>
+    write(
+      window,
+      scope,
+      `${base}/projects/${id(input)}/delete`,
+      undefined,
+      accepted,
+      'POST',
+      180000,
+      {
+        active_tasks: 'A task opened while this project was being deleted. Try deleting the project again.',
+        project_cleanup_failed: 'Could not stop all project processes. The project was kept. Try deleting it again.',
+      },
+    ),
+  );
+  register('workspace:projects', (window, scope, input) => {
+    const page = query(input);
+    return read(
+      window,
+      scope,
+      `${base}/projects?${queryString({ ...page, images: true })}`,
+      (value) => parseWorkspacePage(value, project),
+      768 * 1024 + page.limit * WORKSPACE_PROJECT_IMAGE_LIMIT,
+    );
+  });
+  register('workspace:project-name-availability', (window, scope, input) =>
+    read(window, scope, `${base}/projects/name-availability?${new URLSearchParams({ name: required(input, 100) })}`, value => ({ available: boolean(object(value)['available']) })),
+  );
+  register('workspace:project', (window, scope, input) => {
+    const projectId = id(input);
+    return read(window, scope, `${base}/projects/${projectId}`, (value) => {
+      const result = detail(value);
+      if (result.project.id !== projectId) throw invalidResponse();
+      return result;
+    });
+  });
+  register('workspace:tasks', (window, scope, input) => {
+    const raw = object(input),
+      projectId = raw['projectId'] === null ? null : id(raw['projectId']),
+      state = raw['state'] ?? 'active';
+    if (state !== 'active' && state !== 'finished')
+      throw new Error('Invalid task state.');
+    return read(
+      window,
+      scope,
+      `${base}/tasks?${queryString({ ...query(raw), projectId, state })}`,
+      (value) => {
+        const result = parseWorkspacePage(value, parseWorkspaceTask);
+        if (
+          projectId !== null &&
+          result.items.some((task) => task.projectId !== projectId)
+        )
+          throw invalidResponse();
+        return result;
+      },
+    );
+  });
+  register('workspace:task-request', (window, scope, input) => {
+    const raw = object(input), repoId = id(raw['repoId']), requestId = required(raw['requestId'], 100);
+    return read(window, scope, `${base}/task-requests?${new URLSearchParams({ repoId: String(repoId), requestId })}`, value => {
+      const raw = object(value), task = raw['task'] === null ? null : parseWorkspaceTask(raw['task']);
+      if (task && task.repoId !== repoId) throw invalidResponse();
+      return { task };
+    });
+  });
+  register('workspace:task', (window, scope, input) => {
+    const taskId = id(input);
+    return read(window, scope, `${base}/tasks/${taskId}`, (value) => {
+      const task = parseWorkspaceTask(value);
+      if (task.id !== taskId) throw invalidResponse();
+      return task;
+    });
+  });
+  register('workspace:sessions', (window, scope, input) => {
+    const raw = object(input),
+      taskId = id(raw['taskId']);
+    if (raw['order'] !== undefined && raw['order'] !== 'latest') throw invalidResponse();
+    const priority = raw['state'] === 'priority';
+    if (raw['state'] !== undefined && raw['state'] !== 'normal' && raw['state'] !== 'archived' && !priority) throw invalidResponse();
+    if (priority && (raw['parentSessionId'] !== undefined || raw['childOrder'] !== undefined)) throw invalidResponse();
+    if (raw['childOrder'] !== undefined && (raw['childOrder'] !== 'nested' || typeof raw['parentSessionId'] !== 'number')) throw invalidResponse();
+    const nested = raw['childOrder'] === 'nested';
+    const pageQuery = query(raw, nested);
+    const before = priority && pageQuery.cursor ? id(Number(pageQuery.cursor)) : Infinity;
+    return read(
+      window,
+      scope,
+      `${base}/tasks/${taskId}/sessions?${queryString({ ...pageQuery, ...(nested ? { childOrder: 'nested' } : {}), ...(raw['parentSessionId'] === undefined ? {} : { parentSessionId: raw['parentSessionId'] === null ? 'root' : String(id(raw['parentSessionId'])) }), ...(raw['order'] === 'latest' ? { order: 'latest' } : {}), ...(raw['state'] === undefined ? {} : { state: raw['state'] }) })}`,
+      (value) => {
+        const result = parseWorkspacePage(value, session, nested);
+        if (result.items.some((session) => session.taskId !== taskId || (typeof raw['parentSessionId'] === 'number' && session.parentSessionId !== raw['parentSessionId']) || (raw['state'] === 'archived' && session.status !== 'archived') || (raw['state'] === 'normal' && session.status === 'archived')))
+          throw invalidResponse();
+        if (!priority) return result;
+        const { parentSessions } = object(value);
+        if (!Array.isArray(parentSessions) || parentSessions.length > result.items.length || result.items.length > pageQuery.limit)
+          throw invalidResponse();
+        const next = result.nextCursor === null ? 0 : id(Number(result.nextCursor));
+        if (next >= before || result.items.some(item => item.id >= before || item.id < next))
+          throw invalidResponse();
+        const ids = new Set(result.items.map(item => item.id));
+        const referencedParents = new Set(result.items.map(item => item.parentSessionId));
+        if (ids.size !== result.items.length || result.items.some(item =>
+          !isWorkspacePriorityStatus(item.turnStatus ?? item.status) || item.status === 'archived'))
+          throw invalidResponse();
+        const parents = parentSessions.map(session);
+        for (const parent of parents) {
+          if (parent.taskId !== taskId || parent.status === 'archived' || ids.has(parent.id) || !referencedParents.has(parent.id))
+            throw invalidResponse();
+          ids.add(parent.id);
+        }
+        return { ...result, parentSessions: parents };
+      },
+    );
+  });
+  register('workspace:create-project', (window, scope, input) => {
+    const raw = object(input),
+      additionalPaths = raw['additionalPaths'] ?? [];
+    if (!Array.isArray(additionalPaths) || additionalPaths.length > 19)
+      throw new Error('At most 20 repositories are allowed.');
+    const paths = [
+      required(raw['path'], 4096),
+      ...additionalPaths.map((path) => required(path, 4096)),
+    ];
+    let repositorySetup: WorkspaceRepositorySetup[] | undefined;
+    if (raw['repositorySetup'] !== undefined) {
+      const setup = raw['repositorySetup'];
+      if (!Array.isArray(setup) || setup.length !== paths.length)
+        throw new Error('Invalid repository setup.');
+      repositorySetup = setup.map((value, index) => {
+        const entry = object(value),
+          path = required(entry['path'], 4096);
+        if (
+          path !== paths[index] ||
+          (entry['initialize'] !== undefined &&
+            typeof entry['initialize'] !== 'boolean') ||
+          (entry['clone'] !== undefined && entry['initialize'])
+        )
+          throw new Error('Invalid repository setup.');
+        return {
+          path,
+          ...(entry['clone'] === undefined
+            ? {}
+            : { clone: required(entry['clone'], 4096) }),
+          ...(entry['initialize'] === undefined
+            ? {}
+            : { initialize: boolean(entry['initialize']) }),
+        };
+      });
+    }
+    return write(
+      window,
+      scope,
+      `${base}/projects`,
+      {
+        ...(repositorySetup === undefined ? {} : { repositorySetup }),
+        name: required(raw['name'], 100),
+        path: required(raw['path'], 4096),
+        additionalPaths: additionalPaths.map((path) => required(path, 4096)),
+        ...(raw['appearance'] === undefined
+          ? {}
+          : { appearance: appearance(raw['appearance']) }),
+      },
+      detail,
+      'POST',
+      130_000,
+    ).then((result) => {
+      if (!result.ok && result.error.code === 'http') {
+        const message =
+          result.error.status === 409
+            ? 'Project setup conflicts with an existing folder or project. Check the repository selection.'
+            : result.error.status === 400
+              ? 'Project could not be created. Check the repository folders, Git access and permissions.'
+              : result.error.message;
+        return { ok: false, error: { ...result.error, message } };
+      }
+      return result;
+    });
+  });
+  register('workspace:add-repository', (window, scope, input) => {
+    const raw = object(input);
+    return write(
+      window,
+      scope,
+      `${base}/projects/${id(raw['projectId'])}/repositories`,
+      { path: required(raw['path'], 4096) },
+      detail,
+    );
+  });
+  register('workspace:update-project', (window, scope, input) => {
+    const raw = object(input);
+    return write(
+      window,
+      scope,
+      `${base}/projects/${id(raw['projectId'])}`,
+      {
+        ...(raw['name'] === undefined
+          ? {}
+          : { name: required(raw['name'], 100) }),
+        ...(raw['agentInstructions'] === undefined
+          ? {}
+          : { agentInstructions: text(raw['agentInstructions'], 100000) }),
+        ...(raw['appearance'] === undefined
+          ? {}
+          : { appearance: appearance(raw['appearance']) }),
+      },
+      detail,
+      'PATCH',
+    );
+  });
+  register('workspace:archive-project', (window, scope, input) =>
+    write(
+      window,
+      scope,
+      `${base}/projects/${id(input)}/archive`,
+      undefined,
+      accepted,
+    ),
+  );
+  register('workspace:create-task', (window, scope, input) => {
+    const raw = object(input),
+      mode = raw['mode'] ?? 'new';
+    if (mode !== 'new' && mode !== 'existing')
+      throw new Error('Invalid branch mode.');
+    return write(
+      window,
+      scope,
+      `${base}/tasks`,
+      {
+        repoId: id(raw['repoId']),
+        name: required(raw['name'], 160),
+        requestId: required(raw['requestId'], 100),
+        mode,
+        ...(raw['branchName'] === undefined
+          ? {}
+          : { branchName: required(raw['branchName'], mode === 'existing' ? WORKSPACE_BRANCH_REF_LIMIT : WORKSPACE_BRANCH_NAME_LIMIT) }),
+        ...(raw['baseRef'] === undefined
+          ? {}
+          : { baseRef: required(raw['baseRef'], WORKSPACE_BRANCH_REF_LIMIT) }),
+      },
+      parseWorkspaceTask,
+    );
+  });
+  register('workspace:delete-session', (window, scope, input) => {
+    const raw = object(input), taskId = id(raw['taskId']), sessionId = id(raw['sessionId']);
+    return write(window, scope, `${base}/tasks/${taskId}/sessions/${sessionId}/delete`, undefined, accepted);
+  });
+  register('workspace:archive-session', (window, scope, input) => {
+    const raw = object(input), taskId = id(raw['taskId']), sessionId = id(raw['sessionId']);
+    return write(window, scope, `${base}/tasks/${taskId}/sessions/${sessionId}/archive`, { confirmStop: boolean(raw['confirmStop']),
+      ...(raw['includeChildren'] === undefined ? {} : { includeChildren: boolean(raw['includeChildren']) }),
+      ...(raw['stopAgents'] === undefined ? {} : { stopAgents: archiveAgents(raw['stopAgents'], sessionId) }) }, accepted);
+  });
+  register('workspace:move-session', (window, scope, input) => {
+    const raw = object(input), taskId = id(raw['taskId']), sessionId = id(raw['sessionId']);
+    const parentSessionId = raw['parentSessionId'] === null ? null : id(raw['parentSessionId']);
+    if (parentSessionId === sessionId) throw invalidResponse();
+    return write(window, scope, `${base}/tasks/${taskId}/sessions/${sessionId}/parent`, { parentSessionId }, value => {
+      const moved = session(value);
+      if (moved.id !== sessionId || moved.taskId !== taskId || moved.parentSessionId !== parentSessionId) throw invalidResponse();
+      return moved;
+    });
+  });
+  register('workspace:restore-session', (window, scope, input) => {
+    const raw = object(input), taskId = id(raw['taskId']), sessionId = id(raw['sessionId']);
+    return write(window, scope, `${base}/tasks/${taskId}/sessions/${sessionId}/restore`, undefined, value => {
+      const restored = session(value);
+      if (restored.id !== sessionId || restored.taskId !== taskId || restored.status === 'archived') throw invalidResponse();
+      return restored;
+    });
+  });
+  register('workspace:create-session', (window, scope, input) => {
+    const raw = object(input);
+    return write(
+      window,
+      scope,
+      `${base}/sessions`,
+      {
+        taskId: id(raw['taskId']),
+        ...(raw['name'] === undefined
+          ? {}
+          : { name: required(raw['name'], 160) }),
+      },
+      session,
+    );
+  });
+  register('workspace:rename-task', (window, scope, input) => {
+    const raw = object(input);
+    return write(
+      window,
+      scope,
+      `${base}/tasks/${id(raw['taskId'])}`,
+      { name: required(raw['name'], 160) },
+      parseWorkspaceTask,
+      'PATCH',
+    );
+  });
+  register('workspace:set-stage', (window, scope, input) => {
+    const raw = object(input);
+    return write(
+      window,
+      scope,
+      `${base}/tasks/${id(raw['taskId'])}/stage`,
+      { stage: stage(raw['stage']) },
+      parseWorkspaceTask,
+      'PATCH',
+    );
+  });
+  register('workspace:keep-task-open', (window, scope, input) => {
+    const taskId = id(input);
+    return write(window, scope, `${base}/tasks/${taskId}/keep-open`, undefined, value => {
+      const task = parseWorkspaceTask(value);
+      if (task.id !== taskId || task.temporary || task.state === 'finishing' || task.state === 'finished') throw invalidResponse();
+      return task;
+    });
+  });
+  register('workspace:finish-task', (window, scope, input) => {
+    const raw = object(input);
+    const taskId = id(raw['taskId']);
+    return write(
+      window,
+      scope,
+      `${base}/tasks/${taskId}/finish`,
+      { confirmStop: boolean(raw['confirmStop']),
+        ...(raw['confirmedApps'] === undefined ? {} : { confirmedApps: count(raw['confirmedApps']) }) },
+      parseWorkspaceTask,
+    ).then(result => {
+      if (result.ok && result.value.id === taskId && result.value.state === 'finished')
+        taskFinished?.(window, scope, taskId);
+      return result;
+    });
+  });
+  // Recovery is an optional third argument; keep existing scope + numeric ID calls valid.
+  stops.push(handleForWindow('workspace:retry-task', trusted, (window, ...args) => {
+    const [scope, taskId, recovery] = args;
+    if ((args.length !== 2 && args.length !== 3) || typeof scope !== 'string' || !/^[a-f0-9-]{36}$/.test(scope)) throw new Error('A backend scope is required.');
+    if (args.length === 3 && recovery !== undefined && recovery !== 'use-existing' && recovery !== 'snapshot' && recovery !== 'exceed-worktree-limit' && recovery !== 'restore-branch' && recovery !== 'new-workspace') throw new Error('Invalid task recovery scope arguments.');
+    const targetId = id(taskId);
+    return write(window, scope, `${base}/tasks/${targetId}/retry`, recovery === undefined ? undefined : { recovery }, value => {
+      const task = parseWorkspaceTask(value);
+      if (task.id !== targetId) throw invalidResponse();
+      return task;
+    });
+  }));
+  register('workspace:reopen-task', (window, scope, input) =>
+    write(
+      window,
+      scope,
+      `${base}/tasks/${id(input)}/reopen`,
+      undefined,
+      parseWorkspaceTask,
+    ),
+  );
+  register('workspace:branches', (window, scope, input) => {
+    const raw = object(input),
+      repoId = id(raw['repoId']),
+      limit = raw['limit'] === undefined ? 50 : id(raw['limit']),
+      includeRemote = raw['includeRemote'] === undefined ? undefined : boolean(raw['includeRemote']),
+      query = raw['query'] === undefined ? '' : text(raw['query'], includeRemote ? WORKSPACE_BRANCH_REF_LIMIT : WORKSPACE_BRANCH_NAME_LIMIT);
+    if (limit > 100) throw new Error('Branch limit exceeds 100.');
+    return read(
+      window,
+      scope,
+      `${base}/branches?${queryString({ repoId, query, limit, includeRemote })}`,
+      (value) => {
+        if (!Array.isArray(value) || value.length > limit)
+          throw invalidResponse();
+        return value.map((value) => {
+          const branch = object(value),
+            name = text(branch['name'], WORKSPACE_BRANCH_NAME_LIMIT),
+            ref = branch['ref'] === undefined ? undefined : text(branch['ref'], WORKSPACE_BRANCH_REF_LIMIT),
+            remoteBranch = branch['remoteBranch'] === undefined ? undefined : text(branch['remoteBranch'], WORKSPACE_BRANCH_NAME_LIMIT);
+          if (ref !== undefined && ref !== `refs/heads/${name}` && ref !== `refs/remotes/${name}`)
+            throw invalidResponse();
+          if (remoteBranch !== undefined && (!remoteBranch || !ref?.startsWith('refs/remotes/') || !name.endsWith(`/${remoteBranch}`)))
+            throw invalidResponse();
+          return {
+            name,
+            ...(ref === undefined ? {} : { ref }),
+            ...(remoteBranch === undefined ? {} : { remoteBranch }),
+            current: boolean(branch['current']),
+            isDefault: boolean(branch['isDefault']),
+            defaultBase: nullable(branch['defaultBase'], WORKSPACE_BRANCH_REF_LIMIT),
+            heldTaskName: nullable(branch['heldTaskName'], 160),
+          };
+        });
+      },
+    );
+  });
+  register('workspace:folders', (window, scope, input) => {
+    const raw = object(input),
+      limit = raw['limit'] === undefined ? 20 : id(raw['limit']);
+    if (limit > 50) throw new Error('Folder limit exceeds 50.');
+    return read(
+      window,
+      scope,
+      `${base}/folders?${queryString({ query: text(raw['query'], 4096), limit })}`,
+      (value) => {
+        if (!Array.isArray(value) || value.length > limit)
+          throw invalidResponse();
+        return value.map((value) => {
+          const folder = object(value);
+          return {
+            path: text(folder['path']),
+            name: text(folder['name'], 256),
+            git: nullable(folder['git'], 256),
+            dir: boolean(folder['dir']),
+            ...(folder['clone'] === undefined
+              ? {}
+              : { clone: required(folder['clone'], 4096) }),
+          };
+        });
+      },
+    );
+  });
+  return () => {
+    for (const stop of stops) stop();
+  };
+}

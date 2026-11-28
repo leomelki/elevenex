@@ -1,0 +1,23 @@
+<header><span class="icon" [class.danger]="removing()" [style.--machine-hue]="'var(--project-' + draft().hue + ')' "><ex-icon [name]="removing() ? 'trash' : icons[machine().kind]" [size]="18" /></span><div><h2>{{ removing() ? removeLabel() + ' ' + machine().name + '?' : 'Edit ' + machine().name }}</h2><p>{{ removing() ? (machine().windows || 1) + ((machine().windows || 1) === 1 ? ' window is on it. It goes back to Home.' : ' windows are on it. They go back to Home.') : machine().address }}</p></div></header>
+@if (removing()) {
+  <ul><li><ex-icon name="x" [size]="12" /><span><b>Goes:</b> its card and its connection.</span></li><li><ex-icon name="check" [size]="12" /><span><b>Stays:</b> everything on {{ machine().name }}. Add it again and it all comes back.</span></li></ul>
+  @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
+  <footer><button exButton size="sm" variant="ghost" [disabled]="saving()" (click)="step() === 'remove' ? cancelled.emit() : removing.set(false)">{{ step() === 'remove' ? 'Cancel' : 'Back' }}</button><span class="grow"></span><button exButton size="sm" variant="danger" [disabled]="disabled() || saving()" (click)="removeRequested.emit()"><ex-icon name="trash" [size]="14" />{{ removeLabel() }}</button></footer>
+} @else {
+  <form (submit)="save($event)">
+    <div class="form">
+      <div class="row"><span class="label">Name</span><ex-set-value label="Name" [field]="true" [value]="draft().name" [disabled]="disabled() || saving()" (inputChanged)="patch({ name: $event })" /></div>
+      <div class="row"><span class="label">Color</span><div class="hues" role="group" aria-label="Color">@for (hue of hues; track hue) { <button type="button" class="hue" [style.background]="'var(--project-' + hue + ')'" [class.selected]="draft().hue === hue" [attr.aria-label]="hue" [attr.aria-pressed]="draft().hue === hue" [disabled]="disabled() || saving()" (click)="patch({ hue })"></button> }</div></div>
+      @if (machine().kind === 'ssh') {
+        <div class="row"><span class="label">Host</span><ex-set-value label="Host" [field]="true" [mono]="true" [value]="draft().host || ''" [disabled]="disabled() || saving()" (inputChanged)="patch({ host: $event })" /></div>
+        <div class="row"><span class="label">User · port</span><div class="pair"><ex-set-value class="user" label="User" [field]="true" [mono]="true" [value]="draft().user || ''" placeholder="SSH config" [disabled]="disabled() || saving()" (inputChanged)="patch({ user: $event })" /><ex-set-value class="port" label="Port" [field]="true" [mono]="true" [value]="draft().portText" placeholder="Config" [disabled]="disabled() || saving()" (inputChanged)="patch({ portText: $event })" /></div></div>
+        <div class="row"><span class="label">Sign in with</span><ex-dropdown label="Sign in with" icon="key" [options]="signIn()" [value]="signInChoice()" [disabled]="disabled() || saving()" [active]="!disabled()" (changed)="signInChanged($event)" /></div>
+      }
+      @if (machine().kind === 'peer') { <div class="row"><span class="label">Pairing</span><p>{{ machine().paired || 'Paired' }}</p></div> }
+      @if (machine().kind === 'local') { <p>{{ machine().name }} is always here: rename it, change its color.</p> }
+      @if (moved()) { <p class="reconnect"><ex-icon name="refresh" [size]="12" />Saving reconnects to check it, on its card.</p> }
+    </div>
+    @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
+    <footer>@if (machine().kind !== 'local') { <button exButton type="button" size="sm" variant="ghost" class="remove" [disabled]="disabled() || saving()" (click)="remove()">{{ removeLabel() }}{{ machine().windows ? '…' : '' }}</button> }<span class="grow"></span><button exButton type="button" size="sm" variant="ghost" [disabled]="saving()" (click)="cancelled.emit()">Cancel</button><button exButton type="submit" size="sm" variant="primary" [disabled]="disabled() || saving() || !valid()">{{ saving() ? 'Saving…' : 'Save' }}<ex-kbd>↵</ex-kbd></button></footer>
+  </form>
+}

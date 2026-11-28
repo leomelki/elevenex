@@ -1,3 +1,4 @@
+import type { TurnChangeCapture, TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 /* Async mocks intentionally implement the native promise API without I/O. */
 /* eslint-disable @typescript-eslint/require-await */
 import { EventEmitter } from 'node:events';
@@ -16,6 +17,7 @@ import type { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.servi
 import type { ClaudeRuntimeEvent } from '../claude-runtime/claude-runtime.types.js';
 
 jest.mock('./opencode-server.js', () => ({ OpenCodeServer: jest.fn() }));
+jest.mock('../sessions/sessions.service.js', () => ({ SessionsService: class SessionsService {} }));
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -25,7 +27,7 @@ function deferred<T>() {
   return { resolve, promise };
 }
 
-function fixture(nativeSessionId = '-1') {
+function fixture(nativeSessionId = '-1', changes?: Pick<TurnChangesService, 'begin' | 'finish' | 'forSession' | 'openCodeTool'>) {
   const events: Event[] = [
     { id: 'connected', type: 'server.connected', properties: {} },
   ];
@@ -65,6 +67,8 @@ function fixture(nativeSessionId = '-1') {
       update: jest.fn(async () => ({ data: {} })),
       children: jest.fn(async () => ({ data: [] })),
       deleteMessage: jest.fn(async () => ({ data: true })),
+      fork: jest.fn(async () => ({ data: { id: 'forked' } })),
+      delete: jest.fn(async () => ({ data: true })),
     },
     permission: {
       list: jest.fn(async () => ({ data: [] })),
@@ -101,6 +105,9 @@ function fixture(nativeSessionId = '-1') {
     updateOpenCodeSessionId: jest.fn(async (_id: number, id: string) => {
       savedId = id;
     }),
+    replaceEditedConversation: jest.fn((_id: number, _provider: string, _previous: string, id: string) => {
+      savedId = id;
+    }),
     markCompletionUnreviewed: jest.fn(async () => {}),
     updatePlanMode: jest.fn(async () => {}),
   };
@@ -123,10 +130,12 @@ function fixture(nativeSessionId = '-1') {
     {
       ensureToken: jest.fn().mockResolvedValue('evx_opencode_test'),
     } as unknown as McpAgentTokenService,
+    changes as TurnChangesService | undefined,
   );
   provider.onModuleInit();
   return {
     provider,
+    catalog,
     client,
     server,
     sessions,
@@ -141,6 +150,60 @@ function fixture(nativeSessionId = '-1') {
 
 describe('OpenCode runtime lifecycle', () => {
   afterEach(() => jest.clearAllMocks());
+  it('keeps a delegated model and variant through project catalog initialization', async () => {
+    const f = fixture();
+    const selection = {
+      ...await f.sessions.findOne(1),
+      agentSelection: { provider: 'opencode', model: 'local/reviewer', reasoningEffort: 'thorough' },
+    };
+    f.sessions.findOne.mockResolvedValue(selection);
+    try {
+      const receipt = jest.fn();
+      await f.provider.submitPrompt(1, 'Review', undefined, undefined, { onAccepted: receipt });
+      await tick();
+      expect(receipt).toHaveBeenCalledWith('running');
+      expect(f.client.session.prompt).toHaveBeenCalledWith(expect.objectContaining({
+        model: { providerID: 'local', modelID: 'reviewer' }, variant: 'thorough',
+      }), expect.anything());
+    } finally { f.provider.onModuleDestroy(); }
+  });
+
+  it('lists owned child activity and stops only that child after native confirmation', async () => {
+    const f = fixture('s');
+    f.catalog.getAuthStatus.mockImplementation(async () => ({ authenticated: true, installed: true }));
+    Object.assign(f.client.session, { get: jest.fn(async ({ sessionID }: { sessionID: string }) => ({ data: {
+      id: sessionID, parentID: sessionID === 'child' ? 's' : undefined, title: 'Review transaction', time: { created: 1 },
+    } })) });
+    try {
+      await f.provider.getRuntimeState(1);
+      f.send({ id: 'question', type: 'question.asked', properties: { id: 'q', sessionID: 'child', questions: [] } });
+      await tick();
+      expect((await f.provider.getRuntimeState(1)).subagents[0].executionStatus).toBe('waiting');
+      f.send({ id: 'child-step', type: 'message.part.updated', properties: { part: {
+        id: 'child-text', messageID: 'child-message', sessionID: 'child', type: 'text', text: 'Checking the unique constraint',
+      } } });
+      await tick();
+      expect((await f.provider.getRuntimeState(1)).backgroundWork).toMatchObject([{ id: 'subagent:child', detail: 'Checking the unique constraint' }]);
+      await f.provider.stopSubagent(1, 'child');
+      expect(f.client.session.abort).toHaveBeenCalledTimes(1);
+      expect(f.client.session.abort).toHaveBeenCalledWith({ sessionID: 'child' });
+      const state = await f.provider.getRuntimeState(1);
+      expect(state.backgroundWork).toEqual([]);
+      expect(state.subagents[0]).toMatchObject({ executionStatus: 'interrupted', stoppedByUser: true });
+      await expect(f.provider.stopSubagent(1, 's')).rejects.toThrow('no longer');
+    } finally { f.provider.onModuleDestroy(); }
+  });
+  it('can read pre-start state without launching or pinning the harness', async () => {
+    const f = fixture();
+    f.catalog.getAuthStatus.mockImplementation(async () => ({ authenticated: true, installed: true }));
+    try {
+      await f.provider.getRuntimeState(1, { initialize: false });
+      expect(f.server.start).not.toHaveBeenCalled();
+      expect(f.sessions.updateOpenCodeSessionId).not.toHaveBeenCalled();
+      await f.provider.getRuntimeState(1);
+      expect(f.server.start).toHaveBeenCalledTimes(1);
+    } finally { f.provider.onModuleDestroy(); }
+  });
   it('stops a V2 prompt during preparation without dispatching or closing the runtime', async () => {
     const f = fixture('s');
     const configuring = deferred<void>();
@@ -371,6 +434,43 @@ describe('OpenCode runtime lifecycle', () => {
     }
   });
 
+  it('sends element prose and image bytes as native file parts in their original order', async () => {
+    const f = fixture('s');
+    try {
+      const prompt = 'Align ❶ (image 1).';
+      await f.provider.submitPrompt(1, prompt, undefined, [{ mediaType: 'image/jpeg', data: '/9j/image' }]);
+      await tick();
+      expect(f.client.session.prompt).toHaveBeenCalledWith(expect.objectContaining({ parts: [{ type: 'text', text: prompt }, { type: 'file', mime: 'image/jpeg', url: 'data:image/jpeg;base64,/9j/image' }] }), expect.anything());
+    } finally { f.provider.onModuleDestroy(); }
+  });
+
+  it('passes the socket-mode MCP endpoint to OpenCode', async () => {
+    const environment = jest.replaceProperty(process, 'env', {
+      ...process.env,
+      ELEVENEX_DESKTOP_SOCKET: '/private/backend.sock',
+      ELEVENEX_MCP_URL: 'http://127.0.0.1:43210/api/mcp',
+    });
+    const f = fixture('s');
+    try {
+      await f.provider.getHistory(1);
+      expect(OpenCodeServer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: {
+            mcp: {
+              elevenex: expect.objectContaining({
+                url: 'http://127.0.0.1:43210/api/mcp',
+                headers: { Authorization: 'Bearer evx_opencode_test' },
+              }),
+            },
+          },
+        }),
+      );
+    } finally {
+      f.provider.onModuleDestroy();
+      environment.restore();
+    }
+  });
+
   it('connects coding sessions to Elevenex and adds current-session instructions', async () => {
     const f = fixture('s');
     try {
@@ -568,6 +668,37 @@ describe('OpenCode runtime lifecycle', () => {
       }
     },
   );
+  it('forwards the current OpenCode tool lifecycle and excludes historical or foreign tool events', async () => {
+    const startedAt = new Date();
+    const capture = { startedAt: startedAt.toISOString() } as TurnChangeCapture;
+    const changes = { begin: jest.fn(async () => capture), finish: jest.fn(async () => undefined),
+      forSession: jest.fn(() => capture), openCodeTool: jest.fn() };
+    const f = fixture('-1', changes);
+    try {
+      await f.provider.submitPrompt(1, 'modify files');
+      await tick();
+      const start = startedAt.getTime() + 1;
+      const input = { filePath: '/tmp/repo/edit' };
+      const tool = { id: 'part', type: 'tool' as const, sessionID: 's', messageID: 'message',
+        callID: 'edit', tool: 'edit' };
+      const send = (part: Part) => f.send({ id: part.id, type: 'message.part.updated', properties: { part } });
+      send({ ...tool, state: { status: 'pending', input, raw: '' } });
+      send({ ...tool, state: { status: 'running', input, time: { start: start - 100 } } });
+      send({ ...tool, sessionID: 'other', state: { status: 'running', input, time: { start } } });
+      send({ ...tool, state: { status: 'running', input, time: { start } } });
+      const metadata = { filediff: { file: input.filePath, patch: '@@ -1 +1 @@\n-before\n+after' } };
+      send({ ...tool, state: { status: 'completed', input, time: { start, end: start + 1 }, output: 'edited', title: 'edit', metadata } });
+      await tick();
+      const normalized = expect.objectContaining({ file_path: input.filePath });
+      expect(changes.openCodeTool.mock.calls).toEqual([
+        [capture, 'edit', 'Edit', 'edit', 'running', normalized, undefined, 'message'],
+        [capture, 'edit', 'Edit', 'edit', 'completed', normalized, metadata, 'message'],
+      ]);
+    } finally {
+      f.provider.onModuleDestroy();
+    }
+  });
+
   it('publishes recovered history and replaces stale live content without repeated history reads', async () => {
     const f = fixture();
     const emitted: ClaudeRuntimeEvent[] = [];
@@ -619,7 +750,7 @@ describe('OpenCode runtime lifecycle', () => {
       f.provider.onModuleDestroy();
     }
   });
-  it('emits bounded deltas after a single text baseline', async () => {
+  it('emits bounded deltas after metadata publishes a single baseline for an early text part', async () => {
     const f = fixture();
     const emitted: ClaudeRuntimeEvent[] = [];
     f.provider.on('event', (event: ClaudeRuntimeEvent) => emitted.push(event));
@@ -639,6 +770,14 @@ describe('OpenCode runtime lifecycle', () => {
           },
         },
       });
+      f.send({ id: 'early', type: 'message.part.delta',
+        properties: { sessionID: 's', messageID: 'm', partID: 'p', field: 'text', delta: 'Before metadata. ' } });
+      await tick();
+      expect(emitted.filter(event => event.type === 'message_start' || event.type === 'message_delta')).toEqual([]);
+      f.send({ id: 'm', type: 'message.updated', properties: { info: {
+        id: 'm', sessionID: 's', role: 'user', agent: 'build',
+        model: { providerID: 'test', modelID: 'model' }, time: { created: 1 },
+      } } });
       for (let index = 0; index < 50; index++)
         f.send({
           id: `d${index}`,
@@ -654,7 +793,7 @@ describe('OpenCode runtime lifecycle', () => {
       await tick();
       expect(
         emitted.filter((event) => event.type === 'message_start'),
-      ).toHaveLength(1);
+      ).toMatchObject([{ payload: { item: { id: 'p', kind: 'user', content: 'Before metadata. ' } } }]);
       expect(emitted.filter((event) => event.type === 'message_delta')).toEqual(
         Array.from({ length: 50 }, () => ({
           type: 'message_delta',
@@ -662,7 +801,7 @@ describe('OpenCode runtime lifecycle', () => {
         })),
       );
       expect((await f.provider.getRuntimeState(1)).liveItems[0].content).toBe(
-        'token'.repeat(50),
+        'Before metadata. ' + 'token'.repeat(50),
       );
     } finally {
       f.provider.onModuleDestroy();
@@ -760,7 +899,17 @@ describe('OpenCode runtime lifecycle', () => {
         'grandchild',
       ]);
       await f.provider.approvePermission(1, 'nested');
-      await f.provider.getSubagentHistory(1, 'grandchild');
+      const info: Message = { id: 'child-message', sessionID: 'grandchild', role: 'user',
+        agent: 'build', model: { providerID: 'test', modelID: 'model' }, time: { created: 1 } };
+      const part: Part = { id: 'child-part', sessionID: 'grandchild', messageID: info.id, type: 'text', text: 'First' };
+      f.messages.push(
+        { info, parts: [part] },
+        { info, parts: [{ ...part, text: 'Complete' }] },
+        { info: { ...info, sessionID: 'foreign' }, parts: [{ ...part, id: 'foreign-part', text: 'Wrong transcript' }] },
+      );
+      expect((await f.provider.getSubagentHistory(1, 'grandchild')).history).toMatchObject([
+        { id: part.id, kind: 'user', content: 'Complete' },
+      ]);
       expect(f.client.session.messages).toHaveBeenCalledWith({
         sessionID: 'grandchild',
       });
@@ -839,6 +988,65 @@ describe('OpenCode runtime lifecycle', () => {
       f.provider.onModuleDestroy();
     }
   });
+  it.each(['legacy without steering', 'v1', 'v2'] as const)(
+    'uses the available follow-up delivery on OpenCode %s',
+    async (version) => {
+      const f = fixture();
+      const steerPrompt = jest.fn().mockResolvedValue(undefined);
+      if (version !== 'legacy without steering')
+        Object.assign(f.client, { steerPrompt });
+      try {
+        await f.provider.submitPrompt(1, 'Initial assignment');
+        await tick();
+        const accepted = jest.fn();
+        await f.provider.submitPrompt(1, 'Focus on the failing test', undefined, undefined, {
+          preferSteering: true,
+          onAccepted: accepted,
+        });
+        if (version !== 'legacy without steering') {
+          expect(steerPrompt).toHaveBeenCalledWith(
+            's', 'Focus on the failing test', expect.any(Object), { signal: expect.any(AbortSignal) },
+          );
+          expect(accepted).toHaveBeenCalledWith('steered');
+          expect((await f.provider.getRuntimeState(1)).pendingPrompts).toEqual([]);
+        } else {
+          expect(accepted).toHaveBeenCalledWith('queued');
+          expect((await f.provider.getRuntimeState(1)).pendingPrompts)
+            .toMatchObject([{ prompt: 'Focus on the failing test' }]);
+        }
+        expect(f.client.session.prompt).toHaveBeenCalledTimes(1);
+        expect(f.client.session.abort).not.toHaveBeenCalled();
+      } finally {
+        f.provider.onModuleDestroy();
+      }
+    },
+  );
+
+  it('keeps the OpenCode v1 turn active until the async steer reaches native history', async () => {
+    const f = fixture();
+    let recorded = false;
+    const receipt = jest.fn(async () => recorded);
+    Object.assign(f.client, { steerPrompt: jest.fn(async () => receipt) });
+    try {
+      await f.provider.submitPrompt(1, 'Initial assignment');
+      await tick();
+      await f.provider.submitPrompt(1, 'Redirect', undefined, undefined, { preferSteering: true });
+      f.turn.resolve({ data: undefined });
+      await tick();
+      expect(receipt).toHaveBeenCalled();
+      expect(f.sessions.markCompletionUnreviewed).not.toHaveBeenCalled();
+      expect((await f.provider.getRuntimeState(1)).runPhase).toBe('running');
+
+      recorded = true;
+      const completed = deferred<void>();
+      f.sessions.markCompletionUnreviewed.mockImplementationOnce(async () => completed.resolve());
+      await completed.promise;
+      expect(f.client.session.abort).not.toHaveBeenCalled();
+    } finally {
+      f.provider.onModuleDestroy();
+    }
+  });
+
   it('queues prompts, pauses on interruption, and preserves the pending queue', async () => {
     const f = fixture();
     try {
@@ -943,6 +1151,35 @@ describe('OpenCode runtime lifecycle', () => {
     try {
       await f.provider.rewindConversation(1, 'p');
       expect(rewindHistory).toHaveBeenCalledWith('s', 'm');
+      expect(f.client.session.deleteMessage).not.toHaveBeenCalled();
+    } finally {
+      f.provider.onModuleDestroy();
+    }
+  });
+  it('switches a V1 edit to a validated native prefix without deleting source messages', async () => {
+    const f = fixture();
+    await f.provider.submitPrompt(1, 'hello');
+    await tick();
+    f.messages.push({
+      info: { id: 'm', role: 'user', time: { created: 1 } } as Message,
+      parts: [{ id: 'p', messageID: 'm', sessionID: 's', type: 'text', text: 'hello' }],
+    }, {
+      info: { id: 'a', role: 'assistant', time: { created: 2 } } as Message,
+      parts: [{ id: 'reply', messageID: 'a', sessionID: 's', type: 'text', text: 'hello back' }],
+    });
+    f.turn.resolve({ data: undefined });
+    await tick();
+    await tick();
+    try {
+      await expect(f.provider.rewindConversation(1, 'reply')).rejects.toThrow('Only user messages');
+      expect(f.client.session.fork).not.toHaveBeenCalled();
+      // An incompatible fork implementation cannot replace the source.
+      await expect(f.provider.rewindConversation(1, 'p')).rejects.toThrow('requested conversation prefix');
+      expect(f.client.session.delete).toHaveBeenCalledWith({ sessionID: 'forked' });
+      f.client.session.messages.mockResolvedValueOnce({ data: [] });
+      await expect(f.provider.rewindConversation(1, 'p')).resolves.toEqual([]);
+      expect(f.client.session.fork).toHaveBeenCalledWith({ sessionID: 's', messageID: 'm' });
+      expect((await f.provider.getRuntimeState(1, { initialize: false })).claudeSessionId).toBe('forked');
       expect(f.client.session.deleteMessage).not.toHaveBeenCalled();
     } finally {
       f.provider.onModuleDestroy();

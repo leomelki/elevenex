@@ -34,8 +34,10 @@ export interface ConversationExportTurn {
   user: ClaudeTranscriptItem | null;
   /** Intermediate work items (thinking / assistant text / tool_use / tool_result / system). */
   steps: ClaudeTranscriptItem[];
-  /** The turn's last non-empty assistant message. */
+  /** Provider final reply, with a last-message fallback for unphased history. */
   finalResponse: ClaudeTranscriptItem | null;
+  /** Latest interim update for a compact export when no final reply exists. */
+  progress?: ClaudeTranscriptItem;
   /** Tool-derived per-turn changes (same source as the transcript's changes pill). */
   changes: TurnChangeDetails | null;
 }
@@ -192,7 +194,9 @@ export class ConversationExportService {
             ? session.opencodeSessionId
             : provider === 'pi'
               ? session.piSessionPath
-              : null;
+              : provider === 'antigravity'
+                ? session.antigravitySessionId
+                : null;
 
     return {
       sessionId,
@@ -356,6 +360,7 @@ function compactNestedSessionMentions(
       user: compactItem(turn.user),
       steps: turn.steps.map((item) => compactItem(item) ?? item),
       finalResponse: compactItem(turn.finalResponse),
+      ...(turn.progress ? { progress: compactItem(turn.progress) ?? turn.progress } : {}),
     })),
   };
 }
@@ -399,13 +404,7 @@ function buildTurn(group: ClaudeTranscriptItem[]): ConversationExportTurn {
   const user = group[0]?.kind === 'user' ? group[0] : null;
   const rest = user ? group.slice(1) : group;
 
-  let finalIndex = -1;
-  for (let i = rest.length - 1; i >= 0; i--) {
-    if (rest[i].kind === 'assistant' && isContentful(rest[i])) {
-      finalIndex = i;
-      break;
-    }
-  }
+  const { finalIndex, progress } = turnReply(rest);
   const finalResponse = finalIndex === -1 ? null : rest[finalIndex];
   const steps = rest.filter((item, i) => i !== finalIndex && !item.turnChanges);
 
@@ -413,7 +412,25 @@ function buildTurn(group: ClaudeTranscriptItem[]): ConversationExportTurn {
   // small/medium export still reports accurate per-response change counts.
   const changes = computeTurnChangeDetailsFromItems(group);
 
-  return { user, steps, finalResponse, changes };
+  return { user, steps, finalResponse, changes, ...(progress ? { progress } : {}) };
+}
+
+function turnReply(items: readonly ClaudeTranscriptItem[]) {
+  const assistantText = (item: ClaudeTranscriptItem) => item.kind === 'assistant' && isContentful(item);
+  const explicitFinal = items.findLastIndex(item => assistantText(item) && item.assistantPhase === 'final');
+  const progress = explicitFinal === -1
+    ? items.findLast(item => assistantText(item) && item.assistantPhase === 'commentary')
+    : undefined;
+  const finalIndex = explicitFinal !== -1 || progress ? explicitFinal : items.findLastIndex(assistantText);
+  return { finalIndex, progress };
+}
+
+/** Use the compact export's reply semantics without building older turns or diffs. */
+export function latestConversationReply(items: readonly ClaudeTranscriptItem[]): ClaudeTranscriptItem | undefined {
+  const anchor = items.findLastIndex(item => item.kind === 'user');
+  if (anchor === -1) return undefined;
+  const latestTurn = items.slice(anchor + 1);
+  return latestTurn[turnReply(latestTurn).finalIndex];
 }
 
 // --- pure markdown rendering ---------------------------------------------
@@ -506,6 +523,9 @@ function renderTurn(
   if (turn.finalResponse) {
     parts.push(heading('### Response', turn.finalResponse, options));
     parts.push((turn.finalResponse.content ?? '').trim());
+  } else if (options.precision === 'small' && turn.progress) {
+    parts.push(heading('### Progress update', turn.progress, options));
+    parts.push((turn.progress.content ?? '').trim());
   }
 
   if (options.includeChanges && turn.changes) {
@@ -541,8 +561,9 @@ function renderSteps(
       }
       case 'assistant': {
         if (!isContentful(item)) break;
+        const label = item.assistantPhase === 'commentary' ? '[progress]' : '[assistant]';
         blocks.push(
-          `${idLabel('[assistant]', item, options)}\n${item.content!.trim()}`,
+          `${idLabel(label, item, options)}\n${item.content!.trim()}`,
         );
         break;
       }

@@ -1,4 +1,6 @@
+import { applyPiActivity } from './pi-activity.js';
 import type { PiMcpStatus } from './pi-mcp-bridge.js';
+import { piThinkingLevels } from './pi-thinking-levels.js';
 import type { ClaudeMcpSnapshot } from '../claude-runtime/claude-runtime.types.js';
 import { elevenexMcpUrl } from '../mcp/session-tool-context.js';
 import { contextPercentage } from '../agent-runtime/context-usage.js';
@@ -17,18 +19,25 @@ import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
-import { basename, dirname, extname, join } from 'path';
+import { dirname, join } from 'path';
+import { piSessionBefore, piSessionBranch } from './pi-session-branch.js';
+import { savedPromptImage } from '../agent-runtime/prompt-image.js';
 import { buildMetaAgentPrompt } from '../elevenex-agent/meta-agent-prompt.js';
 import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
+import type { SessionAgentSelection } from '../database/schema/index.js';
 import type {
   AgentForkConversationRequest,
   AgentForkConversationResult,
   AgentImageInput,
+  AgentPromptOptions,
 } from '../agent-runtime/agent-runtime.types.js';
-import { AGENT_REASONING_EFFORTS } from '../agent-runtime/agent-runtime.types.js';
 import type { AgentProviderModelCatalogPayload } from '../agent-runtime/agent-runtime.types.js';
-import { resolveAgentStartupSelection } from '../agent-runtime/agent-model-defaults.js';
+import { QueuedPromptDispatches } from '../agent-runtime/queued-prompt-dispatches.js';
+import {
+  orderReasoningEfforts,
+  resolveAgentStartupSelection,
+} from '../agent-runtime/agent-model-defaults.js';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import { SettingsService } from '../settings/settings.service.js';
 import {
@@ -63,6 +72,10 @@ interface PiActiveRun {
   completionPromise: Promise<void>;
   resolveCompletion: () => void;
   interruptRequested: boolean;
+  promptAccepted: boolean;
+  agentEnded: boolean;
+  agentEventVersion: number;
+  steeringSends: number;
   userInputRequests: Map<
     string,
     {
@@ -91,9 +104,11 @@ export class PiRuntimeService
   private readonly logger = new Logger(PiRuntimeService.name);
   private readonly mcpStatuses = new Map<number, PiMcpStatus[]>();
   private readonly activeRuns = new Map<number, PiActiveRun>();
+  private readonly rewinding = new Set<number>();
   private readonly initializingRuns = new Set<number>();
   private readonly interruptedInitializations = new Set<number>();
   private readonly runtimeStates = new Map<number, PiRuntimeState>();
+  private readonly queuedDispatches = new QueuedPromptDispatches();
   private readonly runtimes = new Map<number, PiRuntimeEntry>();
   private readonly runtimeStarts = new Map<number, Promise<PiSessionRuntime>>();
   // Cleanup invalidates work before awaiting it; reopening starts a new owner.
@@ -147,11 +162,14 @@ export class PiRuntimeService
     refresh = false,
   ): Promise<AgentProviderModelCatalogPayload> {
     if (refresh) await this.refreshGlobalModels('manual', true);
+    else if (!this.modelsCache?.length) await this.refreshGlobalModels('cold_on_read');
     else this.refreshGlobalModelsIfStale();
     const models = this.modelsCache ? [...this.modelsCache] : [];
     return {
       models,
-      reasoningEfforts: [...AGENT_REASONING_EFFORTS],
+      reasoningEfforts: orderReasoningEfforts(
+        models.flatMap((model) => model.reasoningEfforts ?? []),
+      ),
       providerDefaultModelId: null,
       supportsModelSelection: true,
       unavailableReason:
@@ -225,16 +243,16 @@ export class PiRuntimeService
     );
   }
 
-  async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
+  async getHistory(sessionId: number, options?: { changeDetails?: 'summary' }): Promise<ClaudeTranscriptItem[]> {
     const history = await this.loadProviderHistory(sessionId);
     if (!this.turnChanges) return history;
     const session = await this.sessionsService.findOne(sessionId);
-    return this.turnChanges.attachHistory(sessionId, 'pi', session.piSessionPath, history);
+    return this.turnChanges.attachHistory(sessionId, 'pi', session.piSessionPath, history, options?.changeDetails);
   }
 
   private async loadProviderHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
 
     if (state.piSessionPath) {
       try {
@@ -259,7 +277,7 @@ export class PiRuntimeService
 
   async getRuntimeState(sessionId: number): Promise<PiRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
     state.cachedWorktreePath = session.worktreePath;
     state.authStatus = await this.authService.getStatus();
 
@@ -342,10 +360,10 @@ export class PiRuntimeService
       anchorMessageKind === 'user'
         ? draft
         : this.contentToText(asRecord(target.message)?.content);
-    const retainedRecords = records.slice(
-      0,
-      anchorMessageKind === 'user' ? targetIndex : targetIndex + 1,
-    );
+    const retainedRecords = anchorMessageKind === 'user'
+      ? piSessionBefore(records, targetIndex)
+      : [...(records[0]?.type === 'session' && Object.hasOwn(records[targetIndex], 'parentId') ? [records[0]] : []),
+        ...piSessionBranch(records, targetIndex).map(index => records[index])];
 
     if (retainedRecords.length === 0) {
       return {
@@ -355,8 +373,7 @@ export class PiRuntimeService
       };
     }
 
-    const forkPath = this.buildForkSessionPath(sessionPath);
-    await this.writePiSessionRecords(forkPath, retainedRecords);
+    const forkPath = await this.writePiSessionBranch(sessionPath, retainedRecords);
 
     return {
       providerSessionId: forkPath,
@@ -373,6 +390,7 @@ export class PiRuntimeService
     if (!trimmedMessageId) {
       throw new BadRequestException('A messageId is required.');
     }
+    this.assertNotRewinding(sessionId);
     if (
       this.activeRuns.has(sessionId) ||
       this.initializingRuns.has(sessionId)
@@ -382,6 +400,25 @@ export class PiRuntimeService
       );
     }
 
+    const current = this.runtimeStates.get(sessionId);
+    if (current && (current.pendingPrompts.length || this.queuedDispatches.current(current).length))
+      throw new ConflictException('Resolve queued messages before editing.');
+    this.rewinding.add(sessionId);
+    try {
+      return await this.rewindIdleConversation(sessionId, trimmedMessageId);
+    } finally {
+      this.rewinding.delete(sessionId);
+    }
+  }
+
+  private assertNotRewinding(sessionId: number): void {
+    if (this.rewinding.has(sessionId))
+      throw new ConflictException('A Pi message edit is already in progress.');
+  }
+
+  private async rewindIdleConversation(sessionId: number, messageId: string): Promise<ClaudeTranscriptItem[]> {
+    const generation = this.sessionGeneration(sessionId);
+    await this.runtimeStarts.get(sessionId)?.catch(() => undefined);
     const session = await this.sessionsService.findOne(sessionId);
     const sessionPath = session.piSessionPath;
     if (!sessionPath || sessionPath === '-1') {
@@ -390,12 +427,12 @@ export class PiRuntimeService
 
     const records = await this.readPiSessionRecords(sessionPath);
     const targetIndex = records.findIndex((entry, index) =>
-      this.isEditAnchorEntry(entry, index, trimmedMessageId),
+      this.isEditAnchorEntry(entry, index, messageId),
     );
     if (targetIndex === -1) {
       if (
         records.some((entry, index) =>
-          this.isMessageAnchorEntry(entry, index, trimmedMessageId),
+          this.isMessageAnchorEntry(entry, index, messageId),
         )
       ) {
         throw new BadRequestException('Only user messages can be edited.');
@@ -403,26 +440,28 @@ export class PiRuntimeService
       throw new NotFoundException('Message not found in Pi session.');
     }
 
-    const retainedRecords = records.slice(0, targetIndex);
+    const retainedRecords = piSessionBefore(records, targetIndex);
     const hasRetainedConversation = retainedRecords.some((entry) => {
       const role = asRecord(entry.message)?.role;
       return role === 'user' || role === 'assistant';
     });
     const rewoundPath = hasRetainedConversation
-      ? this.buildForkSessionPath(sessionPath)
+      ? await this.writePiSessionBranch(sessionPath, retainedRecords)
       : null;
-    if (rewoundPath) {
-      await this.writePiSessionRecords(rewoundPath, retainedRecords);
-    }
 
     // A warm Pi RPC process owns the original session file and retains its
     // full in-memory history. Restart it on the next prompt so the new,
     // truncated file is the only source of conversation state.
-    await this.stopRuntime(sessionId);
-    await this.sessionsService.updatePiSessionPath(
-      sessionId,
-      rewoundPath ?? '-1',
-    );
+    try {
+      await this.stopRuntime(sessionId);
+      this.assertSessionOwner(sessionId, generation);
+      const timestamp = records[targetIndex].timestamp ?? asRecord(records[targetIndex].message)?.timestamp;
+      this.sessionsService.replaceEditedConversation(sessionId, 'pi', sessionPath, rewoundPath ?? '-1',
+        typeof timestamp === 'string' || typeof timestamp === 'number' ? timestamp : undefined);
+    } catch (error) {
+      if (rewoundPath) await fs.unlink(rewoundPath).catch(() => undefined);
+      throw error;
+    }
 
     const state = this.ensureRuntimeState(sessionId);
     state.piSessionPath = rewoundPath;
@@ -436,10 +475,11 @@ export class PiRuntimeService
     state.pendingUserInputRequest = null;
     state.lastError = null;
     state.contextUsage = null;
+    this.emitEvent({ type: 'conversation_rewound', payload: { sessionId } });
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
 
-    return rewoundPath ? this.readHistoryFromSessionFile(rewoundPath) : [];
+    return rewoundPath ? this.transcriptItemsFromEntries(retainedRecords) : [];
   }
 
   async setSelectedModel(
@@ -447,8 +487,7 @@ export class PiRuntimeService
     model: string | null,
   ): Promise<PiRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
-    state.selectedModel = model;
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
     const parsed = this.parseModelRef(model);
     if (parsed) {
       const runtime = await this.ensureRuntime(sessionId);
@@ -459,6 +498,9 @@ export class PiRuntimeService
       });
       await this.refreshStateFromRpc(sessionId);
     }
+    if (session.agentSelection?.provider === 'pi')
+      this.sessionsService.updateSessionAgentSelection(sessionId, 'pi', { model });
+    state.selectedModel = model;
     this.emitRunState(sessionId);
     return this.toRuntimeStatePayload(sessionId, state);
   }
@@ -468,8 +510,17 @@ export class PiRuntimeService
     effort: string | null,
   ): Promise<PiRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
+    const entry = this.runtimes.get(sessionId);
+    if (effort !== null && entry) {
+      await entry.runtime.send({ type: 'set_thinking_level', level: effort });
+      if (this.runtimes.get(sessionId) !== entry)
+        throw new Error('Pi runtime was replaced.');
+    }
+    if (session.agentSelection?.provider === 'pi')
+      this.sessionsService.updateSessionAgentSelection(sessionId, 'pi', { reasoningEffort: effort });
     state.reasoningEffort = effort;
+    if (entry) await this.refreshStateFromRpc(sessionId);
     this.emitRunState(sessionId);
     return this.toRuntimeStatePayload(sessionId, state);
   }
@@ -495,7 +546,7 @@ export class PiRuntimeService
     enabled: boolean,
   ): Promise<PiRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
     state.fastMode = enabled;
     if (state.sessionMetadata) {
       state.sessionMetadata = {
@@ -512,35 +563,100 @@ export class PiRuntimeService
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
+    options: AgentPromptOptions = {},
   ): Promise<void> {
+    this.assertNotRewinding(sessionId);
     const trimmedPrompt = prompt.trim();
     const normalizedImages = this.normalizeImages(images);
     if (!trimmedPrompt && normalizedImages.length === 0) return;
-    this.assertSessionOwner(sessionId, this.sessionGeneration(sessionId));
+    const generation = this.sessionGeneration(sessionId);
+    this.assertSessionOwner(sessionId, generation);
 
+    const state = this.runtimeStates.get(sessionId);
+    if (
+      (options.preferSteering || options.requireSteering) && !options.queue &&
+      this.activeRuns.has(sessionId) && !state?.queuePaused && (options.requireSteering || !state?.pendingPrompts.length)
+    ) {
+      const disposition = await this.steerActivePrompt(sessionId, trimmedPrompt, normalizedImages);
+      if (disposition) {
+        options.onAccepted?.(disposition);
+        return;
+      }
+      this.assertSessionOwner(sessionId, generation);
+    }
+    if (options?.requireSteering)
+      throw new ConflictException('No active turn can accept live steering.');
     if (
       this.activeRuns.has(sessionId) ||
       this.initializingRuns.has(sessionId) ||
       this.runtimeStates.get(sessionId)?.queuePaused
     ) {
+      options.beforeDispatch?.();
       this.queuePendingPrompt(sessionId, trimmedPrompt, images);
+      options.onAccepted?.('queued');
       return;
     }
 
     this.initializingRuns.add(sessionId);
-    const generation = this.sessionGeneration(sessionId);
+    let owned = false;
+    let onAccepted: (() => void) | undefined;
+    const receipt = options.waitForCompletion === false
+      ? new Promise<void>(resolve => {
+          onAccepted = () => {
+            owned = true;
+            options.onAccepted?.('running');
+            resolve();
+          };
+        })
+      : undefined;
     const task = this.runPrompt(
       sessionId,
       trimmedPrompt,
       titlePrompt,
       normalizedImages,
       generation,
+      onAccepted,
+      options.beforeDispatch,
     ).finally(() => {
       if (this.promptTasks.get(sessionId) === task)
         this.promptTasks.delete(sessionId);
     });
     this.promptTasks.set(sessionId, task);
-    return task;
+    return receipt ? Promise.race([receipt, task.then(() => {
+      if (!owned) throw new ConflictException('Pi stopped before accepting the message.');
+    })]) : task;
+  }
+
+  private async steerActivePrompt(
+    sessionId: number,
+    message: string,
+    images: Array<Record<string, string>>,
+  ): Promise<'steered' | 'running' | undefined> {
+    const run = this.activeRuns.get(sessionId);
+    const runtime = this.runtimes.get(sessionId)?.runtime;
+    if (!runtime || !run?.promptAccepted || run.agentEnded || run.interruptRequested)
+      return;
+    run.steeringSends++;
+    try {
+      const receipt = await runtime.send<{ disposition?: string } | undefined>({
+        type: 'prompt',
+        message,
+        streamingBehavior: 'steer',
+        ...(images.length ? { images } : {}),
+      });
+      return receipt?.disposition === 'started' ? 'running' : 'steered';
+    } finally {
+      // Pi may start a new native run if the old one ends during admission.
+      // Keep ownership until the receipt can be reconciled with the stream.
+      if (run.agentEnded && !run.interruptRequested && this.activeRuns.get(sessionId) === run) {
+        const version = run.agentEventVersion;
+        const state = await runtime.send<{ isStreaming?: boolean }>({ type: 'get_state' })
+          .catch(() => undefined);
+        if (state?.isStreaming && run.agentEventVersion === version) run.agentEnded = false;
+      }
+      run.steeringSends--;
+      if (run.agentEnded && !run.steeringSends) run.resolveCompletion();
+    }
   }
 
   private async runPrompt(
@@ -549,6 +665,8 @@ export class PiRuntimeService
     titlePrompt: string | undefined,
     normalizedImages: Array<Record<string, string>>,
     generation: number,
+    onAccepted?: () => void,
+    beforeDispatch?: () => void,
   ): Promise<void> {
     const ownsSession = () => this.ownsSession(sessionId, generation);
     let state: PiRuntimeState | null = null;
@@ -565,7 +683,7 @@ export class PiRuntimeService
         `Pi session title eligibility checked session=${sessionId} hasPiSessionPath=${Boolean(session.piSessionPath && session.piSessionPath !== '-1')} currentName=${JSON.stringify(session.name)} shouldGenerate=${isNewSession}`,
       );
 
-      state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+      state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
       state.cachedWorktreePath = session.worktreePath;
       state.runPhase = 'running';
       state.sessionState = 'running';
@@ -616,6 +734,10 @@ export class PiRuntimeService
         completionPromise,
         resolveCompletion,
         interruptRequested: false,
+        promptAccepted: false,
+        agentEnded: false,
+        agentEventVersion: 0,
+        steeringSends: 0,
         userInputRequests: new Map(),
       };
       this.activeRuns.set(sessionId, run);
@@ -623,6 +745,8 @@ export class PiRuntimeService
       this.initializingRuns.delete(sessionId);
 
       let changeCapture: TurnChangeCapture | undefined;
+      let completed = false;
+      let accepted = false;
       try {
         changeCapture = await this.turnChanges?.begin(
           sessionId,
@@ -642,18 +766,21 @@ export class PiRuntimeService
           run.interruptRequested
         )
           return;
+        beforeDispatch?.();
         await runtime.send({
           type: 'prompt',
           message: trimmedPrompt,
-          ...(state.reasoningEffort
-            ? { reasoningEffort: state.reasoningEffort }
-            : {}),
           ...(state.fastMode ? { fastMode: true } : {}),
           ...(normalizedImages.length ? { images: normalizedImages } : {}),
         });
+        accepted = true;
+        run.promptAccepted = true;
+        onAccepted?.();
         await completionPromise;
         if (!ownsSession() || this.activeRuns.get(sessionId) !== run) return;
+        if (run.interruptRequested) { this.finalizeInterruptedRun(sessionId); return; }
         this.finishRun(sessionId);
+        completed = !state.lastError;
       } catch (error) {
         if (!ownsSession() || this.activeRuns.get(sessionId) !== run) return;
         if (run?.interruptRequested) {
@@ -667,38 +794,37 @@ export class PiRuntimeService
         state.canInterrupt = false;
         this.emitEvent({ type: 'error', payload: { sessionId, message } });
         this.emitRunState(sessionId);
+        if (onAccepted && !accepted) throw error;
       } finally {
-        const changes = await this.turnChanges?.finish(
-          changeCapture,
-          state.piSessionPath,
-        );
-        if (changes && ownsSession() && this.activeRuns.get(sessionId) === run)
-          this.pushItem(sessionId, changes);
-        if (this.activeRuns.get(sessionId) === run)
-          this.activeRuns.delete(sessionId);
-        if (ownsSession()) this.scheduleIdleShutdown(sessionId);
-        if (
-          ownsSession() &&
-          !state.lastError &&
-          !state.queuePaused &&
-          state.pendingPrompts.length > 0
-        ) {
-          const [next, ...rest] = state.pendingPrompts;
-          state.pendingPrompts = rest;
-          this.emitRunState(sessionId);
-          setImmediate(() => {
-            if (!ownsSession()) return;
-            this.submitPrompt(
-              sessionId,
-              next.prompt,
-              undefined,
-              next.images,
-            ).catch((error) => {
-              this.logger.error(
-                `Pending Pi prompt failed session=${sessionId}: ${String(error)}`,
-              );
-            });
-          });
+        let changesFinished = false;
+        try {
+          const changes = await this.turnChanges?.finish(
+            changeCapture,
+            state.piSessionPath,
+          );
+          if (changes && ownsSession() && this.activeRuns.get(sessionId) === run)
+            this.pushItem(sessionId, changes);
+          if (completed && ownsSession() && this.activeRuns.get(sessionId) === run && !run.interruptRequested) {
+            try {
+              await this.sessionsService.markCompletionUnreviewed(sessionId, 'completed');
+            } catch (error) {
+              this.logger.warn(`Failed to record Pi completion for session ${sessionId}: ${String(error)}`);
+            }
+          }
+          changesFinished = true;
+        } finally {
+          if (this.activeRuns.get(sessionId) === run)
+            this.activeRuns.delete(sessionId);
+          if (ownsSession()) this.scheduleIdleShutdown(sessionId);
+          if (
+            changesFinished &&
+            ownsSession() &&
+            !state.lastError &&
+            !state.queuePaused &&
+            state.pendingPrompts.length > 0
+          ) {
+            this.dispatchQueuedPrompt(sessionId, state);
+          }
         }
       }
     } catch (error) {
@@ -782,21 +908,32 @@ export class PiRuntimeService
   async steerPendingPrompt(sessionId: number, id: string): Promise<void> {
     const state = this.ensureRuntimeState(sessionId);
     const selected = state.pendingPrompts.find((prompt) => prompt.id === id);
-    if (!selected) return;
+    if (!selected || this.queuedDispatches.current(state).some(prompt => prompt.id === id)) return;
 
+    if (this.activeRuns.has(sessionId)) {
+      const finishDispatch = this.queuedDispatches.begin(state, selected);
+      state.pendingPrompts = state.pendingPrompts.filter(prompt => prompt !== selected);
+      try {
+        const disposition = await this.steerActivePrompt(
+          sessionId, selected.prompt, this.normalizeImages(selected.images),
+        );
+        if (!disposition)
+          throw new ConflictException('No active Pi turn can accept live steering.');
+        await this.cancelPendingPrompt(sessionId, id);
+      } catch (error) {
+        if (finishDispatch() && this.runtimeStates.get(sessionId) === state) {
+          state.pendingPrompts = [selected, ...state.pendingPrompts];
+          state.queuePaused = true;
+          this.emitRunState(sessionId);
+        }
+        throw error;
+      }
+      return;
+    }
     state.pendingPrompts = [
       selected,
       ...state.pendingPrompts.filter((prompt) => prompt.id !== id),
     ];
-    state.queuePaused = true;
-    state.lastError = null;
-    this.emitRunState(sessionId);
-
-    const completion = this.activeRuns.get(sessionId)?.completionPromise;
-    await this.interrupt(sessionId);
-    await completion?.catch(() => undefined);
-    state.queuePaused = false;
-    this.emitRunState(sessionId);
     await this.resumePendingPrompts(sessionId);
   }
 
@@ -812,10 +949,19 @@ export class PiRuntimeService
       this.emitRunState(sessionId);
       return Promise.resolve();
     }
+    this.dispatchQueuedPrompt(sessionId, state);
+    return Promise.resolve();
+  }
+
+  private dispatchQueuedPrompt(sessionId: number, state: PiRuntimeState): void {
     const [next, ...rest] = state.pendingPrompts;
+    if (!next) return;
+    const generation = this.sessionGeneration(sessionId);
     state.pendingPrompts = rest;
+    const finishDispatch = this.queuedDispatches.begin(state, next);
     this.emitRunState(sessionId);
     setImmediate(() => {
+      if (this.runtimeStates.get(sessionId) !== state || !this.ownsSession(sessionId, generation)) return;
       void this.submitPrompt(
         sessionId,
         next.prompt,
@@ -823,17 +969,20 @@ export class PiRuntimeService
         next.images,
       ).catch((error) => {
         this.logger.error(
-          `Resumed Pi prompt failed session=${sessionId}: ${String(error)}`,
+          `Queued Pi prompt failed session=${sessionId}: ${String(error)}`,
         );
+      }).finally(() => {
+        if (finishDispatch() && this.runtimeStates.get(sessionId) === state)
+          this.emitRunState(sessionId);
       });
     });
-    return Promise.resolve();
   }
 
   clearPendingPrompts(sessionId: number): Promise<void> {
     const state = this.ensureRuntimeState(sessionId);
-    if (!state.pendingPrompts.length && !state.queuePaused)
+    if (!state.pendingPrompts.length && !state.queuePaused && !this.queuedDispatches.current(state).length)
       return Promise.resolve();
+    this.queuedDispatches.clear(state);
     state.pendingPrompts = [];
     state.queuePaused = false;
     this.emitRunState(sessionId);
@@ -955,6 +1104,7 @@ export class PiRuntimeService
   }
 
   private async ensureRuntime(sessionId: number): Promise<PiSessionRuntime> {
+    this.assertNotRewinding(sessionId);
     const generation = this.sessionGeneration(sessionId);
     this.assertSessionOwner(sessionId, generation);
     const pending = this.runtimeStarts.get(sessionId);
@@ -999,7 +1149,7 @@ export class PiRuntimeService
     this.assertSessionOwner(sessionId, generation);
     if (session.status === 'archived')
       throw new ConflictException('Pi session is closed.');
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
     state.cachedWorktreePath = session.worktreePath;
     let agentConfigDir: string | undefined;
     let entry: PiRuntimeEntry | undefined;
@@ -1062,10 +1212,19 @@ export class PiRuntimeService
       this.assertSessionOwner(sessionId, generation);
       if (this.runtimes.get(sessionId) !== entry)
         throw new Error('Pi runtime was replaced.');
-      await this.applyConfiguredDefaultModel(sessionId, runtime);
+      await this.applyConfiguredDefaultModel(sessionId, runtime, session.agentSelection);
       this.assertSessionOwner(sessionId, generation);
       if (this.runtimes.get(sessionId) !== entry)
         throw new Error('Pi runtime was replaced.');
+      if (state.reasoningEffort !== null) {
+        await runtime.send({
+          type: 'set_thinking_level',
+          level: state.reasoningEffort,
+        });
+        this.assertSessionOwner(sessionId, generation);
+        if (this.runtimes.get(sessionId) !== entry)
+          throw new Error('Pi runtime was replaced.');
+      }
       await this.refreshStateFromRpc(sessionId);
       this.assertSessionOwner(sessionId, generation);
       if (this.runtimes.get(sessionId) !== entry)
@@ -1090,14 +1249,17 @@ export class PiRuntimeService
   private async applyConfiguredDefaultModel(
     sessionId: number,
     runtime: PiSessionRuntime,
+    agentSelection?: SessionAgentSelection | null,
   ): Promise<void> {
     const state = this.ensureRuntimeState(sessionId);
-    if (state.piSessionPath) {
+    const pinned = agentSelection?.provider === 'pi' ? agentSelection.model : undefined;
+    if (state.piSessionPath && pinned === undefined) {
       return;
     }
 
-    const configured =
-      this.settingsService.getAgentProviderDefaults('pi').model;
+    const configured = pinned === undefined
+      ? this.settingsService.getAgentProviderDefaults('pi').model
+      : pinned;
     const parsed = this.parseModelRef(configured);
     if (!parsed) {
       return;
@@ -1110,6 +1272,7 @@ export class PiRuntimeService
         modelId: parsed.modelId,
       });
     } catch (error) {
+      if (pinned !== undefined) throw error;
       // A default that Pi rejects (renamed/unavailable model) must not stop the
       // session from starting; it just falls back to Pi's own choice.
       this.logger.warn(
@@ -1150,10 +1313,33 @@ export class PiRuntimeService
     }
     const model = this.modelRefFromModelObject(rpcState.model);
     if (model) state.selectedModel = model;
+    if (typeof rpcState.thinkingLevel === 'string')
+      state.reasoningEffort = rpcState.thinkingLevel;
     state.authStatus = await this.authService.getStatus();
     if (this.runtimes.get(sessionId) !== entry) return;
     this.emitSessionMetadata(sessionId);
     await this.refreshModels(sessionId);
+    if (this.runtimes.get(sessionId) !== entry) return;
+    // Older Pi CLIs may not implement this read. Retain model metadata then.
+    const thinking = await runtime
+      .send<{ levels?: unknown }>({ type: 'get_available_thinking_levels' })
+      .catch(() => null);
+    if (this.runtimes.get(sessionId) !== entry) return;
+    if (model && Array.isArray(thinking?.levels)) {
+      const levels = thinking.levels.filter(
+        (level): level is string =>
+          typeof level === 'string' && level.length > 0,
+      );
+      state.availableModels = state.availableModels.map((option) =>
+        option.id === model
+          ? {
+              ...option,
+              reasoningEfforts: levels,
+              supportsEffort: levels.length > 0,
+            }
+          : option,
+      );
+    }
   }
 
   private async generateAndSaveSessionTitle(
@@ -1317,10 +1503,21 @@ export class PiRuntimeService
   }
 
   private handlePiEvent(sessionId: number, event: PiSessionRuntimeEvent): void {
+    const state = this.ensureRuntimeState(sessionId);
+    state.activity ??= { retry: null, compact: null, notifications: [] };
+    if (applyPiActivity(state.activity, event)) { this.emitRunState(sessionId); return; }
     switch (event.type) {
-      case 'agent_start':
+      case 'agent_start': {
+        const run = this.activeRuns.get(sessionId);
+        if (run) {
+          run.agentEnded = false;
+          run.agentEventVersion++;
+        }
+        state.activity.retry = null;
         return;
+      }
       case 'agent_end':
+        if (event.willRetry === true) return;
         this.resolveActiveRun(sessionId);
         return;
       case 'message_start':
@@ -1341,6 +1538,12 @@ export class PiRuntimeService
           toolName,
           providerToolInput,
         );
+        const capture = this.turnChanges?.forSession(sessionId, 'pi');
+        if (canonicalTool.toolKind === 'bash')
+          void this.turnChanges?.startCommand(capture, toolUseId, toolName);
+        else if (canonicalTool.toolKind === 'write' || canonicalTool.toolKind === 'edit')
+          void this.turnChanges?.startEditor(capture, toolUseId, canonicalTool.toolKind === 'edit' ? 'Edit' : 'Write',
+            canonicalTool.toolInput);
         this.pushItem(
           sessionId,
           {
@@ -1364,6 +1567,8 @@ export class PiRuntimeService
       case 'tool_execution_update':
         return;
       case 'tool_execution_end':
+        if (typeof event.toolCallId === 'string')
+          this.turnChanges?.piToolEnd(this.turnChanges.forSession(sessionId, 'pi'), event.toolCallId, event.result, Boolean(event.isError));
         this.pushItem(
           sessionId,
           {
@@ -1372,6 +1577,7 @@ export class PiRuntimeService
             toolUseId: String(event.toolCallId ?? ''),
             toolName: String(event.toolName ?? 'Tool'),
             content: this.stringifyToolResult(event.result),
+            ...(String(event.toolName ?? '').startsWith('mcp__elevenex__') ? { providerToolResult: event.result } : {}),
             isError: Boolean(event.isError),
             timestamp: new Date().toISOString(),
             authoredAt: new Date().toISOString(),
@@ -1399,19 +1605,11 @@ export class PiRuntimeService
   ): void {
     const message = event.message as Record<string, unknown> | undefined;
     if (!message || event.type !== 'message_end') return;
-    if (message.role === 'user') return;
     const state = this.ensureRuntimeState(sessionId);
-    // Reuse the exact id assigned to this message while it was streaming (if
-    // any) so the final snapshot reconciles with the in-progress
-    // text/thinking items instead of appending duplicates. Passed as
-    // `precomputedId` (rather than `fallbackId`) so it is used verbatim
-    // instead of being combined again with the message timestamp.
-    for (const item of this.messageToTranscriptItems(
-      message,
-      randomUUID(),
-      undefined,
-      state.streamingAssistantMessageId ?? undefined,
-    )) {
+    // Reuse the streamed identity when publishing the final message.
+    const id = message.role === 'assistant' && state.streamingAssistantMessageId
+      ? state.streamingAssistantMessageId : this.liveMessageId(state, message);
+    for (const item of this.messageToTranscriptItems(message, id)) {
       const type =
         item.kind === 'tool_result'
           ? 'tool_result'
@@ -1422,7 +1620,7 @@ export class PiRuntimeService
               : 'message_start';
       this.pushItem(sessionId, item, type);
     }
-    state.streamingAssistantMessageId = null;
+    if (message.role === 'assistant') state.streamingAssistantMessageId = null;
   }
 
   private handleMessageUpdate(
@@ -1443,10 +1641,7 @@ export class PiRuntimeService
     // leaving both a stale streamed item and a duplicate final item.
     const sourceMessageId =
       state.streamingAssistantMessageId ??
-      (state.streamingAssistantMessageId = this.messageId(
-        message,
-        randomUUID(),
-      ));
+      (state.streamingAssistantMessageId = this.liveMessageId(state, message));
     const contentIndex = Number(update.contentIndex ?? 0);
     const itemId = `${sourceMessageId}:${update.type}:${contentIndex}`;
 
@@ -1507,7 +1702,7 @@ export class PiRuntimeService
       this.pushItem(
         sessionId,
         {
-          id: `${sourceMessageId}:tool:${toolUseId}`,
+          id: `${toolUseId}:tool_use`,
           kind: 'tool_use',
           toolUseId,
           toolName,
@@ -1649,7 +1844,10 @@ export class PiRuntimeService
   private resolveActiveRun(sessionId: number): void {
     this.refreshStateFromRpc(sessionId).catch(() => undefined);
     const run = this.activeRuns.get(sessionId);
-    run?.resolveCompletion();
+    if (!run) return;
+    run.agentEnded = true;
+    run.agentEventVersion++;
+    if (!run.steeringSends || run.interruptRequested) run.resolveCompletion();
   }
 
   private finishRun(sessionId: number): void {
@@ -1761,19 +1959,18 @@ export class PiRuntimeService
   private ensureRuntimeState(
     sessionId: number,
     piSessionPath?: string | null,
+    agentSelection?: SessionAgentSelection | null,
   ): PiRuntimeState {
+    const selection = agentSelection?.provider === 'pi' ? agentSelection : undefined;
     const existing = this.runtimeStates.get(sessionId);
     if (existing) {
       if (piSessionPath && piSessionPath !== '-1')
         existing.piSessionPath = piSessionPath;
+      if (selection && !existing.persistedSelectionLoaded)
+        Object.assign(existing, this.startupModelSettings(existing.availableModels, selection));
       return existing;
     }
     const availableModels = this.modelsCache ? [...this.modelsCache] : [];
-    const startup = resolveAgentStartupSelection(
-      this.settingsService.getAgentProviderDefaults('pi'),
-      availableModels,
-    );
-
     const state: PiRuntimeState = {
       piSessionPath:
         piSessionPath && piSessionPath !== '-1' ? piSessionPath : null,
@@ -1784,15 +1981,11 @@ export class PiRuntimeService
       pendingPrompts: [],
       queuePaused: false,
       liveItems: [],
+      messageIds: new Map(),
       streamingAssistantMessageId: null,
       pendingUserInputRequest: null,
       lastError: null,
-      selectedModel: startup.selectedModel,
-      reasoningEffort: startup.reasoningEffort,
-      fastMode:
-        this.settingsService.getAgentProviderDefaults('pi').fastMode === true &&
-        availableModels.find((model) => model.id === startup.selectedModel)
-          ?.supportsFastMode === true,
+      ...this.startupModelSettings(availableModels, selection),
       availableModels,
       contextUsage: null,
       sessionMetadata: null,
@@ -1800,6 +1993,20 @@ export class PiRuntimeService
     };
     this.runtimeStates.set(sessionId, state);
     return state;
+  }
+
+  private startupModelSettings(
+    availableModels: readonly PiRuntimeState['availableModels'][number][],
+    selection?: SessionAgentSelection,
+  ) {
+    const defaults = this.settingsService.getAgentProviderDefaults('pi');
+    const startup = resolveAgentStartupSelection(defaults, availableModels, null, selection);
+    return {
+      ...startup,
+      persistedSelectionLoaded: selection !== undefined,
+      fastMode: defaults.fastMode === true &&
+        availableModels.find(model => model.id === startup.selectedModel)?.supportsFastMode === true,
+    };
   }
 
   private emitSessionMetadata(sessionId: number): void {
@@ -1831,6 +2038,7 @@ export class PiRuntimeService
     this.hooksService.updateRuntimeActivity(
       sessionId,
       this.toSidebarActivity(state),
+      { authoritative: true, provider: 'pi' },
     );
     this.emitEvent({
       type: 'run_state',
@@ -1850,6 +2058,7 @@ export class PiRuntimeService
         pendingPermissionRequest: null,
         pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
+        dispatchingPrompts: this.queuedDispatches.current(state),
         queuePaused: state.queuePaused,
       },
     });
@@ -1890,6 +2099,7 @@ export class PiRuntimeService
       pendingPrompts: state.pendingPrompts,
       queuePaused: state.queuePaused,
       liveItems: state.liveItems,
+      dispatchingPrompts: this.queuedDispatches.current(state),
       lastError: state.lastError,
       selectedModel: state.selectedModel,
       reasoningEffort: state.reasoningEffort,
@@ -1902,7 +2112,7 @@ export class PiRuntimeService
       runtimeStatus: null,
       authStatus: state.authStatus,
       rateLimit: null,
-      notifications: [],
+      notifications: state.activity?.notifications ?? [],
       hooks: [],
       recentHookEvents: [],
       tasks: [],
@@ -1910,13 +2120,13 @@ export class PiRuntimeService
       subagents: [],
       latestToolProgress: null,
       latestToolSummary: null,
-      latestApiRetry: null,
+      latestApiRetry: state.activity?.retry ?? null,
       latestPluginInstall: null,
       latestMemoryRecall: null,
       latestFilesPersisted: null,
       latestElicitationCompletion: null,
       latestPromptSuggestion: null,
-      latestCompactBoundary: null,
+      latestCompactBoundary: state.activity?.compact ?? null,
       latestMirrorError: null,
       warmState: this.runtimes.has(sessionId) ? 'warm' : 'cold',
       lastWarmedAt: this.runtimes.has(sessionId)
@@ -1936,10 +2146,8 @@ export class PiRuntimeService
       | 'tool_result' = 'message_start',
   ): void {
     const state = this.ensureRuntimeState(sessionId);
-    state.liveItems = [
-      ...state.liveItems.filter((existing) => existing.id !== item.id),
-      item,
-    ];
+    const position = state.liveItems.findIndex(existing => existing.id === item.id);
+    state.liveItems = position < 0 ? [...state.liveItems, item] : state.liveItems.with(position, item);
     this.emitEvent({
       type: eventType,
       payload: { sessionId, item },
@@ -2000,7 +2208,7 @@ export class PiRuntimeService
     const runtime = this.runtimes.get(sessionId)?.runtime;
     if (!runtime) return this.overlayLiveItems(state, []);
     try {
-      const response = await runtime.send<{ entries?: unknown }>({
+      const response = await runtime.send<{ entries?: unknown; leafId?: string | null }>({
         type: 'get_entries',
       });
       const entries = Array.isArray(response?.entries)
@@ -2008,7 +2216,7 @@ export class PiRuntimeService
         : [];
       return this.overlayLiveItems(
         state,
-        this.transcriptItemsFromEntries(entries),
+        this.transcriptItemsFromEntries(entries, response?.leafId),
       );
     } catch (error) {
       this.logger.warn(
@@ -2035,17 +2243,24 @@ export class PiRuntimeService
   ): ClaudeTranscriptItem[] {
     if (!state.liveItems.length) return history;
     const byId = new Map(history.map((item) => [item.id, item]));
-    for (const item of state.liveItems) byId.set(item.id, item);
-    return [...byId.values()].sort((l, r) =>
-      l.timestamp.localeCompare(r.timestamp),
-    );
+    for (const item of state.liveItems) {
+      const saved = byId.get(item.id);
+      byId.set(item.id, saved ? { ...saved, ...item, transcriptMessageId: saved.transcriptMessageId,
+        sourceMessageId: saved.sourceMessageId } : item);
+    }
+    return [...byId.values()];
   }
 
   private transcriptItemsFromEntries(
     entries: Record<string, unknown>[],
+    leafId?: string | null,
   ): ClaudeTranscriptItem[] {
     const result: ClaudeTranscriptItem[] = [];
-    for (const [index, entry] of entries.entries()) {
+    const messageIds = new Map<string, number>();
+    const leaf = leafId === undefined ? entries.length - 1
+      : leafId === null ? -1 : entries.findIndex(entry => entry.id === leafId);
+    for (const index of piSessionBranch(entries, leaf)) {
+      const entry = entries[index];
       const type = entry.type;
       // Accept both Pi SDK format ("message") and Claude Code CLI format ("user"/"assistant").
       if (type !== 'message' && type !== 'user' && type !== 'assistant')
@@ -2058,9 +2273,10 @@ export class PiRuntimeService
           ? { ...rawMessage, timestamp: entry.timestamp }
           : rawMessage;
       const entryId = this.piEntryAnchorId(entry, index);
-      result.push(...this.messageToTranscriptItems(message, entryId, entryId));
+      const id = uniquePiMessageId(this.messageId(message, entryId), messageIds);
+      result.push(...this.messageToTranscriptItems(message, id, entryId));
     }
-    return result.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    return result;
   }
 
   private async readPiSessionRecords(
@@ -2073,14 +2289,17 @@ export class PiRuntimeService
       .map((line) => JSON.parse(line) as Record<string, unknown>);
   }
 
-  private async writePiSessionRecords(
-    path: string,
-    records: Record<string, unknown>[],
-  ): Promise<void> {
+  private async writePiSessionBranch(source: string, records: readonly Record<string, unknown>[]): Promise<string> {
+    const id = randomUUID();
+    const timestamp = new Date().toISOString();
+    const path = join(dirname(source), `${timestamp.replace(/[:.]/g, '-')}-fork-${id}.jsonl`);
+    const entries = records[0]?.type === 'session'
+      ? [{ ...records[0], id, timestamp, parentSession: source }, ...records.slice(1)]
+      : records;
     const serialized =
-      records.map((record) => JSON.stringify(record)).join('\n') +
-      (records.length ? '\n' : '');
-    await fs.writeFile(path, serialized, 'utf8');
+      entries.map((record) => JSON.stringify(record)).join('\n') + '\n';
+    await fs.writeFile(path, serialized, { encoding: 'utf8', flag: 'wx' });
+    return path;
   }
 
   private isForkAnchorEntry(
@@ -2126,26 +2345,19 @@ export class PiRuntimeService
     return `pi-entry:${index}`;
   }
 
-  private buildForkSessionPath(sourcePath: string): string {
-    const ext = extname(sourcePath) || '.jsonl';
-    const base = basename(sourcePath, ext);
-    return join(dirname(sourcePath), `${base}-fork-${randomUUID()}${ext}`);
-  }
-
   private messageToTranscriptItems(
     message: Record<string, unknown>,
-    fallbackId: string,
+    id: string,
     transcriptMessageId?: string,
-    precomputedId?: string,
   ): ClaudeTranscriptItem[] {
-    // `precomputedId` is used verbatim (e.g. the id already assigned to an
-    // assistant message while it was streaming) instead of being re-derived
-    // via messageId(), which would otherwise combine it with the message
-    // timestamp again and produce a different id than the one used for the
-    // in-progress streamed transcript items.
-    const id = precomputedId ?? this.messageId(message, fallbackId);
     const timestamp = this.timestampFromMessage(message);
     if (message.role === 'user') {
+      const imageBlocks = Array.isArray(message.content)
+        ? message.content.map(asRecord).filter(part => part?.type === 'image') : [];
+      const images = imageBlocks.flatMap(part => {
+        const image = savedPromptImage(part?.mimeType, part?.data);
+        return image ? [image] : [];
+      });
       return [
         {
           id: `${id}:user`,
@@ -2153,6 +2365,8 @@ export class PiRuntimeService
           content: this.stripInjectedWorktreeContext(
             this.contentToText(message.content),
           ),
+          ...(images.length ? { images } : {}),
+          ...(images.length !== imageBlocks.length ? { editUnsupported: true as const } : {}),
           // Persisted Pi entry ids are stable across history reads and are
           // also the anchors used for forks and rewinds. In particular,
           // Claude-compatible entries may store timestamps as strings, which
@@ -2212,7 +2426,7 @@ export class PiRuntimeService
             providerToolInput,
           );
           items.push({
-            id: `${id}:tool:${toolUseId}`,
+            id: `${toolUseId}:tool_use`,
             kind: 'tool_use',
             toolUseId,
             toolName,
@@ -2234,12 +2448,13 @@ export class PiRuntimeService
       const toolUseId = String(message.toolCallId ?? id);
       return [
         {
-          id: `${id}:tool_result:${toolUseId}`,
+          id: `${toolUseId}:tool_result`,
           kind: 'tool_result',
           toolUseId,
           toolName:
             typeof message.toolName === 'string' ? message.toolName : undefined,
           content: this.contentToText(message.content),
+          ...(typeof message.toolName === 'string' && message.toolName.startsWith('mcp__elevenex__') ? { providerToolResult: { details: message.details } } : {}),
           isError: Boolean(message.isError),
           sourceMessageId: id,
           transcriptMessageId,
@@ -2255,14 +2470,22 @@ export class PiRuntimeService
     message?: Record<string, unknown>,
     fallback: string = randomUUID(),
   ): string {
-    const signature = Array.isArray(message?.content)
-      ? (message.content[0] as Record<string, unknown> | undefined)
-          ?.textSignature
-      : undefined;
+    // Pi saves the same native timestamp it uses for events. A text signature
+    // can first appear at message_end, so it cannot key a native stream.
+    if ((message?.role === 'assistant' || message?.role === 'user') &&
+        typeof message.timestamp === 'number' && Number.isFinite(message.timestamp))
+      return `pi:${message.role}:${message.timestamp}`;
+    const signature = asRecord(Array.isArray(message?.content) ? message.content[0] : null)?.textSignature;
     if (typeof signature === 'string' && signature) return signature;
     const timestamp =
       typeof message?.timestamp === 'number' ? message.timestamp : Date.now();
     return `${fallback}-${timestamp}`;
+  }
+
+  private liveMessageId(state: PiRuntimeState, message?: Record<string, unknown>): string {
+    const id = uniquePiMessageId(this.messageId(message), state.messageIds);
+    if (state.messageIds.size > 512) state.messageIds.delete(state.messageIds.keys().next().value!);
+    return id;
   }
 
   private timestampFromMessage(message?: Record<string, unknown>): string {
@@ -2362,7 +2585,8 @@ export class PiRuntimeService
           ? record.name
           : modelRef,
       description: `${provider} model`,
-      supportsEffort: Boolean(record.reasoning),
+      supportsEffort: record.reasoning === true,
+      reasoningEfforts: piThinkingLevels(record),
     };
   }
 
@@ -2529,4 +2753,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object'
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function uniquePiMessageId(base: string, seen: Map<string, number>): string {
+  const occurrence = (seen.get(base) ?? 0) + 1;
+  seen.set(base, occurrence);
+  return occurrence === 1 ? base : `${base}:${occurrence}`;
 }

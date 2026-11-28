@@ -1,0 +1,78 @@
+.menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  max-width: min(380px, calc(100vw - var(--space-8)));
+  padding: var(--space-1);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--ink);
+  box-shadow:
+    var(--shadow-pop),
+    inset 0 0 0 1px var(--line);
+  transform-origin: top left;
+  animation: menu-in var(--dur-base) var(--ease-out);
+}
+.menu button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--text-ui-size);
+  text-align: left;
+  cursor: pointer;
+}
+.menu button:hover,
+.menu button:focus {
+  background: var(--surface-sunken);
+}
+.menu button:disabled {
+  color: var(--ink-muted);
+  cursor: default;
+}
+.menu button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.menu .grow {
+  flex: 1;
+  min-width: 0;
+}
+.menu .muted {
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+.menu .stack {
+  display: flex;
+  flex-direction: column;
+}
+.menu .separator {
+  height: 1px;
+  margin: var(--space-1);
+  background: var(--line);
+}
+.menu .label {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-overline-size);
+  color: var(--ink-muted);
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .menu {
+    animation: none;
+  }
+}

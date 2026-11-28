@@ -1,0 +1,122 @@
+section {
+  width: min(580px, calc(100vw - var(--space-6)));
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  color: var(--ink);
+}
+
+.editor-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-block-size: calc(100dvh - var(--space-6) - 2px);
+  overflow: auto;
+  padding: var(--space-4);
+  scrollbar-gutter: stable;
+}
+
+.editor-content > * {
+  flex-shrink: 0;
+}
+
+header,
+footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mark {
+  display: grid;
+  place-items: center;
+  width: var(--space-8);
+  height: var(--space-8);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+h2 {
+  flex: 1;
+  margin: 0;
+  font-size: var(--text-title-size);
+  line-height: var(--text-title-line);
+  font-weight: var(--text-title-weight);
+}
+
+.message-field {
+  display: grid;
+}
+
+textarea {
+  width: 100%;
+  min-height: min(26dvh, calc(3 * var(--text-body-line) + var(--space-6)));
+  max-height: min(45dvh, calc(12 * var(--text-body-line) + var(--space-6)));
+  field-sizing: content;
+  resize: none;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+}
+
+textarea:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-ui-size);
+  line-height: var(--text-ui-line);
+}
+
+.impact {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+.context {
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+}
+
+.error {
+  color: var(--danger);
+}
+
+.loading {
+  display: grid;
+  gap: var(--space-2);
+}
+
+footer {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.editor-enter {
+  animation: editor-enter var(--dur-base) var(--ease-out) both;
+}
+
+@keyframes editor-enter {
+  from { opacity: 0; transform: translateY(calc(-1 * var(--space-1))); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-enter { animation: none; }
+}
+
+.copy {
+  margin-inline-end: auto;
+}

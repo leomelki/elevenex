@@ -1,3 +1,6 @@
+import { mergeTranscriptRows } from '../agent-runtime/transcript-order.js';
+import { codexImageResult, codexImageViewInput, codexImageViewResult } from './codex-image-result.js';
+import { codexUserMessage } from './codex-user-message.js';
 import {
   elevenexMcpUrl,
   SESSION_TOOL_INSTRUCTIONS,
@@ -27,13 +30,13 @@ import { TurnChangesService, type TurnChangeCapture } from '../agent-runtime/tur
 import { randomUUID } from 'crypto';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
-import { claudeToolInteractions } from '../database/schema/index.js';
+import { claudeToolInteractions, type SessionAgentSelection } from '../database/schema/index.js';
 import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { SessionsService } from '../sessions/sessions.service.js';
-import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
-import { AGENT_REASONING_EFFORTS } from '../agent-runtime/agent-runtime.types.js';
+import type { AgentImageInput, AgentPromptOptions } from '../agent-runtime/agent-runtime.types.js';
+import { QueuedPromptDispatches } from '../agent-runtime/queued-prompt-dispatches.js';
 import type {
   AgentForkConversationRequest,
   AgentForkConversationResult,
@@ -68,8 +71,14 @@ import {
   CodexAppServerClient,
   CodexAppServerNotification,
   CodexAppServerRequest,
+  CodexAppServerResponseError,
 } from './codex-app-server.js';
+import {
+  CodexModelCatalogRetry,
+  CODEX_MODEL_CATALOG_TTL_MS,
+} from './codex-model-catalog-retry.js';
 import { CodexAuthService } from './codex-auth.service.js';
+import { CodexBackgroundTerminals } from './codex-background-terminals.js';
 import { CodexHistoryService } from './codex-history.service.js';
 import {
   codexAsyncQuestionAnswers,
@@ -78,13 +87,16 @@ import {
 } from './codex-async-questions.js';
 import {
   CodexSubagentTracker,
+  codexAgentTaskTitle,
   collaborationTool,
   executionStatus,
   isAgentActive,
   record,
+  subagentThreadMetadata,
   textValue,
 } from './codex-subagents.js';
-import { codexAgentMessage } from './codex-agent-message.js';
+import { CodexSubagentMetadataLoader } from './codex-subagent-metadata.js';
+import { codexAgentMessage, codexAssistantPhase } from './codex-agent-message.js';
 import type {
   ClaudeSubagentState,
   ClaudeSubagentHistoryPayload,
@@ -99,51 +111,21 @@ import type {
   CodexSessionSnapshotPayload,
 } from './codex-runtime.types.js';
 
-const DEFAULT_CODEX_MODEL = 'gpt-5.5';
+// The app-server carries assistant phases and user receipts beyond the SDK event shape.
+type CodexThreadItem = ThreadItem & Pick<ClaudeTranscriptItem, 'assistantPhase'>;
+type CodexTurnEvent =
+  | Exclude<ThreadEvent, { item: ThreadItem }>
+  | { type: 'item.started' | 'item.updated' | 'item.completed'; item: CodexThreadItem }
+  | { type: 'user.message'; message: { id: string; text: string } }
+  | { type: 'turn.interrupted' };
+
 const CODEX_STOP_UNCONFIRMED_MESSAGE =
   'Codex has not confirmed that the previous turn stopped. Retry stopping it before continuing.';
-const CODEX_MODEL_REFRESH_TTL_MS = 10 * 60 * 1000;
-const CODEX_MODEL_REFRESH_RETRY_MS = 30_000;
+const CODEX_MODEL_REFRESH_TTL_MS = CODEX_MODEL_CATALOG_TTL_MS;
+const CODEX_MODEL_REFRESH_RETRY_MS = 3_000;
 const CODEX_MODEL_LIST_TIMEOUT_MS = 8_000;
-const CODEX_MODEL_REFRESH_IDLE_DELAY_MS = 10_000;
 const CODEX_PREWARM_COOLDOWN_MS = 30_000;
 const CODEX_PLAN_USAGE_TTL_MS = 60_000;
-const CODEX_MODELS: ClaudeModelOption[] = [
-  {
-    id: 'gpt-5.5',
-    displayName: 'GPT-5.5',
-    description:
-      'Frontier model for complex coding, research, and real-world work.',
-    supportsEffort: true,
-    supportsFastMode: true,
-  },
-  {
-    id: 'gpt-5.4',
-    displayName: 'GPT-5.4',
-    description: 'Strong model for everyday coding.',
-    supportsEffort: true,
-    supportsFastMode: true,
-  },
-  {
-    id: 'gpt-5.4-mini',
-    displayName: 'GPT-5.4-Mini',
-    description:
-      'Small, fast, and cost-efficient model for simpler coding tasks.',
-    supportsEffort: true,
-  },
-  {
-    id: 'gpt-5.3-codex',
-    displayName: 'GPT-5.3 Codex',
-    description: 'Coding-optimized model.',
-    supportsEffort: true,
-  },
-  {
-    id: 'gpt-5.2',
-    displayName: 'GPT-5.2',
-    description: 'Optimized for professional work and long-running agents.',
-    supportsEffort: true,
-  },
-];
 interface CodexAppServerModel {
   id?: unknown;
   model?: unknown;
@@ -220,13 +202,16 @@ export class CodexRuntimeService
   private readonly unconfirmedStops = new Map<number, CodexActiveRunState>();
   private readonly rewindingSessions = new Set<number>();
   private readonly runtimeStates = new Map<number, CodexRuntimeState>();
+  private readonly queuedDispatches = new QueuedPromptDispatches();
   private readonly subagentTrackers = new Map<number, CodexSubagentTracker>();
+  private readonly subagentMetadata = new CodexSubagentMetadataLoader();
   private readonly subagentRestores = new Map<number, Promise<void>>();
   private readonly subagentHistoryReads = new Map<
     string,
     Promise<ClaudeSubagentHistoryPayload>
   >();
   private readonly backgroundRefs = new Set<number>();
+  private readonly backgroundTerminals: CodexBackgroundTerminals;
   private readonly restoredSubagents = new WeakSet<CodexSubagentTracker>();
   private readonly delegatedRequests = new Map<
     number,
@@ -236,15 +221,18 @@ export class CodexRuntimeService
   private readonly resolvedDelegatedRequests = new Set<string>();
   private readonly invalidatedSessions = new Set<number>();
   private readonly sessionGenerations = new Map<number, number>();
-  private codexModels: ClaudeModelOption[] = [...CODEX_MODELS];
-  private codexDefaultModel = DEFAULT_CODEX_MODEL;
+  private codexModels: ClaudeModelOption[] = [];
+  private codexDefaultModel: string | null = null;
   private lastModelRefreshAt = 0;
   private lastModelRefreshAttemptAt = 0;
   private modelRefreshInFlight: Promise<void> | null = null;
+  private modelRefreshRevision = 0;
   private modelRefreshError: string | null = null;
   private forcedModelRefresh: Promise<void> | null = null;
-  private modelRefreshTimer: NodeJS.Timeout | null = null;
-  private modelCatalogInterval: NodeJS.Timeout | null = null;
+  private modelCatalogDestroyed = false;
+  private readonly modelCatalogRetry = new CodexModelCatalogRetry(() => {
+    void this.refreshModelCatalogIfStale();
+  });
   private readonly prewarmInFlight = new Map<number, Promise<void>>();
   private readonly lastPrewarmAt = new Map<number, number>();
   private codexPlanUsage: AgentPlanUsage | null = null;
@@ -264,6 +252,10 @@ export class CodexRuntimeService
     @Optional() private readonly turnChanges?: TurnChangesService,
   ) {
     super();
+    this.backgroundTerminals = new CodexBackgroundTerminals(
+      appServer,
+      (sessionId) => this.publishBackgroundWork(sessionId, true),
+    );
   }
 
   /**
@@ -276,7 +268,7 @@ export class CodexRuntimeService
   ): Promise<AgentProviderModelCatalogPayload> {
     await (refresh
       ? this.forceRefreshModelCatalog()
-      : this.refreshModelCatalogIfStale());
+      : this.refreshModelCatalogIfStale(false, true));
     const models = [...this.codexModels];
     // Codex reports supported efforts per model; the provider-wide list is the
     // union so the picker still offers everything reachable by some model.
@@ -289,9 +281,7 @@ export class CodexRuntimeService
 
     return {
       models,
-      reasoningEfforts: reported.size
-        ? orderReasoningEfforts([...reported])
-        : [...AGENT_REASONING_EFFORTS],
+      reasoningEfforts: orderReasoningEfforts([...reported]),
       providerDefaultModelId: this.codexDefaultModel,
       supportsModelSelection: true,
       unavailableReason: this.modelRefreshError,
@@ -299,15 +289,7 @@ export class CodexRuntimeService
   }
 
   onModuleInit(): void {
-    // Warm the model catalog in the background at startup so it's ready
-    // before any session even opens, instead of waiting for the first
-    // getRuntimeState() call to schedule a refresh (and its idle delay).
-    void this.refreshModelCatalogIfStale();
-    this.modelCatalogInterval = setInterval(() => {
-      if (this.activeRuns.size > 0) return;
-      void this.refreshModelCatalogIfStale();
-    }, CODEX_MODEL_REFRESH_TTL_MS);
-    this.modelCatalogInterval.unref?.();
+    this.modelCatalogRetry.start();
     this.unsubscribePlanUsageNotifications = this.appServer.onNotification(
       (notification) => {
         this.handleSubagentNotification(notification);
@@ -368,6 +350,8 @@ export class CodexRuntimeService
   }
 
   onModuleDestroy(): void {
+    this.subagentMetadata.dispose();
+    this.backgroundTerminals.clear(false);
     this.unsubscribeSubagentRequests?.();
     for (const requests of this.delegatedRequests.values())
       this.resolvePendingCodexRequests(requests);
@@ -376,21 +360,16 @@ export class CodexRuntimeService
     this.backgroundRefs.clear();
     this.unsubscribePlanUsageNotifications?.();
     this.unsubscribePlanUsageNotifications = null;
-    if (this.modelCatalogInterval) {
-      clearInterval(this.modelCatalogInterval);
-      this.modelCatalogInterval = null;
-    }
-    if (this.modelRefreshTimer) {
-      clearTimeout(this.modelRefreshTimer);
-      this.modelRefreshTimer = null;
-    }
+    this.modelCatalogDestroyed = true;
+    this.modelRefreshRevision++;
+    this.modelCatalogRetry.stop();
   }
 
-  async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
+  async getHistory(sessionId: number, options?: { changeDetails?: 'summary' }): Promise<ClaudeTranscriptItem[]> {
     const history = await this.loadProviderHistory(sessionId);
     if (!this.turnChanges) return history;
     const session = await this.sessionsService.findOne(sessionId);
-    return this.turnChanges.attachHistory(sessionId, 'codex', session.codexSessionId, history);
+    return this.turnChanges.attachHistory(sessionId, 'codex', session.codexSessionId, history, options?.changeDetails);
   }
 
   private async loadProviderHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
@@ -425,7 +404,7 @@ export class CodexRuntimeService
       if (item.toolUseId) callsById.set(item.toolUseId, item);
       if (item.sourceMessageId) callsById.set(item.sourceMessageId, item);
     }
-    let addedCalls = false;
+    const addedCalls: ClaudeTranscriptItem[] = [];
     for (const row of denials) {
       const interaction: ClaudeToolInteractionSummary = {
         kind: 'permission',
@@ -451,7 +430,7 @@ export class CodexRuntimeService
           continue;
         // Some approvals (e.g. extra permissions) have no tool item in the
         // provider's transcript. Keep their human decision in history too.
-        history.push({
+        addedCalls.push({
           id: `${row.toolUseId}:tool_use`,
           kind: 'tool_use',
           toolUseId: row.toolUseId,
@@ -460,12 +439,20 @@ export class CodexRuntimeService
           interaction,
           timestamp: row.createdAt,
         });
-        addedCalls = true;
       }
     }
-    return addedCalls
-      ? history.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
-      : history;
+    if (!addedCalls.length) return history;
+    // Insert receipts for missing calls while retaining the native order of
+    // the rollout, which can record a tool's completion after later prose.
+    addedCalls.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    const merged: ClaudeTranscriptItem[] = [];
+    let next = 0;
+    for (const item of history) {
+      while (next < addedCalls.length && addedCalls[next].timestamp < item.timestamp)
+        merged.push(addedCalls[next++]);
+      merged.push(item);
+    }
+    return merged.concat(addedCalls.slice(next));
   }
 
   async getRuntimeState(sessionId: number): Promise<CodexRuntimeStatePayload> {
@@ -477,6 +464,7 @@ export class CodexRuntimeService
       sessionId,
       session.codexSessionId,
       persistedPlanMode,
+      session.agentSelection,
     );
     state.cachedWorktreePath = session.worktreePath;
     await this.restoreSubagents(sessionId, state);
@@ -484,13 +472,13 @@ export class CodexRuntimeService
     this.hooksService.updateRuntimeActivity(
       sessionId,
       this.toSidebarActivity(state, sessionId),
-      { authoritative: true },
+      { authoritative: true, provider: 'codex' },
     );
     await this.refreshAuthStatusFast(state, sessionId);
     if (state.authStatus?.authMethod === 'oauth') {
       void this.refreshCodexPlanUsage();
     }
-    this.scheduleModelCatalogRefresh();
+    void this.refreshModelCatalogIfStale();
     return this.toRuntimeStatePayload(sessionId, state);
   }
 
@@ -702,7 +690,7 @@ export class CodexRuntimeService
     agentId: string,
   ): Promise<ClaudeSubagentHistoryPayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    const state = this.ensureRuntimeState(sessionId, session.codexSessionId, undefined, session.agentSelection);
     const tracker = this.tracker(sessionId);
     if (!tracker.agents.has(agentId))
       await this.restoreSubagents(sessionId, state);
@@ -797,30 +785,29 @@ export class CodexRuntimeService
               eq(claudeToolInteractions.decision, 'denied'),
             ),
           );
-        const history = this.attachToolDenials(
+        const durable = this.attachToolDenials(
           [...(snapshot?.history ?? [])],
           denials,
           agentId,
         );
         const live = tracker.liveItems.get(agentId);
-        for (const item of live?.values() ?? []) {
-          const existing = history.findIndex(
-            (entry) =>
-              entry.id === item.id ||
-              (entry.kind === item.kind &&
-                entry.toolUseId &&
-                entry.toolUseId === item.toolUseId) ||
-              (entry.kind === item.kind &&
-                (item.kind === 'assistant' || item.kind === 'thinking') &&
-                entry.content === item.content &&
-                Math.abs(
-                  Date.parse(entry.timestamp) - Date.parse(item.timestamp),
-                ) < 60_000),
-          );
-          if (existing >= 0)
-            history[existing] = { ...history[existing], ...item };
-          else history.push(item);
+        const saved = new Map(durable.map(item => [item.id, item]));
+        const toolAliases = new Map<string, ClaudeTranscriptItem | null>();
+        for (const item of durable) {
+          if (!item.toolUseId || live?.has(item.id)) continue;
+          const key = item.kind + ':' + item.toolUseId;
+          toolAliases.set(key, toolAliases.has(key) ? null : item);
         }
+        const overlay = [...(live?.values() ?? [])].map(item => {
+          const key = item.toolUseId ? item.kind + ':' + item.toolUseId : undefined;
+          const persisted = saved.get(item.id) ?? (key ? toolAliases.get(key) : undefined);
+          if (persisted && key) toolAliases.delete(key);
+          // The rollout can contain a final receipt before its notification
+          // reaches the tracker. A partial prefix cannot replace that text.
+          return persisted?.content && persisted.content.startsWith(item.content ?? '')
+            ? { ...item, ...persisted } : { ...persisted, ...item, id: persisted?.id ?? item.id };
+        });
+        const history = [...mergeTranscriptRows(durable, overlay).rows];
         if (!history.some((item) => item.kind === 'user') && agent.prompt)
           history.unshift({
             id: `${agentId}:assignment`,
@@ -829,7 +816,7 @@ export class CodexRuntimeService
             timestamp: agent.startedAt ?? agent.timestamp,
           });
         return {
-          subagent: { ...agent },
+          subagent: { ...agent, taskTitle: codexAgentTaskTitle(agent) },
           history,
           transcriptAvailable: !!snapshot || !!live?.size,
           ...(!snapshot && !live?.size
@@ -842,7 +829,7 @@ export class CodexRuntimeService
       } catch (error) {
         if (error instanceof NotFoundException) throw error;
         return {
-          subagent: { ...agent },
+          subagent: { ...agent, taskTitle: codexAgentTaskTitle(agent) },
           history: [],
           transcriptAvailable: false,
           transcriptError: 'Could not read the saved agent transcript.',
@@ -859,6 +846,7 @@ export class CodexRuntimeService
   private publishSubagents(
     sessionId: number,
     changed: ClaudeSubagentState[],
+    lifecycleChanged = true,
   ): void {
     for (const subagent of changed)
       this.emitEvent({
@@ -883,11 +871,27 @@ export class CodexRuntimeService
       this.backgroundRefs.delete(sessionId)
     )
       this.appServer.release();
+    this.publishBackgroundWork(sessionId, lifecycleChanged);
+  }
+
+  private publishBackgroundWork(
+    sessionId: number,
+    lifecycleChanged: boolean,
+  ): void {
     this.emitEvent({
       type: 'background_work',
-      payload: { sessionId, backgroundWork },
+      payload: { sessionId, backgroundWork: this.backgroundWork(sessionId) },
     });
-    this.emitRunState(sessionId);
+    // Metadata/preview events already wake the selected-session feed. Repeating
+    // an idle parent's run_state would invalidate and reread its durable history.
+    if (lifecycleChanged) this.emitRunState(sessionId);
+  }
+
+  private backgroundWork(sessionId: number) {
+    return [
+      ...this.subagentBackgroundWork(sessionId),
+      ...this.backgroundTerminals.work(sessionId),
+    ];
   }
 
   private subagentBackgroundWork(sessionId: number) {
@@ -896,11 +900,65 @@ export class CodexRuntimeService
       .map((agent) => ({
         id: `subagent:${agent.agentId}`,
         kind: 'subagent' as const,
-        label: agent.displayName ?? agent.agentType,
+        label:
+          agent.displayName ??
+          agent.agentPath?.split('/').at(-1) ??
+          agent.agentType,
         detail: agent.lastAssistantMessage ?? agent.prompt,
         startedAt: agent.startedAt ?? agent.timestamp,
         updatedAt: agent.timestamp,
       }));
+  }
+
+  private loadSubagentMetadata(sessionId: number, agentId: string): void {
+    const tracker = this.subagentTrackers.get(sessionId);
+    const state = this.runtimeStates.get(sessionId);
+    if (!tracker || !state) return;
+    const rootId = state.codexSessionId;
+    const generation = this.sessionGenerations.get(sessionId) ?? 0;
+    const current = () =>
+      !this.invalidatedSessions.has(sessionId) &&
+      this.subagentTrackers.get(sessionId) === tracker &&
+      this.runtimeStates.get(sessionId) === state &&
+      state.codexSessionId === rootId &&
+      (this.sessionGenerations.get(sessionId) ?? 0) === generation &&
+      tracker.agents.has(agentId);
+    this.subagentMetadata.load(tracker, agentId, current, async (current) => {
+      const reply = await this.appServer.request(
+        'thread/read',
+        {
+          threadId: agentId,
+          includeTurns: false,
+        },
+        10_000,
+      );
+      if (!current()) return;
+      const thread = record(record(reply).thread);
+      if (thread.id !== agentId)
+        throw new Error('Codex child metadata unavailable.');
+      const metadata = subagentThreadMetadata(thread);
+      const agent = tracker.agents.get(agentId)!;
+      // Fill gaps only: notifications received during the read are newer.
+      let changed = false;
+      for (const field of [
+        'displayName',
+        'agentType',
+        'agentPath',
+        'model',
+        'reasoningEffort',
+      ] as const) {
+        const value = metadata[field];
+        if (
+          value &&
+          (!agent[field] ||
+            (field === 'agentType' && agent.agentType === 'agent'))
+        ) {
+          agent[field] = value;
+          changed = true;
+        }
+      }
+      if (changed) this.publishSubagents(sessionId, [agent], false);
+    });
   }
 
   /** Usage has its own revision: transcript polling must not overwrite a newer live count. */
@@ -925,12 +983,17 @@ export class CodexRuntimeService
     const params = record(notification.params);
     const thread = record(params.thread);
     const threadId = textValue(params.threadId ?? thread.id);
+    if (notification.method === 'elevenex:app-server-down')
+      this.backgroundTerminals.clear(true);
+    if (notification.method === 'thread/closed' && threadId)
+      this.backgroundTerminals.threadClosed(threadId);
     const timestamp = new Date().toISOString();
     for (const [sessionId, tracker] of this.subagentTrackers) {
       const state = this.runtimeStates.get(sessionId);
-      if (!state?.codexSessionId || this.invalidatedSessions.has(sessionId))
+      const rootId =
+        this.activeRuns.get(sessionId)?.threadId ?? state?.codexSessionId;
+      if (!state || !rootId || this.invalidatedSessions.has(sessionId))
         continue;
-      const rootId = state.codexSessionId;
       if (notification.method === 'elevenex:app-server-down') {
         const delegated = this.delegatedRequests.get(sessionId);
         if (delegated) {
@@ -959,7 +1022,7 @@ export class CodexRuntimeService
         record(record(thread.source).subAgent ?? record(thread.source).subagent)
           .thread_spawn,
       );
-      const parent = textValue(spawn.parent_thread_id);
+      const parent = textValue(spawn.parent_thread_id ?? thread.parentThreadId);
       if (
         notification.method === 'thread/started' &&
         threadId &&
@@ -970,22 +1033,35 @@ export class CodexRuntimeService
           threadId,
           {
             parentAgentId: parent === rootId ? undefined : parent,
-            agentPath: textValue(thread.agentPath ?? spawn.agent_path),
-            displayName: textValue(
-              thread.agentNickname ?? spawn.agent_nickname,
-            ),
-            agentType:
-              textValue(thread.agentRole ?? spawn.agent_role) ?? 'agent',
-            executionStatus: 'pending',
+            ...subagentThreadMetadata(thread),
+            ...(!tracker.agents.has(threadId)
+              ? { executionStatus: 'pending' as const }
+              : {}),
           },
           timestamp,
         );
         this.publishSubagents(sessionId, [agent]);
+        this.loadSubagentMetadata(sessionId, threadId);
         return;
       }
       if (!threadId || (threadId !== rootId && !tracker.agents.has(threadId)))
         continue;
       const raw = record(params.item);
+      if (
+        notification.method === 'turn/completed' ||
+        (notification.method === 'error' && !params.willRetry)
+      )
+        this.backgroundTerminals.turnFinished(threadId);
+      if (
+        notification.method === 'item/started' ||
+        notification.method === 'item/completed'
+      )
+        this.backgroundTerminals.observe(
+          sessionId,
+          threadId,
+          notification.method,
+          raw,
+        );
       if (
         ['item/started', 'item/completed'].includes(notification.method) &&
         raw.type === 'subAgentActivity'
@@ -1012,10 +1088,20 @@ export class CodexRuntimeService
                     }
                   : {}),
                 ...(status ? { executionStatus: status } : {}),
+                ...(textValue(raw.agentPath)
+                  ? { agentPath: textValue(raw.agentPath) }
+                  : {}),
+                ...(textValue(raw.model)
+                  ? { model: textValue(raw.model) }
+                  : {}),
+                ...(textValue(raw.reasoningEffort)
+                  ? { reasoningEffort: textValue(raw.reasoningEffort) }
+                  : {}),
               },
               timestamp,
             ),
           ]);
+          this.loadSubagentMetadata(sessionId, id);
         }
       }
       if (
@@ -1024,9 +1110,39 @@ export class CodexRuntimeService
       ) {
         const changed = tracker.collaboration(raw, timestamp, rootId);
         if (changed.length) this.publishSubagents(sessionId, changed);
+        for (const agent of changed)
+          this.loadSubagentMetadata(sessionId, agent.agentId);
       }
       const agent = tracker.agents.get(threadId);
       if (!agent) return;
+      if (
+        notification.method === 'turn/started' ||
+        notification.method === 'turn/completed' ||
+        notification.method === 'item/started' ||
+        notification.method === 'item/completed'
+      )
+        this.loadSubagentMetadata(sessionId, threadId);
+      if (notification.method === 'thread/settings/updated') {
+        const settings = record(params.threadSettings);
+        const model = textValue(settings.model);
+        const reasoningEffort = textValue(settings.effort);
+        if (model || reasoningEffort)
+          this.publishSubagents(
+            sessionId,
+            [
+              tracker.upsert(
+                threadId,
+                {
+                  ...(model ? { model } : {}),
+                  ...(reasoningEffort ? { reasoningEffort } : {}),
+                },
+                timestamp,
+              ),
+            ],
+            false,
+          );
+        return;
+      }
       if (notification.method === 'thread/tokenUsage/updated') {
         const usage = record(params.tokenUsage);
         if (!Object.keys(record(usage.last)).length) return;
@@ -1039,7 +1155,7 @@ export class CodexRuntimeService
           ),
           contextUsageUpdatedAt: timestamp,
         });
-        this.publishSubagents(sessionId, [agent]);
+        this.publishSubagents(sessionId, [agent], false);
         return;
       }
       if (notification.method === 'item/completed')
@@ -1088,6 +1204,17 @@ export class CodexRuntimeService
       const storeItem = (item: ClaudeTranscriptItem) =>
         tracker.storeItem(threadId, item);
       if (['item/started', 'item/completed'].includes(notification.method)) {
+        const message = codexUserMessage(raw);
+        if (message) {
+          storeItem({ id: message.id, kind: 'user', content: message.text, timestamp });
+          if (!agent.prompt)
+            this.publishSubagents(
+              sessionId,
+              [tracker.upsert(threadId, { prompt: message.text }, timestamp)],
+              false,
+            );
+          return;
+        }
         const translated = this.translateAppServerItem(
           raw,
           new Map(),
@@ -1121,16 +1248,21 @@ export class CodexRuntimeService
               kind:
                 translated.type === 'agent_message' ? 'assistant' : 'thinking',
               content: translated.text,
+              ...(translated.assistantPhase ? { assistantPhase: translated.assistantPhase } : {}),
               timestamp,
             });
             if (translated.type === 'agent_message' && translated.text)
-              this.publishSubagents(sessionId, [
-                tracker.upsert(
-                  threadId,
-                  { lastAssistantMessage: translated.text },
-                  timestamp,
-                ),
-              ]);
+              this.publishSubagents(
+                sessionId,
+                [
+                  tracker.upsert(
+                    threadId,
+                    { lastAssistantMessage: translated.text },
+                    timestamp,
+                  ),
+                ],
+                false,
+              );
           }
         }
       } else if (
@@ -1144,19 +1276,24 @@ export class CodexRuntimeService
           content: (items.get(params.itemId)?.content ?? '') + params.delta,
           timestamp,
         });
-      } else if (
-        notification.method === 'item/commandExecution/outputDelta' &&
-        typeof params.itemId === 'string' &&
-        typeof params.delta === 'string'
-      ) {
-        const id = `${params.itemId}:tool_result`;
-        storeItem({
-          id,
-          kind: 'tool_result',
-          toolUseId: params.itemId,
-          content: (items.get(id)?.content ?? '') + params.delta,
-          timestamp,
-        });
+        // Activity needs a small live preview, not a full lifecycle payload per token.
+        const preview = items.get(params.itemId)?.content?.slice(0, 240);
+        if (
+          preview &&
+          preview !== agent.lastAssistantMessage &&
+          Date.parse(timestamp) - Date.parse(agent.timestamp) >= 250
+        )
+          this.publishSubagents(
+            sessionId,
+            [
+              tracker.upsert(
+                threadId,
+                { lastAssistantMessage: preview },
+                timestamp,
+              ),
+            ],
+            false,
+          );
       }
       return;
     }
@@ -1204,11 +1341,14 @@ export class CodexRuntimeService
     messageId: string,
   ): Promise<ClaudeTranscriptItem[]> {
     this.assertNotRewinding(sessionId);
-    if (this.activeRuns.has(sessionId)) {
+    if (this.activeRuns.has(sessionId) || this.unconfirmedStops.has(sessionId) || this.backgroundRefs.has(sessionId)) {
       throw new ConflictException(
         'Cannot edit a message while Codex is actively running.',
       );
     }
+    const current = this.runtimeStates.get(sessionId);
+    if (current && (current.pendingPrompts.length || this.queuedDispatches.current(current).length))
+      throw new ConflictException('Resolve queued messages before editing.');
 
     this.rewindingSessions.add(sessionId);
     try {
@@ -1230,17 +1370,19 @@ export class CodexRuntimeService
     sessionId: number,
     messageId: string,
   ): Promise<ClaudeTranscriptItem[]> {
+    const generation = this.sessionGenerations.get(sessionId);
     const session = await this.sessionsService.findOne(sessionId);
     const rewindTarget = await this.historyService.rewindHistory(
       session.codexSessionId,
       messageId,
     );
+    const token = await this.mcpAgentTokens.ensureToken(sessionId);
     const { threadId: rewoundSessionId, history } =
-      await this.forkAtTurn(rewindTarget);
-    await this.sessionsService.updateCodexSessionId(
-      sessionId,
-      rewoundSessionId,
-    );
+      await this.forkAtTurn(rewindTarget, this.elevenexMcpConfig(token));
+    if (generation !== this.sessionGenerations.get(sessionId))
+      throw new ConflictException('The session closed while the message was being edited.');
+    this.sessionsService.replaceEditedConversation(sessionId, 'codex', rewindTarget.threadId,
+      rewoundSessionId, rewindTarget.promptTimestamp);
 
     const state = this.ensureRuntimeState(sessionId);
     state.codexSessionId = rewoundSessionId;
@@ -1253,8 +1395,11 @@ export class CodexRuntimeService
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = null;
     state.asyncUserInputRequests.clear();
+    state.asyncAnswerPrompts.clear();
     state.lastError = null;
     state.contextUsage = null;
+    this.subagentTrackers.delete(sessionId);
+    this.emitEvent({ type: 'conversation_rewound', payload: { sessionId } });
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
 
@@ -1373,7 +1518,7 @@ export class CodexRuntimeService
     }
     const promise = (async () => {
       const session = await this.sessionsService.findOne(sessionId);
-      const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+      const state = this.ensureRuntimeState(sessionId, session.codexSessionId, undefined, session.agentSelection);
       state.cachedWorktreePath = session.worktreePath;
       await this.refreshAuthStatusFast(state, sessionId);
       await this.appServer.prewarm();
@@ -1401,10 +1546,23 @@ export class CodexRuntimeService
     model: string | null,
   ): Promise<CodexRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    const state = this.ensureRuntimeState(sessionId, session.codexSessionId, undefined, session.agentSelection);
+    if (session.agentSelection?.provider === 'codex')
+      this.sessionsService.updateSessionAgentSelection(sessionId, 'codex', { model });
     state.selectedModel = model;
+    state.modelExplicitlySelected = Boolean(model);
+    state.pendingFastModeDefault = false;
     this.emitRunState(sessionId);
     return this.toRuntimeStatePayload(sessionId, state);
+  }
+
+  nativeAppLaunchPolicy(sessionId: number): import('../agent-runtime/agent-runtime.types.js').NativeAppLaunchPolicy {
+    const state = this.runtimeStates.get(sessionId);
+    if (state?.planMode) return 'plan';
+    if (state?.selectedPermissionMode !== 'bypassPermissions') return 'request';
+    const run = this.activeRuns.get(sessionId);
+    return !!run?.turnId && run.unrestrictedExecution === true &&
+      !run.interruptRequested && !run.abortController.signal.aborted ? 'launch' : 'request';
   }
 
   async setPermissionMode(
@@ -1412,7 +1570,7 @@ export class CodexRuntimeService
     mode: CodexPermissionMode | null,
   ): Promise<CodexRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    const state = this.ensureRuntimeState(sessionId, session.codexSessionId, undefined, session.agentSelection);
     const normalized = this.normalizePermissionModeSelection(
       mode,
       state.selectedPermissionMode,
@@ -1450,6 +1608,7 @@ export class CodexRuntimeService
       sessionId,
       session.codexSessionId,
       session.planMode ?? undefined,
+      session.agentSelection,
     );
     await this.sessionsService.updatePlanMode(sessionId, enabled);
     state.planMode = enabled;
@@ -1484,7 +1643,9 @@ export class CodexRuntimeService
     effort: string | null,
   ): Promise<CodexRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    const state = this.ensureRuntimeState(sessionId, session.codexSessionId, undefined, session.agentSelection);
+    if (session.agentSelection?.provider === 'codex')
+      this.sessionsService.updateSessionAgentSelection(sessionId, 'codex', { reasoningEffort: effort });
     state.reasoningEffort = effort;
     this.emitRunState(sessionId);
     return this.toRuntimeStatePayload(sessionId, state);
@@ -1495,8 +1656,9 @@ export class CodexRuntimeService
     enabled: boolean,
   ): Promise<CodexRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    const state = this.ensureRuntimeState(sessionId, session.codexSessionId, undefined, session.agentSelection);
     state.fastMode = enabled;
+    state.pendingFastModeDefault = false;
     if (state.sessionMetadata) {
       state.sessionMetadata = {
         ...state.sessionMetadata,
@@ -1512,14 +1674,43 @@ export class CodexRuntimeService
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
+    options: AgentPromptOptions = {},
   ): Promise<void> {
+    if (options.waitForCompletion !== false)
+      return this.runPrompt(sessionId, prompt, titlePrompt, images, options);
+    let owned = false;
     const generation = this.sessionGenerations.get(sessionId) ?? 0;
-    this.assertNotRewinding(sessionId);
-    const trimmedPrompt = prompt.trim();
-    const validatedImages = this.validateImageInputs(images);
-    if (!trimmedPrompt && !validatedImages.length) {
-      return;
-    }
+    let accepted!: () => void;
+    const receipt = new Promise<void>((resolve) => { accepted = resolve; });
+    const completion = this.runPrompt(sessionId, prompt, titlePrompt, images, {
+      ...options,
+      onAccepted: (disposition) => {
+        owned = true;
+        options.onAccepted?.(disposition);
+        accepted();
+      },
+    });
+    // Keep runtime ownership and stop/cleanup intact after HTTP acknowledges the send.
+    // In particular a late turn-change cleanup failure must still reach the live UI.
+    void completion.catch((error: unknown) => {
+      if (!owned || this.invalidatedSessions.has(sessionId) ||
+          generation !== (this.sessionGenerations.get(sessionId) ?? 0)) return;
+      const state = this.ensureRuntimeState(sessionId);
+      const message = error instanceof Error ? error.message : String(error);
+      state.lastError = message;
+      state.runPhase = 'error';
+      state.sessionState = 'idle';
+      state.canInterrupt = false;
+      this.emitEvent({ type: 'error', payload: { sessionId, message } });
+      this.emitRunState(sessionId);
+      this.logger.error(`Codex run failed session=${sessionId}: ${message}`);
+    });
+    await Promise.race([receipt, completion]);
+  }
+
+  private queuePromptIfBusy(
+    sessionId: number, prompt: string, images: AgentImageInput[], beforeDispatch?: () => void,
+  ): boolean {
     if (this.unconfirmedStops.has(sessionId)) {
       this.emitRunState(sessionId);
       throw new ConflictException(CODEX_STOP_UNCONFIRMED_MESSAGE);
@@ -1528,20 +1719,63 @@ export class CodexRuntimeService
       this.activeRuns.has(sessionId) ||
       this.runtimeStates.get(sessionId)?.queuePaused
     ) {
+      beforeDispatch?.();
       const state = this.ensureRuntimeState(sessionId);
       state.pendingPrompts = [
         ...state.pendingPrompts,
         {
           id: randomUUID(),
-          prompt: trimmedPrompt,
+          prompt,
           queuedAt: new Date().toISOString(),
-          ...(validatedImages.length ? { images: validatedImages } : {}),
+          ...(images.length ? { images } : {}),
         },
       ];
       if (this.activeRuns.get(sessionId)?.interruptRequested) {
         state.queuePaused = true;
       }
       this.emitRunState(sessionId);
+      return true;
+    }
+    return false;
+  }
+
+  private async runPrompt(
+    sessionId: number,
+    prompt: string,
+    titlePrompt?: string,
+    images?: AgentImageInput[],
+    options: AgentPromptOptions = {},
+  ): Promise<void> {
+    const { onAccepted, beforeDispatch } = options;
+    const generation = this.sessionGenerations.get(sessionId) ?? 0;
+    this.assertNotRewinding(sessionId);
+    const trimmedPrompt = prompt.trim();
+    const validatedImages = this.validateImageInputs(images);
+    if (!trimmedPrompt && !validatedImages.length) return;
+    if (
+      options.preferSteering &&
+      !options.queue &&
+      !validatedImages.length &&
+      this.activeRuns.has(sessionId)
+    ) {
+      if (await this.trySteerFollowUp(sessionId, trimmedPrompt, options.requireSteering === true)) {
+        onAccepted?.('steered');
+        return;
+      }
+      this.assertNotRewinding(sessionId);
+      if (
+        this.invalidatedSessions.has(sessionId) ||
+        generation !== (this.sessionGenerations.get(sessionId) ?? 0)
+      ) {
+        throw new ConflictException(
+          'This session was closed. Reopen its task before continuing.',
+        );
+      }
+    }
+    if (options?.requireSteering)
+      throw new ConflictException('No active turn can accept live steering.');
+    if (this.queuePromptIfBusy(sessionId, trimmedPrompt, validatedImages, beforeDispatch)) {
+      onAccepted?.('queued');
       return;
     }
 
@@ -1568,7 +1802,9 @@ export class CodexRuntimeService
       isNewSession =
         (!session.codexSessionId || session.codexSessionId === '-1') &&
         this.titleService.isAutoGeneratedName(session.name);
-      cachedState = this.ensureRuntimeState(sessionId, session.codexSessionId);
+      cachedState = this.ensureRuntimeState(
+        sessionId, session.codexSessionId, session.planMode ?? undefined, session.agentSelection,
+      );
       cachedState.cachedWorktreePath = worktreePath;
       this.logger.log(
         `Codex session title eligibility checked session=${sessionId} source=${hadCachedWorktreePath ? 'cached_state_refresh' : 'session_load'} hasCodexSessionId=${Boolean(session.codexSessionId && session.codexSessionId !== '-1')} currentName=${JSON.stringify(session.name)} shouldGenerate=${isNewSession}`,
@@ -1593,6 +1829,11 @@ export class CodexRuntimeService
     }
     const resolvedWorktreePath = worktreePath;
     this.assertNotRewinding(sessionId);
+    // A concurrent cold send can claim the turn while we load its session.
+    if (this.queuePromptIfBusy(sessionId, trimmedPrompt, validatedImages, beforeDispatch)) {
+      onAccepted?.('queued');
+      return;
+    }
     const state = cachedState ?? this.ensureRuntimeState(sessionId);
     state.runPhase = 'running';
     state.sessionState = 'running';
@@ -1642,7 +1883,7 @@ export class CodexRuntimeService
     const turnReadyPromise = new Promise<void>((resolve) => {
       resolveTurnReady = resolve;
     });
-    this.activeRuns.set(sessionId, {
+    const activeRun: CodexActiveRunState = {
       threadId: state.codexSessionId,
       turnId: null,
       turnReadyPromise,
@@ -1654,13 +1895,19 @@ export class CodexRuntimeService
       startedAtMs: Date.now(),
       permissionRequests: new Map(),
       userInputRequests: new Map(),
-    });
+    };
+    this.activeRuns.set(sessionId, activeRun);
+    const ownsSession = () => !this.invalidatedSessions.has(sessionId) &&
+      generation === (this.sessionGenerations.get(sessionId) ?? 0) && this.runtimeStates.get(sessionId) === state;
 
+    if (!beforeDispatch) onAccepted?.('running');
     let stagedImageDir: string | null = null;
     let changeCapture: TurnChangeCapture | undefined;
+    let completed = false;
+    let interrupted = false;
     try {
       changeCapture = await this.turnChanges?.begin(sessionId, 'codex', resolvedWorktreePath);
-      if (abortController.signal.aborted || this.activeRuns.get(sessionId)?.interruptRequested) return;
+      if (!ownsSession() || abortController.signal.aborted || activeRun.interruptRequested) return;
       const built = await this.buildCodexInput(trimmedPrompt, validatedImages);
       stagedImageDir = built.tempDir;
       const turnInput: Array<
@@ -1677,21 +1924,31 @@ export class CodexRuntimeService
         resolvedWorktreePath,
         turnInput,
         abortController.signal,
+        changeCapture,
+        beforeDispatch,
+        beforeDispatch ? () => onAccepted?.('running') : undefined,
       )) {
-        if (this.invalidatedSessions.has(sessionId)) {
+        if (!ownsSession() || this.activeRuns.get(sessionId) !== activeRun) {
           break;
         }
         const run = this.activeRuns.get(sessionId);
         if (run?.interruptRequested) {
           break;
         }
+        if (event.type === 'turn.interrupted') { interrupted = true; continue; }
+        if (event.type === 'turn.completed') completed = true;
         // Synchronous event handler — no awaits on the hot path. The one
         // historically-async branch (persisting the codex session id) is now
         // fire-and-forget so it can't stall delta delivery.
         this.handleCodexEvent(sessionId, state, event, resolvedWorktreePath);
       }
-      this.finishRun(sessionId);
+      if (!ownsSession()) return;
+      if (interrupted || abortController.signal.aborted || activeRun.interruptRequested)
+        this.finalizeInterruptedRun(sessionId);
+      else
+        this.finishRun(sessionId);
     } catch (error) {
+      if (!ownsSession()) return;
       const run = this.activeRuns.get(sessionId);
       if (run?.interruptRequested || abortController.signal.aborted) {
         this.finalizeInterruptedRun(sessionId);
@@ -1706,26 +1963,43 @@ export class CodexRuntimeService
       this.emitRunState(sessionId);
       this.logger.error(`Codex run failed session=${sessionId}: ${message}`);
     } finally {
+      if (ownsSession() && activeRun.threadId && !activeRun.interruptRequested)
+        this.backgroundTerminals.turnFinished(activeRun.threadId);
       let changesFinished = false;
       try {
         const changes = await this.turnChanges?.finish(
           changeCapture,
           state.codexSessionId,
         );
-        if (changes && !this.invalidatedSessions.has(sessionId))
+        if (changes && ownsSession() && this.activeRuns.get(sessionId) === activeRun)
           this.pushItem(sessionId, changes);
+        // Persist after final transcript/change evidence is available. Rewind,
+        // interruption, cleanup and a stream without completion are not replies.
+        if (
+          completed && !interrupted && !state.lastError &&
+          !abortController.signal.aborted && !activeRun.interruptRequested &&
+          this.activeRuns.get(sessionId) === activeRun && ownsSession()
+        ) {
+          try {
+            await this.sessionsService.markCompletionUnreviewed(sessionId, 'completed');
+          } catch (error) {
+            this.logger.warn(`Failed to record Codex completion for session ${sessionId}: ${String(error)}`);
+          }
+        }
         changesFinished = true;
       } finally {
         // Capture failure must not strand the run or unblock automatic dispatch.
-        const run = this.activeRuns.get(sessionId);
-        this.activeRuns.delete(sessionId);
-        run?.resolveTurnReady();
-        run?.resolveCompletion();
+        const run = activeRun;
+        if (this.activeRuns.get(sessionId) === run) this.activeRuns.delete(sessionId);
+        state.asyncAnswerPrompts.clear();
+        run.resolveTurnReady();
+        run.resolveCompletion();
         if (stagedImageDir) {
           void rm(stagedImageDir, { recursive: true, force: true });
         }
         if (
           changesFinished &&
+          ownsSession() &&
           !state.lastError &&
           !state.queuePaused &&
           state.pendingPrompts.length > 0
@@ -1733,6 +2007,42 @@ export class CodexRuntimeService
           this.dispatchQueuedPrompt(sessionId, state);
         }
       }
+    }
+  }
+
+  private async trySteerFollowUp(
+    sessionId: number,
+    text: string,
+    explicit: boolean,
+  ): Promise<boolean> {
+    const run = this.activeRuns.get(sessionId);
+    const state = this.runtimeStates.get(sessionId);
+    if (
+      !run?.threadId ||
+      !run.turnId ||
+      run.interruptRequested ||
+      run.abortController.signal.aborted ||
+      this.unconfirmedStops.has(sessionId) ||
+      state?.queuePaused ||
+      (!explicit && state?.pendingPrompts.length)
+    ) return false;
+
+    try {
+      await this.appServer.request('turn/steer', {
+        threadId: run.threadId,
+        expectedTurnId: run.turnId,
+        input: [{ type: 'text', text }],
+      });
+      return true;
+    } catch (error) {
+      // Invalid requests include a turn that settled before the steer arrived.
+      // A transport failure has an unknown outcome and must never replay input.
+      if (
+        error instanceof CodexAppServerResponseError &&
+        (error.code === -32600 || error.code === -32601 || error.code === -32602)
+      )
+        return false;
+      throw error;
     }
   }
 
@@ -1774,6 +2084,8 @@ export class CodexRuntimeService
           // request alone is never evidence that its checkout is safe to reuse.
         }
         await this.confirmTurnStopped(run);
+        if (!this.invalidatedSessions.has(sessionId))
+          this.backgroundTerminals.turnFinished(run.threadId);
       }
       await this.interruptSubagents(sessionId);
       await run.completionPromise.catch(() => undefined);
@@ -1817,12 +2129,34 @@ export class CodexRuntimeService
     );
   }
 
-  private async interruptSubagents(sessionId: number): Promise<void> {
+  async stopSubagent(sessionId: number, agentId: string): Promise<void> {
+    const tracker = this.subagentTrackers.get(sessionId);
+    const state = this.runtimeStates.get(sessionId);
+    const agent = tracker?.agents.get(agentId);
+    if (!state || !agent || !isAgentActive(agent) || agentId === state.codexSessionId)
+      throw new ConflictException('This agent is no longer available to stop.');
+    await this.interruptSubagents(sessionId, agentId);
+    if (this.runtimeStates.get(sessionId) !== state || this.invalidatedSessions.has(sessionId)) return;
+    const requests = this.delegatedRequests.get(sessionId);
+    for (const store of [this.activeRuns.get(sessionId), requests]) {
+      if (!store) continue;
+      for (const [id, pending] of store.permissionRequests) if (pending.request.agentId === agentId) {
+        pending.resolve({ approved: false, message: 'Interrupted' }); store.permissionRequests.delete(id);
+      }
+      for (const [id, pending] of store.userInputRequests) if (pending.request.agentId === agentId) {
+        pending.resolve({ action: 'cancel' }); store.userInputRequests.delete(id);
+      }
+    }
+    this.refreshPendingUserInput(sessionId);
+  }
+
+  private async interruptSubagents(sessionId: number, agentId?: string): Promise<void> {
+    const generation = this.sessionGenerations.get(sessionId) ?? 0;
     const tracker = this.subagentTrackers.get(sessionId);
     if (!tracker) return;
     const delegated = this.delegatedRequests.get(sessionId);
-    if (delegated) this.resolvePendingCodexRequests(delegated);
-    const active = [...tracker.agents.values()].filter(isAgentActive);
+    if (delegated && !agentId) this.resolvePendingCodexRequests(delegated);
+    const active = [...tracker.agents.values()].filter(agent => isAgentActive(agent) && (!agentId || agent.agentId === agentId));
     for (let index = 0; index < active.length; index += 4) {
       await Promise.all(
         active.slice(index, index + 4).map(async (agent) => {
@@ -1859,11 +2193,14 @@ export class CodexRuntimeService
               }),
             );
           }
+          // A control finishing after teardown must not recreate runtime state.
+          if (this.subagentTrackers.get(sessionId) !== tracker || (this.sessionGenerations.get(sessionId) ?? 0) !== generation) return;
           this.publishSubagents(sessionId, [
             tracker.upsert(
               agent.agentId,
               {
                 executionStatus: finalStatus ?? 'interrupted',
+                ...(agentId && finalStatus !== 'completed' ? { stoppedByUser: true } : {}),
               },
               new Date().toISOString(),
             ),
@@ -1896,6 +2233,7 @@ export class CodexRuntimeService
     // it until another follow-up arrives.
     if (run) {
       await Promise.race([run.turnReadyPromise, run.completionPromise]);
+      if (this.runtimeStates.get(sessionId) !== state || !state.pendingPrompts.includes(selected)) return;
       if (
         this.activeRuns.get(sessionId) === run &&
         run.threadId &&
@@ -1907,6 +2245,8 @@ export class CodexRuntimeService
           (prompt) => prompt.id !== id,
         );
         state.queuePaused = true;
+        const finishDispatch = this.queuedDispatches.begin(state, selected);
+        this.emitRunState(sessionId);
         try {
           const built = await this.buildCodexInput(
             selected.prompt,
@@ -1930,6 +2270,7 @@ export class CodexRuntimeService
           }
           return;
         } catch (error) {
+          finishDispatch();
           state.pendingPrompts = [
             selected,
             ...state.pendingPrompts.filter((prompt) => prompt.id !== id),
@@ -1995,6 +2336,7 @@ export class CodexRuntimeService
       const [next, ...rest] = state.pendingPrompts;
       if (!next) return;
       state.pendingPrompts = rest;
+      const finishDispatch = this.queuedDispatches.begin(state, next);
       this.emitRunState(sessionId);
       void this.submitPrompt(
         sessionId,
@@ -2020,6 +2362,9 @@ export class CodexRuntimeService
           type: 'error',
           payload: { sessionId, message: state.lastError! },
         });
+      }).finally(() => {
+        if (finishDispatch() && this.runtimeStates.get(sessionId) === state)
+          this.emitRunState(sessionId);
       });
     });
   }
@@ -2214,6 +2559,7 @@ export class CodexRuntimeService
           publishAnswer();
           return;
         }
+        state.asyncAnswerPrompts.add(prompt);
         const activeRun = this.activeRuns.get(sessionId);
         if (activeRun && !activeRun.interruptRequested) {
           await Promise.race([
@@ -2239,6 +2585,7 @@ export class CodexRuntimeService
         }
         publishAnswer();
       } catch (error) {
+        state.asyncAnswerPrompts.delete(prompt);
         state.asyncUserInputRequests.set(requestId, asyncRequest);
         this.refreshPendingUserInput(sessionId);
         throw error;
@@ -2261,6 +2608,7 @@ export class CodexRuntimeService
       (this.sessionGenerations.get(sessionId) ?? 0) + 1,
     );
     await this.interrupt(sessionId);
+    await this.backgroundTerminals.stopSession(sessionId);
     const delegated = this.delegatedRequests.get(sessionId);
     if (delegated) this.resolvePendingCodexRequests(delegated);
     this.delegatedRequests.delete(sessionId);
@@ -2278,9 +2626,25 @@ export class CodexRuntimeService
   private handleCodexEvent(
     sessionId: number,
     state: CodexRuntimeState,
-    event: ThreadEvent,
+    event: CodexTurnEvent,
     cwd: string,
   ): void {
+    if (event.type === 'user.message') {
+      const existing = state.liveItems.find(item => item.id === event.message.id);
+      if (existing?.content === event.message.text) return;
+      // Explicitly submitted answers remain tool receipts, including when an
+      // answer starts a new turn whose live items no longer contain the call.
+      if (state.asyncAnswerPrompts.has(event.message.text)) return;
+      const timestamp = existing?.timestamp ?? new Date().toISOString();
+      this.upsertLiveItem(sessionId, {
+        id: event.message.id,
+        kind: 'user',
+        content: event.message.text,
+        timestamp,
+        receivedAt: timestamp,
+      }, 'message_start', true);
+      return;
+    }
     if (event.type === 'thread.started') {
       // captureCodexSessionId persists the id to the DB; we don't want to
       // hold up event streaming for it, so fire-and-forget.
@@ -2292,7 +2656,7 @@ export class CodexRuntimeService
       this.handleItemEvent(
         sessionId,
         event.item,
-        event.type === 'item.updated',
+        false,
       );
       return;
     }
@@ -2326,7 +2690,7 @@ export class CodexRuntimeService
 
   private handleItemEvent(
     sessionId: number,
-    item: ThreadItem,
+    item: CodexThreadItem,
     terminal: boolean,
   ): void {
     const timestamp = new Date().toISOString();
@@ -2369,13 +2733,14 @@ export class CodexRuntimeService
       );
       return;
     }
-    if (item.type === 'agent_message' && item.text.trim()) {
+    if (item.type === 'agent_message') {
       this.upsertLiveItem(
         sessionId,
         {
           id: item.id,
           kind: 'assistant',
           content: item.text,
+          ...(item.assistantPhase ? { assistantPhase: item.assistantPhase } : {}),
           sourceMessageId: item.id,
           timestamp,
           receivedAt: timestamp,
@@ -2385,7 +2750,7 @@ export class CodexRuntimeService
       );
       return;
     }
-    if (item.type === 'reasoning' && item.text.trim()) {
+    if (item.type === 'reasoning') {
       this.upsertLiveItem(
         sessionId,
         {
@@ -2413,15 +2778,8 @@ export class CodexRuntimeService
     const toolItem = this.toToolUseItem(item, timestamp);
     if (toolItem) {
       this.upsertLiveItem(sessionId, toolItem, 'tool_use', terminal);
-      const result = this.toToolResultItem(item, timestamp);
-      if (
-        result &&
-        (terminal ||
-          (item.type === 'command_execution' &&
-            Boolean(item.aggregated_output)))
-      ) {
-        this.pushItem(sessionId, result, 'tool_result');
-      }
+      const result = terminal ? this.toToolResultItem(item, timestamp) : null;
+      if (result) this.pushItem(sessionId, result, 'tool_result');
     }
   }
 
@@ -2456,6 +2814,7 @@ export class CodexRuntimeService
       const commandActions = commandActionsFrom(item);
       const providerToolInput = {
         command: item.command,
+        ...(typeof record(item).cwd === 'string' ? { cwd: record(item).cwd } : {}),
         ...(commandActions ? { commandActions } : {}),
       };
       const canonicalTool = canonicalizeAgentTool('Bash', providerToolInput);
@@ -2607,6 +2966,10 @@ export class CodexRuntimeService
         kind: 'tool_result',
         toolUseId: item.id,
         content: item.aggregated_output,
+        providerToolResult: {
+          ...(typeof item.exit_code === 'number' ? { exitCode: item.exit_code } : {}),
+          ...(typeof record(item).interrupted === 'boolean' ? { interrupted: record(item).interrupted } : {}),
+        },
         isError: item.status === 'failed' || (item.exit_code ?? 0) !== 0,
         timestamp,
         authoredAt: timestamp,
@@ -2620,18 +2983,20 @@ export class CodexRuntimeService
         content: item.changes
           .map((change) => `${change.kind}: ${change.path}`)
           .join('\n'),
-        isError: item.status === 'failed',
+        isError: item.status !== 'completed',
         timestamp,
         authoredAt: timestamp,
       };
     }
     if (item.type === 'mcp_tool_call') {
+      const imageView = item.server === 'codex' && item.tool === 'ViewImage';
       return {
         id: `${item.id}:tool_result`,
         kind: 'tool_result',
         toolUseId: item.id,
-        content: item.error?.message ?? JSON.stringify(item.result ?? {}),
-        isError: item.status === 'failed',
+        content: item.error?.message ?? (imageView ? '' : JSON.stringify(item.result ?? {})),
+        providerToolResult: item.result,
+        isError: item.status === 'failed' || !!item.error || record(item.result).isError === true,
         timestamp,
         authoredAt: timestamp,
       };
@@ -2699,7 +3064,7 @@ export class CodexRuntimeService
     const authStatus = state.authStatus;
     const metadata: CodexRuntimeSessionMetadata = {
       cwd,
-      model: state.selectedModel ?? this.codexDefaultModel,
+      model: state.selectedModel ?? this.codexDefaultModel ?? 'unknown',
       permissionMode: state.selectedPermissionMode ?? 'default',
       codexVersion: authStatus?.version ?? 'unknown',
       authMethod: authStatus?.authMethod ?? 'unknown',
@@ -2725,10 +3090,12 @@ export class CodexRuntimeService
       return;
     }
     const state = this.ensureRuntimeState(sessionId);
+    this.queuedDispatches.clear(state);
     state.runPhase = state.lastError ? 'error' : 'idle';
     state.sessionState = 'idle';
     state.canInterrupt = false;
     state.liveItems = [];
+    state.asyncAnswerPrompts.clear();
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest =
       state.asyncUserInputRequests.values().next().value ?? null;
@@ -2739,6 +3106,7 @@ export class CodexRuntimeService
 
   private finalizeInterruptedRun(sessionId: number): void {
     const state = this.ensureRuntimeState(sessionId);
+    this.queuedDispatches.clear(state);
     if (!this.unconfirmedStops.has(sessionId)) {
       state.runPhase = 'idle';
       state.sessionState = 'idle';
@@ -2747,6 +3115,7 @@ export class CodexRuntimeService
       state.queuePaused = state.pendingPrompts.length > 0;
     }
     state.liveItems = [];
+    state.asyncAnswerPrompts.clear();
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest =
       state.asyncUserInputRequests.values().next().value ?? null;
@@ -2793,7 +3162,9 @@ export class CodexRuntimeService
     sessionId: number,
     codexSessionId?: string | null,
     persistedPlanMode?: boolean,
+    agentSelection?: SessionAgentSelection | null,
   ): CodexRuntimeState {
+    const selection = agentSelection?.provider === 'codex' ? agentSelection : undefined;
     const existing = this.runtimeStates.get(sessionId);
     if (existing) {
       if (codexSessionId && codexSessionId !== '-1') {
@@ -2810,15 +3181,11 @@ export class CodexRuntimeService
       if (persistedPlanMode !== undefined) {
         existing.planMode = persistedPlanMode;
       }
+      if (selection && !existing.persistedSelectionLoaded)
+        Object.assign(existing, this.startupModelSettings(selection));
       return existing;
     }
     const availableModels = [...this.codexModels];
-    const startup = resolveAgentStartupSelection(
-      this.settingsService.getAgentProviderDefaults('codex'),
-      availableModels,
-      this.codexDefaultModel,
-    );
-
     const state: CodexRuntimeState = {
       codexSessionId:
         codexSessionId && codexSessionId !== '-1' ? codexSessionId : null,
@@ -2832,14 +3199,9 @@ export class CodexRuntimeService
       pendingPermissionRequest: null,
       pendingUserInputRequest: null,
       asyncUserInputRequests: new Map(),
+      asyncAnswerPrompts: new Set(),
       lastError: null,
-      selectedModel: startup.selectedModel,
-      reasoningEffort: startup.reasoningEffort,
-      fastMode:
-        this.settingsService.getAgentProviderDefaults('codex').fastMode ===
-          true &&
-        availableModels.find((model) => model.id === startup.selectedModel)
-          ?.supportsFastMode === true,
+      ...this.startupModelSettings(selection),
       selectedPermissionMode: 'auto',
       planMode: persistedPlanMode ?? false,
       availableModels,
@@ -2851,6 +3213,29 @@ export class CodexRuntimeService
     this.runtimeStates.set(sessionId, state);
     this.tracker(sessionId);
     return state;
+  }
+
+  private startupModelSettings(selection?: SessionAgentSelection) {
+    const availableModels = this.codexModels;
+    const defaults = this.settingsService.getAgentProviderDefaults('codex');
+    const startup = resolveAgentStartupSelection(
+      defaults,
+      availableModels,
+      this.codexDefaultModel,
+      selection,
+    );
+
+    return {
+      ...startup,
+      persistedSelectionLoaded: selection !== undefined,
+      modelExplicitlySelected: Boolean(selection?.model === undefined ? defaults.model : selection.model),
+      pendingFastModeDefault:
+        availableModels.length === 0 && defaults.fastMode === true,
+      fastMode:
+        defaults.fastMode === true &&
+        availableModels.find((model) => model.id === startup.selectedModel)
+          ?.supportsFastMode === true,
+    };
   }
 
   private applyUnconfirmedStopState(
@@ -2872,7 +3257,7 @@ export class CodexRuntimeService
     this.hooksService.updateRuntimeActivity(
       sessionId,
       this.toSidebarActivity(state, sessionId),
-      { authoritative: true },
+      { authoritative: true, provider: 'codex' },
     );
     this.emitEvent({
       type: 'run_state',
@@ -2895,8 +3280,9 @@ export class CodexRuntimeService
         pendingPermissionRequest: state.pendingPermissionRequest,
         pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
+        dispatchingPrompts: this.queuedDispatches.current(state),
         queuePaused: state.queuePaused,
-        backgroundWork: this.subagentBackgroundWork(sessionId),
+        backgroundWork: this.backgroundWork(sessionId),
       },
     });
   }
@@ -2910,7 +3296,7 @@ export class CodexRuntimeService
         activityStatus: 'waiting',
         actionKind: null,
         actionLabel: 'Retry stopping Codex',
-        backgroundActive: this.subagentBackgroundWork(sessionId).length > 0,
+        backgroundActive: this.backgroundWork(sessionId).length > 0,
       };
     }
     if (state.pendingPermissionRequest) {
@@ -2938,7 +3324,7 @@ export class CodexRuntimeService
       actionLabel: null,
       backgroundActive:
         sessionId !== undefined &&
-        this.subagentBackgroundWork(sessionId).length > 0,
+        this.backgroundWork(sessionId).length > 0,
     };
   }
 
@@ -2956,10 +3342,12 @@ export class CodexRuntimeService
       | 'tool_result' = 'message_start',
   ): void {
     const state = this.ensureRuntimeState(sessionId);
-    state.liveItems = [
-      ...state.liveItems.filter((existing) => existing.id !== item.id),
-      item,
-    ];
+    const position = state.liveItems.findIndex(existing => existing.id === item.id);
+    const previous = state.liveItems[position];
+    if (previous) {
+      item = { ...item, timestamp: previous.timestamp };
+      state.liveItems = state.liveItems.with(position, item);
+    } else state.liveItems = [...state.liveItems, item];
     this.emitEvent({
       type: eventType,
       payload: { sessionId, item },
@@ -2973,14 +3361,15 @@ export class CodexRuntimeService
     terminal: boolean,
   ): void {
     const state = this.ensureRuntimeState(sessionId);
-    const existing = state.liveItems.find((live) => live.id === item.id);
+    const position = state.liveItems.findIndex(live => live.id === item.id);
+    const existing = state.liveItems[position];
     if (!existing) {
       this.pushItem(sessionId, item, eventType);
       return;
     }
-    state.liveItems = state.liveItems.map((live) =>
-      live.id === item.id ? { ...live, ...item } : live,
-    );
+    item = { ...existing, ...item, timestamp: existing.timestamp, receivedAt: existing.receivedAt,
+      ...(!item.content && existing.content ? { content: existing.content } : {}) };
+    state.liveItems = state.liveItems.with(position, item);
     if (item.agentMessage) {
       // Routing and payload may arrive together only on the completed item.
       this.emitEvent({ type: 'message_start', payload: { sessionId, item } });
@@ -2988,7 +3377,7 @@ export class CodexRuntimeService
     }
     if (
       eventType === 'tool_use' &&
-      (item.toolKind === 'web_search' ||
+      (item.toolKind === 'web_search' || item.toolKind === 'file_changes' ||
         collaborationTool(item.providerToolName))
     ) {
       // Search queries/actions can arrive only with the completed item.
@@ -3182,54 +3571,56 @@ export class CodexRuntimeService
     }
   }
 
-  private scheduleModelCatalogRefresh(): void {
-    if (this.modelRefreshTimer) {
-      return;
-    }
-    this.modelRefreshTimer = setTimeout(() => {
-      this.modelRefreshTimer = null;
-      if (this.activeRuns.size > 0) {
-        this.scheduleModelCatalogRefresh();
-        return;
-      }
-      void this.refreshModelCatalogIfStale();
-    }, CODEX_MODEL_REFRESH_IDLE_DELAY_MS);
-    this.modelRefreshTimer.unref?.();
-  }
-
   private forceRefreshModelCatalog(): Promise<void> {
     if (this.forcedModelRefresh) return this.forcedModelRefresh;
-    // A background request may be querying the old shared app-server. An
-    // explicit reload must follow it with a probe of the current installation.
-    this.forcedModelRefresh = (async () => {
-      await this.modelRefreshInFlight;
-      await this.refreshModelCatalogIfStale(true);
-    })().finally(() => {
-      this.forcedModelRefresh = null;
-    });
+    // Probe the current installation immediately, even if the old server is
+    // slow. Revision checks prevent that older response undoing this reload.
+    this.forcedModelRefresh = this.refreshModelCatalogIfStale(true).finally(
+      () => {
+        this.forcedModelRefresh = null;
+      },
+    );
     return this.forcedModelRefresh;
   }
 
-  private refreshModelCatalogIfStale(force = false): Promise<void> {
+  private refreshModelCatalogIfStale(
+    force = false,
+    foreground = false,
+  ): Promise<void> {
+    if (this.modelCatalogDestroyed) return Promise.resolve();
     const now = Date.now();
-    if (!force && now - this.lastModelRefreshAt < CODEX_MODEL_REFRESH_TTL_MS) {
+    if (!force && this.forcedModelRefresh) return this.forcedModelRefresh;
+    if (
+      !force &&
+      !this.modelRefreshError &&
+      this.lastModelRefreshAt > 0 &&
+      now - this.lastModelRefreshAt < CODEX_MODEL_REFRESH_TTL_MS
+    ) {
       return Promise.resolve();
     }
-    if (this.modelRefreshInFlight) {
+    if (!force && this.modelRefreshInFlight) {
       return this.modelRefreshInFlight;
+    }
+    if (!force && !foreground && this.modelCatalogRetry.waiting) {
+      return Promise.resolve();
     }
     // Avoid repeatedly holding up catalog requests when Codex is unavailable,
     // while retrying much sooner than the normal successful-refresh TTL.
     if (
       !force &&
+      this.lastModelRefreshAttemptAt > 0 &&
       now - this.lastModelRefreshAttemptAt < CODEX_MODEL_REFRESH_RETRY_MS
     ) {
       return Promise.resolve();
     }
 
+    this.modelCatalogRetry.attemptStarted();
     this.lastModelRefreshAttemptAt = now;
-    this.modelRefreshInFlight = this.refreshModelCatalog(force)
+    const revision = ++this.modelRefreshRevision;
+    if (force) this.modelRefreshInFlight = null;
+    const request = this.refreshModelCatalog(force, revision)
       .then(async (refreshed) => {
+        if (revision !== this.modelRefreshRevision) return;
         if (refreshed) {
           this.lastModelRefreshAt = Date.now();
           this.modelRefreshError = null;
@@ -3240,6 +3631,7 @@ export class CodexRuntimeService
         }
       })
       .catch((error) => {
+        if (revision !== this.modelRefreshRevision) return;
         this.modelRefreshError =
           'Could not refresh Codex models. Check that its CLI is installed and signed in.';
         this.logger.debug(
@@ -3249,12 +3641,20 @@ export class CodexRuntimeService
         );
       })
       .finally(() => {
-        this.modelRefreshInFlight = null;
+        if (this.modelRefreshInFlight === request)
+          this.modelRefreshInFlight = null;
+        if (revision === this.modelRefreshRevision) {
+          this.modelCatalogRetry.settled(this.modelRefreshError === null);
+        }
       });
-    return this.modelRefreshInFlight;
+    if (!force) this.modelRefreshInFlight = request;
+    return request;
   }
 
-  private async refreshModelCatalog(force = false): Promise<boolean> {
+  private async refreshModelCatalog(
+    force = false,
+    revision = this.modelRefreshRevision,
+  ): Promise<boolean> {
     // A separate probe sees the newly installed CLI even while the shared
     // app-server is busy streaming turns from the previous version.
     const probe = force ? new CodexAppServerClient() : this.appServer;
@@ -3264,7 +3664,7 @@ export class CodexRuntimeService
     } finally {
       if (force) probe.onModuleDestroy();
     }
-    if (!models.length) {
+    if (revision !== this.modelRefreshRevision || !models.length) {
       return false;
     }
     const previousDefault = this.codexDefaultModel;
@@ -3283,7 +3683,7 @@ export class CodexRuntimeService
       state.availableModels = [...this.codexModels];
       if (
         !configuredModel &&
-        (!force || !state.selectedModel) &&
+        !state.modelExplicitlySelected &&
         (!state.selectedModel || state.selectedModel === previousDefault)
       ) {
         state.selectedModel = this.codexDefaultModel;
@@ -3296,10 +3696,21 @@ export class CodexRuntimeService
           {
             id: state.selectedModel,
             displayName: state.selectedModel,
-            description: 'Custom Codex model.',
+            description:
+              'Selected earlier; Codex is not offering this model right now.',
             supportsEffort: true,
           },
         ];
+      }
+      if (state.pendingFastModeDefault) {
+        const selected = this.codexModels.find(
+          (model) =>
+            model.id === (state.selectedModel ?? this.codexDefaultModel),
+        );
+        if (selected) {
+          state.fastMode = selected.supportsFastMode === true;
+          state.pendingFastModeDefault = false;
+        }
       }
       this.emitRunState(sessionId);
     }
@@ -3341,17 +3752,19 @@ export class CodexRuntimeService
         ? model.description.trim()
         : 'Codex model.';
     const reasoningEfforts = Array.isArray(model.supportedReasoningEfforts)
-      ? orderReasoningEfforts(
-          model.supportedReasoningEfforts
-            .map((effort): string => {
-              if (typeof effort === 'string') return effort.trim();
-              if (!effort || typeof effort !== 'object') return '';
-              const value = (effort as CodexReasoningEffortDescriptor)
-                .reasoningEffort;
-              return typeof value === 'string' ? value.trim() : '';
-            })
-            .filter((effort) => effort.length > 0),
-        )
+      ? [
+          ...new Set(
+            model.supportedReasoningEfforts
+              .map((effort): string => {
+                if (typeof effort === 'string') return effort.trim();
+                if (!effort || typeof effort !== 'object') return '';
+                const value = (effort as CodexReasoningEffortDescriptor)
+                  .reasoningEffort;
+                return typeof value === 'string' ? value.trim() : '';
+              })
+              .filter((effort) => effort.length > 0),
+          ),
+        ]
       : [];
     const supportsEffort = reasoningEfforts.length > 0;
     const supportsFastMode =
@@ -3371,8 +3784,8 @@ export class CodexRuntimeService
 
   private resolveCodexDefaultModel(
     models: CodexAppServerModel[],
-    previousDefault: string,
-  ): string {
+    previousDefault: string | null,
+  ): string | null {
     const remoteDefault = this.codexModels.find((model) =>
       models.some(
         (source) =>
@@ -3382,13 +3795,10 @@ export class CodexRuntimeService
     if (remoteDefault) {
       return remoteDefault;
     }
-    if (this.codexModels.some((model) => model.id === DEFAULT_CODEX_MODEL)) {
-      return DEFAULT_CODEX_MODEL;
-    }
     if (this.codexModels.some((model) => model.id === previousDefault)) {
       return previousDefault;
     }
-    return this.codexModels[0]?.id ?? DEFAULT_CODEX_MODEL;
+    return this.codexModels[0]?.id ?? null;
   }
 
   private modelId(model: CodexAppServerModel): string {
@@ -3418,6 +3828,7 @@ export class CodexRuntimeService
       pendingPrompts: state.pendingPrompts,
       queuePaused: state.queuePaused,
       liveItems: state.liveItems,
+      dispatchingPrompts: this.queuedDispatches.current(state),
       lastError: state.lastError,
       selectedModel: state.selectedModel,
       reasoningEffort: state.reasoningEffort,
@@ -3431,18 +3842,18 @@ export class CodexRuntimeService
       authStatus: state.authStatus,
       rateLimit: null,
       planUsage: state.planUsage,
-      notifications: [],
+      notifications: state.activityNotifications ?? [],
       hooks: [],
       recentHookEvents: [],
       tasks: [],
       taskLifecycle: [],
       subagents: [
-        ...(this.subagentTrackers.get(sessionId)?.agents.values() ?? []),
+        ...[...(this.subagentTrackers.get(sessionId)?.agents.values() ?? [])].map(agent => ({ ...agent, taskTitle: codexAgentTaskTitle(agent), canStop: isAgentActive(agent) })),
       ],
-      backgroundWork: this.subagentBackgroundWork(sessionId),
+      backgroundWork: this.backgroundWork(sessionId),
       latestToolProgress: null,
       latestToolSummary: null,
-      latestApiRetry: null,
+      latestApiRetry: state.latestApiRetry ?? null,
       latestPluginInstall: null,
       latestMemoryRecall: null,
       latestFilesPersisted: null,
@@ -3489,9 +3900,12 @@ export class CodexRuntimeService
       { type: 'text'; text: string } | { type: 'localImage'; path: string }
     >,
     signal: AbortSignal,
-  ): AsyncGenerator<ThreadEvent> {
+    changeCapture?: TurnChangeCapture,
+    beforeDispatch?: () => void,
+    accepted?: () => void,
+  ): AsyncGenerator<CodexTurnEvent> {
     this.appServer.addRef();
-    const queue: ThreadEvent[] = [];
+    const queue: CodexTurnEvent[] = [];
     let waker: (() => void) | null = null;
     const wake = (): void => {
       if (waker) {
@@ -3500,16 +3914,19 @@ export class CodexRuntimeService
         fn();
       }
     };
-    const push = (event: ThreadEvent): void => {
+    const push = (event: CodexTurnEvent): void => {
       queue.push(event);
       wake();
     };
     // Accumulated agent_message / reasoning text per item id so we can emit
     // SDK-style `item.updated` deltas from the app-server's delta notifications.
     const messageText = new Map<string, string>();
+    const messagePhases = new Map<string, NonNullable<CodexThreadItem['assistantPhase']>>();
     const reasoningText = new Map<string, string>();
     const planText = new Map<string, string>();
-    let contextModel = state.selectedModel ?? this.codexDefaultModel;
+    const completedItems = new Set<string>();
+    let contextModel =
+      state.selectedModel ?? this.codexDefaultModel ?? 'unknown';
     let lastUsage: Usage = {
       input_tokens: 0,
       cached_input_tokens: 0,
@@ -3640,6 +4057,8 @@ export class CodexRuntimeService
                 message: params?.turn?.error?.message ?? 'Codex turn failed',
               },
             });
+          } else if (turnStatus === 'interrupted') {
+            push({ type: 'turn.interrupted' });
           } else {
             push({ type: 'turn.completed', usage: lastUsage });
           }
@@ -3649,18 +4068,50 @@ export class CodexRuntimeService
         }
         case 'item/started': {
           if (!matchesThread(params)) return;
+          if (completedItems.has(params?.item?.id)) return;
+          if (changeCapture && params.item?.type === 'commandExecution')
+            void this.turnChanges?.startCommand(changeCapture, params.item.id, 'Command');
+          if (changeCapture && params.item?.type === 'fileChange')
+            this.turnChanges?.startCodexEdit(changeCapture, params.item.id, params.item.changes);
+          if (state.latestApiRetry) { state.latestApiRetry = null; this.emitRunState(sessionId); }
+          const message = codexUserMessage(params?.item);
+          if (message) { push({ type: 'user.message', message }); return; }
           const item = this.translateAppServerItem(
             params?.item,
             messageText,
             reasoningText,
             planText,
           );
+          if (item?.assistantPhase) messagePhases.set(item.id, item.assistantPhase);
           if (item) push({ type: 'item.started', item });
           return;
         }
         case 'item/completed': {
           if (!matchesThread(params)) return;
+          const id = params?.item?.id;
+          if (typeof id === 'string') {
+            if (completedItems.has(id)) return;
+            completedItems.add(id);
+            const item = params.item;
+            if (changeCapture && item.type === 'fileChange') {
+              if (item.status === 'completed')
+                this.turnChanges?.recordCodexPatch(changeCapture, id, turnIdFilter ?? undefined, item.changes);
+              void this.turnChanges?.endCommand(changeCapture, id, item.status === 'completed' ? 'completed' : 'failed');
+            }
+            if (changeCapture && item.type === 'commandExecution')
+              void this.turnChanges?.endCommand(changeCapture, id,
+                item.interrupted ? 'interrupted'
+                  : item.status === 'declined' || item.status === 'failed' || item.exitCode ? 'failed' : 'completed');
+          }
+          if (params?.item?.type === 'contextCompaction') {
+            state.activityNotifications = [...(state.activityNotifications ?? []).filter(note => note.key !== 'compaction'), {
+              key: 'compaction', text: 'Context compacted', priority: 'low' as const, timestamp: new Date().toISOString(),
+            }].slice(-8);
+            this.emitRunState(sessionId);
+          }
           this.receiveCodexAsyncUserInput(sessionId, params?.item);
+          const message = codexUserMessage(params?.item);
+          if (message) { push({ type: 'user.message', message }); return; }
           const item = this.translateAppServerItem(
             params?.item,
             messageText,
@@ -3669,13 +4120,14 @@ export class CodexRuntimeService
             { isFinal: true },
           );
           if (item) push({ type: 'item.completed', item });
+          if (item?.type === 'agent_message') messagePhases.delete(item.id);
           return;
         }
         case 'item/agentMessage/delta': {
           if (!matchesThread(params)) return;
           const id = params?.itemId;
           const delta = params?.delta;
-          if (typeof id !== 'string' || typeof delta !== 'string') return;
+          if (typeof id !== 'string' || typeof delta !== 'string' || completedItems.has(id)) return;
           const next = (messageText.get(id) ?? '') + delta;
           messageText.set(id, next);
           push({
@@ -3684,7 +4136,8 @@ export class CodexRuntimeService
               id,
               type: 'agent_message',
               text: next,
-            } as ThreadItem,
+              assistantPhase: messagePhases.get(id),
+            },
           });
           return;
         }
@@ -3692,7 +4145,7 @@ export class CodexRuntimeService
           if (!matchesThread(params)) return;
           const id = params?.itemId;
           const delta = params?.delta;
-          if (typeof id !== 'string' || typeof delta !== 'string') return;
+          if (typeof id !== 'string' || typeof delta !== 'string' || completedItems.has(id)) return;
           const next = (planText.get(id) ?? '') + delta;
           planText.set(id, next);
           push({
@@ -3710,9 +4163,11 @@ export class CodexRuntimeService
           //   { error: TurnError, willRetry: boolean, threadId, turnId }
           if (params?.threadId && !matchesThread(params)) return;
           if (params?.willRetry) {
-            // The server will retry the upstream call automatically; don't
-            // terminate the stream — handleCodexEvent's existing logic
-            // doesn't care about retry events here.
+            state.latestApiRetry = { attempt: (state.latestApiRetry?.attempt ?? 0) + 1,
+              maxRetries: 0, retryDelayMs: 0, errorStatus: null,
+              error: typeof params?.error?.message === 'string' ? params.error.message.slice(0, 1000) : 'Upstream request failed',
+              timestamp: new Date().toISOString() };
+            this.emitRunState(sessionId);
             return;
           }
           push({
@@ -3812,6 +4267,16 @@ export class CodexRuntimeService
     signal.addEventListener('abort', onAbort);
 
     try {
+      // Discover before selecting a default: an invented model can be rejected
+      // by ChatGPT accounts even when the CLI itself is working.
+      await this.refreshModelCatalogIfStale(false, true);
+      if (signal.aborted) return;
+      if (!this.codexModels.length) {
+        throw new BadRequestException(
+          this.modelRefreshError ??
+            'Codex models are not available yet. Refresh models and retry.',
+        );
+      }
       await this.appServer.ensureReady();
       if (signal.aborted) return;
       const session = await this.sessionsService.findOne(sessionId);
@@ -3931,7 +4396,8 @@ export class CodexRuntimeService
       // checkout switch. Revalidate ownership immediately before execution.
       await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
       if (signal.aborted || activeRun?.interruptRequested) return;
-      contextModel = state.selectedModel ?? this.codexDefaultModel;
+      contextModel = state.selectedModel ?? this.codexDefaultModel ?? 'unknown';
+      beforeDispatch?.();
       turnStartSent = true;
       const turnStart = await this.appServer.request<CodexTurnStartResult>(
         'turn/start',
@@ -3951,10 +4417,12 @@ export class CodexRuntimeService
         },
       );
       const startedTurnId = turnStart.turn?.id;
-      if (typeof startedTurnId === 'string') {
+      if (typeof startedTurnId === 'string' && startedTurnId) {
+        accepted?.();
         turnIdFilter = startedTurnId;
         if (activeRun) {
           activeRun.turnId = startedTurnId;
+          activeRun.unrestrictedExecution = permissionOptions.sandboxMode === 'danger-full-access';
           activeRun.resolveTurnReady();
         }
       }
@@ -4524,7 +4992,7 @@ export class CodexRuntimeService
     reasoningText: Map<string, string>,
     planText: Map<string, string>,
     opts: { isFinal?: boolean } = {},
-  ): ThreadItem | null {
+  ): CodexThreadItem | null {
     if (!raw || typeof raw !== 'object') return null;
     const id = typeof raw.id === 'string' ? raw.id : null;
     if (!id) return null;
@@ -4575,6 +5043,7 @@ export class CodexRuntimeService
         return {
           id,
           type: 'agent_message',
+          assistantPhase: codexAssistantPhase(raw.phase),
           text: opts.isFinal ? finalText : (messageText.get(id) ?? finalText),
         };
       }
@@ -4612,6 +5081,8 @@ export class CodexRuntimeService
           id,
           type: 'command_execution',
           command: typeof raw.command === 'string' ? raw.command : '',
+          ...(typeof raw.cwd === 'string' ? { cwd: raw.cwd } : {}),
+          ...(typeof raw.interrupted === 'boolean' ? { interrupted: raw.interrupted } : {}),
           ...(commandActions ? { command_actions: commandActions } : {}),
           aggregated_output:
             typeof raw.aggregatedOutput === 'string'
@@ -4628,7 +5099,33 @@ export class CodexRuntimeService
           id,
           type: 'file_change',
           changes: Array.isArray(raw.changes) ? raw.changes : [],
+          // The v1 SDK type only supports terminal statuses. The notification
+          // kind controls when to emit a receipt.
           status: status === 'in_progress' ? 'completed' : status,
+        };
+      case 'imageGeneration':
+        return {
+          id, type: 'mcp_tool_call', server: 'codex', tool: 'image_generation',
+          arguments: {}, result: { content: [{ type: 'text', text: JSON.stringify(codexImageResult(raw)) }], structured_content: null },
+          ...(raw.failure ? { error: { message: 'Image generation failed.' } } : {}),
+          status,
+        };
+      case 'imageView': {
+        const input = codexImageViewInput(raw.path);
+        return {
+          id, type: 'mcp_tool_call', server: 'codex', tool: 'ViewImage',
+          arguments: input,
+          result: { content: [], structured_content: codexImageViewResult(status === 'failed' ? '' : input.path) },
+          ...(status === 'failed' ? { error: { message: 'Couldn’t view the image.' } } : {}),
+          status,
+        };
+      }
+      case 'dynamicToolCall':
+        return {
+          id, type: 'mcp_tool_call', server: typeof raw.namespace === 'string' ? raw.namespace : 'codex',
+          tool: typeof raw.tool === 'string' ? raw.tool : 'Tool', arguments: raw.arguments ?? {},
+          result: { content: [{ type: 'text', text: JSON.stringify(raw.contentItems ?? []) }], structured_content: null },
+          ...(raw.success === false ? { error: { message: 'Tool failed.' } } : {}), status,
         };
       case 'mcpToolCall':
         return {

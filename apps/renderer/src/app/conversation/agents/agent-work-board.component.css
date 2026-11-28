@@ -1,0 +1,136 @@
+:host { display: block; min-inline-size: 0; container-type: inline-size; }
+.board {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: clip;
+}
+ul { margin: 0; padding: 0; list-style: none; }
+.board-head {
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  border-bottom: 1px solid var(--line);
+}
+.agent {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "avatar identity status" ". activity actions";
+  align-items: center;
+  column-gap: var(--space-2);
+  min-inline-size: 0;
+  padding: var(--space-2) var(--space-3);
+  transition: background-color var(--dur-base) var(--ease-out);
+}
+.agent[data-state="waiting"] {
+  background-color: var(--attention-soft);
+  border-inline-start: 2px solid var(--attention);
+  padding-inline-start: calc(var(--space-3) - 2px);
+}
+.agent + .agent { border-top: 1px solid var(--line); }
+.avatar { display: inline-grid; grid-area: avatar; }
+.avatar ex-agent-mark { --agent-mark-size: 28px; }
+.grouped .avatar ex-agent-mark { --agent-mark-size: 24px; }
+.identity {
+  grid-area: identity;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+.agent-title {
+  color: var(--ink);
+  font: 600 var(--text-ui-size)/var(--text-ui-line) var(--font-sans);
+}
+.model {
+  color: var(--ink-muted);
+  flex: none;
+  max-inline-size: min(24ch, 42%);
+  font: var(--text-mono-meta-size)/var(--text-mono-meta-line) var(--font-mono);
+}
+.agent-title, .model, .activity, .activity ex-ease-swap {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status, .status-label { display: inline-flex; align-items: center; gap: var(--space-1); }
+.status {
+  grid-area: status;
+  justify-self: end;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+.status-label ex-status-glyph { flex: none; }
+.status[data-tone="running"] .status-label { color: var(--running); }
+.status[data-tone="attention"] .status-label { color: var(--attention); font-weight: 600; }
+.status[data-tone="failed"] .status-label { color: var(--danger); }
+.elapsed {
+  white-space: nowrap;
+  font: var(--text-mono-meta-size)/var(--text-mono-meta-line) var(--font-mono);
+}
+.elapsed ex-ticker { min-inline-size: 2ch; justify-content: end; }
+.activity {
+  grid-area: activity;
+  color: var(--ink-muted);
+  font-size: var(--text-ui-size);
+  line-height: var(--text-ui-line);
+}
+.activity:last-child { grid-column: 2 / -1; }
+.activity ex-ease-swap { display: inline-block; max-inline-size: 100%; vertical-align: top; }
+.activity.full { white-space: normal; overflow-wrap: anywhere; }
+.activity.full ex-ease-swap { white-space: normal; }
+.agent[data-state="waiting"] .activity { color: var(--ink); }
+.card-actions {
+  grid-area: actions;
+  display: flex;
+  justify-content: end;
+  align-items: center;
+  gap: var(--space-1);
+}
+.card-actions .primary-action { color: var(--accent); }
+.card-actions .primary-action:not([aria-disabled="true"]):hover { background: var(--accent-soft); }
+.card-actions .primary-action.decision { color: var(--attention); border-color: var(--attention); }
+.card-actions .primary-action.decision:not([aria-disabled="true"]):hover { background: var(--attention-soft); }
+.card-actions .stop { padding-inline: var(--space-1); min-inline-size: var(--space-6); color: var(--ink-muted); }
+.card-actions .stop:not([aria-disabled="true"]):hover { color: var(--danger); background: var(--danger-soft); }
+/* An action that becomes unavailable while focused stays in place until blur. */
+.stop.unavailable:not(:focus) { display: none; }
+.card-actions button[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+.card-actions button[aria-disabled="true"]:active { transform: none; }
+.wait-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  color: var(--ink-muted);
+  border-top: 1px solid var(--line);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-caption-size);
+}
+.wait-line ex-icon { flex: none; align-self: start; }
+.wait-line ex-ease-swap { flex: 1; min-inline-size: 0; white-space: normal; overflow-wrap: anywhere; }
+.board-head-in { animation: agent-work-arrive var(--dur-base) var(--ease-out) both; }
+@keyframes agent-work-arrive { from { opacity: 0; transform: translateY(4px); } }
+@container (max-width: 420px) {
+  .agent {
+    grid-template-areas: "avatar identity identity" ". activity activity" ". status actions";
+    row-gap: var(--space-1);
+  }
+  .status { justify-self: start; }
+  .model {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    clip-path: inset(50%);
+  }
+}
+@container (max-width: 320px) {
+  .agent { padding-inline: var(--space-2); }
+  .agent[data-state="waiting"] { padding-inline-start: calc(var(--space-2) - 2px); }
+  .status { flex-direction: column; align-items: start; gap: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-head-in { animation: none; }
+  .agent { transition: none; }
+}

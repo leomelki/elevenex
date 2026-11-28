@@ -4,6 +4,7 @@ import { ClaudeMcpService } from '../claude-runtime/claude-mcp.service.js';
 import { ClaudeRuntimeService } from '../claude-runtime/claude-runtime.service.js';
 import type {
   AgentImageInput,
+  AgentPromptOptions,
   AgentForkConversationRequest,
   AgentPermissionMode,
   AgentRuntimeEvent,
@@ -35,6 +36,7 @@ export class ClaudeAgentRuntimeProvider
       multimodalPrompts: true,
       terminalFallback: true,
       rewindConversation: true,
+      nonInterruptingSteering: true,
     },
   };
 
@@ -55,8 +57,12 @@ export class ClaudeAgentRuntimeProvider
     void this.runtimeService.prewarmSession(sessionId);
   }
 
-  getHistory(sessionId: number) {
-    return this.runtimeService.getHistory(sessionId);
+  getHistory(sessionId: number, options?: { changeDetails?: 'summary' }) {
+    return this.runtimeService.getHistory(sessionId, options);
+  }
+
+  nativeAppLaunchPolicy(sessionId: number) {
+    return this.runtimeService.nativeAppLaunchPolicy(sessionId);
   }
 
   getRuntimeState(sessionId: number) {
@@ -74,7 +80,7 @@ export class ClaudeAgentRuntimeProvider
   getSubagentHistory(
     sessionId: number,
     agentId: string,
-    options?: { before?: string },
+    options?: { before?: string; through?: string },
   ) {
     return this.runtimeService.getSubagentHistory(sessionId, agentId, options);
   }
@@ -159,7 +165,7 @@ export class ClaudeAgentRuntimeProvider
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
-    options?: { human?: boolean; queue?: boolean },
+    options?: AgentPromptOptions,
   ) {
     return this.runtimeService.submitPrompt(
       sessionId,
@@ -197,12 +203,14 @@ export class ClaudeAgentRuntimeProvider
     requestId: string,
     action: 'accept' | 'decline' | 'cancel' = 'accept',
     content?: Record<string, string | number | boolean | string[]>,
+    options?: { requirePending: true },
   ) {
     return this.runtimeService.answerUserInput(
       sessionId,
       requestId,
       action,
       content,
+      options,
     );
   }
 

@@ -77,6 +77,7 @@ export interface CodexLoginStartResult {
 }
 
 export interface CodexActiveRunState {
+  unrestrictedExecution?: boolean;
   threadId: string | null;
   /** The active app-server turnId; needed for `turn/interrupt` and `turn/steer`. */
   turnId: string | null;
@@ -105,6 +106,9 @@ export interface CodexActiveRunState {
 }
 
 export interface CodexRuntimeState {
+  persistedSelectionLoaded?: boolean;
+  latestApiRetry?: import('../claude-runtime/claude-runtime.types.js').ClaudeApiRetry | null;
+  activityNotifications?: import('../claude-runtime/claude-runtime.types.js').ClaudeNotification[];
   codexSessionId: string | null;
   // Cached so follow-up prompts don't re-read the session row from SQLite on
   // the critical path. Populated on the first prompt of the session.
@@ -124,10 +128,16 @@ export interface CodexRuntimeState {
   pendingUserInputRequest: ClaudeUserInputRequest | null;
   /** Native async questions outlive the turn that emitted them. */
   asyncUserInputRequests: Map<string, ClaudeUserInputRequest>;
+  /** Submitted question answers remain tool receipts, not ordinary user turns. */
+  asyncAnswerPrompts: Set<string>;
   lastError: string | null;
   selectedModel: string | null;
+  /** Distinguish a user pin from an automatically discovered default. */
+  modelExplicitlySelected?: boolean;
   reasoningEffort: string | null;
   fastMode: boolean;
+  /** Apply a preset only after discovery confirms its model supports Fast. */
+  pendingFastModeDefault?: boolean;
   selectedPermissionMode: CodexPermissionMode | null;
   planMode: boolean;
   availableModels: ClaudeModelOption[];

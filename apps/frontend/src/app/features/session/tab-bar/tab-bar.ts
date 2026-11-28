@@ -1,7 +1,7 @@
 import { Component, output, input, inject, computed, signal, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideFolderTree, lucideTerminal, lucideSquareTerminal, lucideTrash2, lucideMessageSquare, lucideMessageCircleDashed, lucideNotebookPen, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideCheck, lucideArchive, lucideArchiveRestore, lucideClipboardList, lucidePanelRight, lucideSparkles } from '@ng-icons/lucide';
+import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideTerminal, lucideSquareTerminal, lucideTrash2, lucideMessageSquare, lucideMessageCircleDashed, lucideNotebookPen, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideCheck, lucideArchive, lucideArchiveRestore, lucideClipboardList, lucidePanelRight, lucideSparkles } from '@ng-icons/lucide';
 import { Tab } from '../tab-service';
 import { TabColorService } from '../../../shared/services/tab-color.service';
 import { ProductivityStateService } from '@/features/productivity/productivity-state.service';
@@ -32,7 +32,6 @@ import { SessionArchiveUiService } from '@/shared/services/session-archive-ui.se
       lucideCircleDashed,
       lucideFileText,
       lucideCheckSquare,
-      lucideFolderTree,
       lucideTerminal,
       lucideSquareTerminal,
       lucideTrash2,
@@ -79,8 +78,6 @@ export class TabBar {
       tab.branchName,
     ].join(':');
   });
-
-  showFiles = input(false);
   showBrowser = input(false);
   showChanges = input(false);
   showTerminal = input(false);
@@ -111,7 +108,6 @@ export class TabBar {
   closeTabsToLeft = output<number>();
   toggleScratchpad = output<void>();
   toggleTodos = output<void>();
-  toggleFiles = output<void>();
   toggleBrowser = output<void>();
   toggleChanges = output<void>();
   toggleTerminal = output<void>();

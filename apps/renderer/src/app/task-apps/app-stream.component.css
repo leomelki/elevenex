@@ -1,0 +1,24 @@
+:host { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; }
+/* Same surface as the selected app tab, so the tab and its picture read as one sheet. */
+.viewport { flex: 1; display: flex; min-height: 0; min-width: 0; overflow: auto; background: var(--surface); container-type: size; }
+.viewport:focus-visible { outline: none; }
+/* Paint above the canvas: an inset shadow on the viewport is covered by the video. */
+.frame { position: absolute; inset: 0; box-shadow: inset 0 0 0 2px var(--accent); opacity: 0; pointer-events: none; transition: opacity var(--dur-fast) var(--ease-out); }
+.viewport.controlling ~ .frame, .viewport:focus-visible ~ .frame { opacity: 1; }
+canvas { display: block; flex: none; margin: auto; width: min(var(--app-display-width, 1px), 100cqw, calc(100cqh * var(--app-display-ratio, 1))); height: auto; aspect-ratio: var(--app-display-ratio, 1); touch-action: none; box-shadow: 0 0 0 1px var(--line); }
+canvas[hidden] { display: none; }
+.actual canvas { width: var(--app-display-width, 1px); }
+.message { display: grid; justify-items: center; gap: var(--space-2); max-width: 36ch; margin: auto; padding: var(--space-4); color: var(--ink-muted); font-size: var(--text-caption-size); text-align: center; overflow-wrap: anywhere; }
+.message strong { color: var(--ink); font-size: var(--text-ui-size); font-weight: var(--text-title-weight); }
+.message button { margin-top: var(--space-1); }
+.diagnostic summary { cursor: pointer; }
+.diagnostic summary:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
+.diagnostic p { margin: var(--space-1) 0 0; font-family: var(--font-mono); }
+.keyboard { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; padding: 0; pointer-events: none; }
+.hint { position: absolute; top: var(--space-2); right: var(--space-2); display: inline-flex; align-items: center; gap: var(--space-1); max-width: calc(100% - var(--space-4)); padding: 2px var(--space-2) 2px 3px; border-radius: var(--radius-full); color: var(--on-accent); background: var(--accent); font-size: var(--text-overline-size); font-weight: var(--text-overline-weight); white-space: nowrap; pointer-events: none; animation: hint-in var(--dur-base) var(--ease-out); --kbd-background: color-mix(in oklab, var(--on-accent) 18%, transparent); --kbd-border: transparent; --kbd-color: var(--on-accent); }
+/* The idle hint is for keyboard users: it shows only while the surface has keyboard focus. */
+.hint.idle { opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); animation: none; }
+.viewport:focus-visible ~ .hint.idle { opacity: 1; }
+.hint.error { display: grid; gap: 2px; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); color: var(--surface); background: var(--danger); white-space: normal; overflow-wrap: anywhere; }
+.hint .next { opacity: 0.9; }
+@keyframes hint-in { from { opacity: 0; translate: 0 -4px; } }

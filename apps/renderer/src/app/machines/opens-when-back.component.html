@@ -1,0 +1,6 @@
+<section role="status">
+  <span class="machine-icon"><ex-icon name="server" [size]="22" /></span>
+  <h2>Opens when {{ machine() }} is back</h2>
+  <p>{{ what() }} needs the machine to open. Your loaded work stays available.</p>
+  <div><button exButton variant="secondary" (click)="tryRequested.emit()">Try now</button>@if (backLabel()) { <button exButton variant="ghost" (click)="backRequested.emit()">{{ backLabel() }}</button> }</div>
+</section>

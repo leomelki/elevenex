@@ -1,0 +1,72 @@
+<section exAutoHeight [class.resolved]="status() !== 'pending'">
+  <div>
+    @if (status() === "pending") {
+      <header>
+        <ex-icon name="shield" [size]="16" /><strong>{{ title() }}</strong>
+      </header>
+      @if (reason()) {
+        <p>{{ reason() }}</p>
+      }
+      @if (!confirmation() || target() || where()) {
+        <div class="target">
+          <code>{{ target() }}</code>
+          @if (where()) {
+            <span>{{ where() }}</span>
+          }
+        </div>
+      }
+      <ng-content />
+      <footer [attr.aria-busy]="responding() || null">
+        <button
+          exButton
+          variant="primary"
+          size="sm"
+          [disabled]="disabled() || responding()"
+          (click)="decide('approved')"
+        >
+          {{ confirmation() ? "Allow" : "Approve" }}
+          @if (!confirmation()) { <ex-kbd>↵</ex-kbd> }
+        </button>
+        @if (canRemember()) {
+          <button
+            exButton
+            variant="secondary"
+            size="sm"
+            [disabled]="disabled() || responding()"
+            (click)="decide('always')"
+          >
+            Always allow <ex-kbd>⌥↵</ex-kbd>
+          </button>
+        }
+        <button
+          exButton
+          variant="ghost"
+          size="sm"
+          [disabled]="disabled() || responding()"
+          (click)="decide('denied')"
+        >
+          {{ confirmation() ? "Decline" : "Deny" }} <ex-kbd>Esc</ex-kbd>
+        </button>
+      </footer>
+    } @else {
+      <div class="summary">
+        <ex-icon
+          [name]="status() === 'denied' ? 'x' : 'check'"
+          [size]="14"
+        /><span>{{
+          status() === "denied"
+            ? "Denied"
+            : status() === "always"
+              ? "Always allowed"
+              : "Approved"
+        }}</span
+        ><code>{{ target() }}</code>
+        @if (undoable()) {
+          <button exButton variant="ghost" size="sm" (click)="undo.emit()">
+            Undo
+          </button>
+        }
+      </div>
+    }
+  </div>
+</section>

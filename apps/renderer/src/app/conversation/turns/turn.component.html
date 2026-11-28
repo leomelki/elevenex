@@ -1,0 +1,181 @@
+<ex-reply-mark
+  class="mark"
+  [author]="author()"
+  [time]="time()"
+  [mark]="mark()"
+  [harness]="harness()"
+/>
+<div class="body">
+  <ex-fold #workRegion class="work-region" [open]="showWork()">
+    @if (workHeader(); as header) {
+      <div class="work-row">
+        <button
+          #workButton
+          type="button"
+          class="work"
+          [disabled]="!showWork()"
+          [attr.aria-expanded]="expanded()"
+          [attr.aria-controls]="workId"
+          (click)="toggleWork()"
+          (pointerdown)="pressWork($event)"
+          (keydown)="pressWork($event)"
+          (pointerenter)="trackWorkButton($event, true)"
+          (pointerleave)="trackWorkButton($event, false)"
+          (focus)="focusWork()"
+          (blur)="workFocused.set(false)"
+        >
+          <span class="work-label" [class.failed]="status() === 'failed'"
+            >{{ header.verb
+            }}@if (header.time) {<span class="work-time">
+                {{ header.time }}</span
+              >}</span
+          >
+          @if (facts().length) {
+            <span #factsRegion class="facts" [class.clipped]="factsClipped()">
+              @for (fact of facts(); track fact.kind; let i = $index) {
+                <span
+                  class="work-item fact"
+                  [class.failure]="fact.tone === 'danger'"
+                  [class.ok]="fact.tone === 'ok'"
+                  [style.--fact-index]="i"
+                >
+                  <ex-icon [name]="fact.icon" [size]="12" />
+                  {{ fact.label }}
+                  @if (fact.diff; as diff) {
+                    <span class="diff">
+                      @if (diff.add) {
+                        <span class="add">+{{ diff.add }}</span>
+                      }
+                      @if (diff.del) {
+                        <span class="del">−{{ diff.del }}</span>
+                      }
+                    </span>
+                  }
+                </span>
+              }
+            </span>
+          }
+          <span class="work-item chevron" [style.--fact-index]="facts().length">
+            <ex-icon name="chevron-right" [size]="12" />
+          </span>
+        </button>
+        @if (header.live && stoppable()) {
+          <button
+            exButton
+            variant="secondary"
+            size="sm"
+            [disabled]="!showWork()"
+            (click)="stop.emit()"
+          >
+            <ex-icon name="stop" [size]="12" />Stop
+          </button>
+        }
+      </div>
+    }
+  </ex-fold>
+  @if (deferredWork(); as work) {
+    <ex-turn-work-panel [error]="work.error" [expanded]="expanded()" (requested)="requestWork($event)" />
+  }
+  <ng-template #answerContent><ng-content /></ng-template>
+  <ex-work-timeline
+    [attr.id]="workId"
+    [attr.aria-busy]="deferredWork()?.busy || null"
+    [revealWork]="!!deferredWork()"
+    [workReady]="deferredWork()?.ready ?? true"
+    [steps]="timelineSteps()"
+    [live]="status() === 'live'"
+    [expanded]="expanded()"
+    [maxVisible]="maxVisible()"
+    [answer]="answer()"
+    [answerId]="answerId()"
+    [answerBeforeStepId]="answerBeforeStepId()"
+    [answerTemplate]="answerContent"
+    [streaming]="streaming()"
+    [resolve]="resolve()"
+    [inspectTool]="inspectTool()"
+    [toolImages]="toolImages()"
+    [copiedCode]="copiedCode()"
+    [agentNavigationDisabled]="agentNavigationDisabled()"
+    (agentRequested)="agentRequested.emit($event)"
+    (inspectionChanged)="inspecting.set($event)"
+    (openFile)="openFile.emit($event); fileLink.emit($event)"
+    (openLink)="openLink.emit($event)"
+    (openPage)="openPage.emit($event)"
+    (copyCode)="copyCode.emit($event)"
+    (contentRequested)="contentRequested.emit($event)"
+    (layoutChanging)="workLayoutChanging.emit($event)"
+  />
+  <ex-fold [open]="status() === 'live' && !!reach()"
+    ><div class="reach-line" role="status">
+      <b>Out of reach since {{ reachTime() }}.</b> It may still be running on
+      {{ reach()?.machine }}; what it did shows up when it’s back.
+    </div></ex-fold
+  >
+  @if (status() === "failed" || status() === "stopped") {
+    <div class="error" [class.failed]="status() === 'failed'">
+      <span>{{
+        error() ||
+          (status() === "failed"
+            ? "The agent could not finish."
+            : "The agent stopped.")
+      }}</span>
+      @if (retryable()) {
+        <button exButton variant="secondary" size="sm" (click)="retry.emit()">
+          {{ status() === "failed" ? "Retry" : "Continue" }}
+        </button>
+      }
+    </div>
+  }
+  @for (receipt of returnedTo(); track receipt.itemId + ':' + receipt.recipient.sessionId) {
+    <div class="handoff">
+      <ex-icon name="check" [size]="13" />
+      <span class="handoff-text">Sent to <strong>{{ agentTitle(receipt.recipient) }}</strong>
+        <time [attr.datetime]="receipt.at">{{ receipt.at | date: 'shortTime' }}</time></span>
+      <button exButton variant="ghost" size="sm" type="button" [attr.aria-label]="'Go to ' + agentTitle(receipt.recipient)"
+        [disabled]="agentNavigationDisabled()" (click)="followHandoff(receipt, $event)">
+        Go to parent <ex-icon name="forward" [size]="12" />
+      </button>
+    </div>
+  }
+  <ex-fold [open]="status() !== 'live'"
+    ><footer>
+      @if (agentCards().length) {
+        <div class="agent-outcomes" aria-label="Agents in this turn">
+          @for (card of agentCards(); track card.id) {
+            @let state = agentState(card.status);
+            @let target = card.target;
+            @if (target) {
+              <button exButton variant="ghost" size="sm" type="button" class="agent-chip"
+                [attr.aria-label]="card.title + ' · ' + state.label"
+                [exTooltip]="card.title + ' · ' + state.label"
+                [disabled]="agentNavigationDisabled() && target.kind === 'session'"
+                [attr.data-agent-session]="target.kind === 'session' ? target.session.sessionId : null"
+                (click)="openAgent(card, $event)">
+                <ex-status-glyph [status]="state.glyph" [size]="12" />
+                <ex-agent-mark [harness]="card.selection?.provider" mark="A" />
+                <span>{{ card.title }}</span>
+              </button>
+            } @else {
+              <span class="agent-chip" [attr.aria-label]="card.title + ' · ' + state.label">
+                <ex-status-glyph [status]="state.glyph" [size]="12" />
+                <span>{{ card.title }}</span>
+              </span>
+            }
+          }
+        </div>
+      }
+      <ex-outcome-bar
+        [files]="files()"
+        [filesTotal]="filesTotal()"
+        action=""
+        (openFile)="openFile.emit($event); reviewFile.emit($event)"
+        (review)="review.emit()"
+      /><ex-turn-acts [actions]="actions()" (action)="action.emit($event)" />
+      @if (files().length || reviewAvailable()) {
+        <button exButton variant="secondary" size="sm" (click)="review.emit()">
+          Review
+        </button>
+      }
+    </footer></ex-fold
+  >
+</div>

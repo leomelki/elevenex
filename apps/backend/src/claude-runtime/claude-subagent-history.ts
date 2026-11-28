@@ -14,6 +14,7 @@ export interface ClaudeChildRecord {
 interface CachedRecord {
   record: ClaudeChildRecord;
   offset: number;
+  end: number;
   bytes: number;
 }
 interface OlderPage {
@@ -28,7 +29,7 @@ interface Entry {
   lineOffset: number;
   decoder: StringDecoder;
   records: CachedRecord[];
-  cursors: Map<string, number>;
+  cursors: Map<string, { offset: number; end: number }>;
   olderInFlight: Map<string, Promise<OlderPage>>;
   bytes: number;
   trimmed: boolean;
@@ -38,7 +39,7 @@ const MAX_RECORDS = 4000;
 const MAX_ENTRY_BYTES = 4 * 1024 * 1024;
 const MAX_CACHE_BYTES = 16 * 1024 * 1024;
 const READ_SIZE = 64 * 1024;
-const MAX_CURSORS = 64;
+const MAX_CURSORS = PAGE_SIZE * 3;
 
 function parseRecord(line: string): ClaudeChildRecord | null {
   try {
@@ -63,6 +64,7 @@ export class ClaudeChildTranscriptStore {
   async read(
     path: string,
     before?: string,
+    inclusive = false,
   ): Promise<{
     records: ClaudeChildRecord[];
     hasEarlier: boolean;
@@ -84,33 +86,34 @@ export class ClaudeChildTranscriptStore {
     let index = before
       ? records.findIndex((item) => item.record.uuid === before)
       : records.length;
+    if (before && inclusive && index >= 0) index++;
     if (before && (index < 0 || (trimmed && index < PAGE_SIZE))) {
       // Read across the retained boundary, including when the cursor is the
       // first retained record. Coalesce clients requesting the same page.
-      let older = entry.olderInFlight.get(before);
+      const key = (inclusive ? 'through:' : 'before:') + before;
+      let older = entry.olderInFlight.get(key);
       if (!older) {
-        older = this.readBefore(path, before, entry);
-        entry.olderInFlight.set(before, older);
+        older = this.readBefore(path, before, entry, inclusive);
+        entry.olderInFlight.set(key, older);
       }
       let page: OlderPage;
       try {
         page = await older;
       } finally {
-        if (entry.olderInFlight.get(before) === older)
-          entry.olderInFlight.delete(before);
+        if (entry.olderInFlight.get(key) === older)
+          entry.olderInFlight.delete(key);
       }
       records = page.records;
       trimmed = page.hasEarlier;
       index = records.length;
     }
     const page = records.slice(Math.max(0, index - PAGE_SIZE), index);
-    const first = page[0];
-    if (first) {
-      entry.cursors.delete(first.record.uuid!);
-      entry.cursors.set(first.record.uuid!, first.offset);
-      while (entry.cursors.size > MAX_CURSORS)
-        entry.cursors.delete(entry.cursors.keys().next().value!);
+    for (const { record, offset, end } of page) {
+      entry.cursors.delete(record.uuid!);
+      entry.cursors.set(record.uuid!, { offset, end });
     }
+    while (entry.cursors.size > MAX_CURSORS)
+      entry.cursors.delete(entry.cursors.keys().next().value!);
     return {
       records: structuredClone(page.map((item) => item.record)),
       hasEarlier: index > PAGE_SIZE || trimmed,
@@ -191,7 +194,7 @@ export class ClaudeChildTranscriptStore {
       const record = parseRecord(line);
       if (record) {
         const bytes = line.length * 2;
-        entry.records.push({ record, offset, bytes });
+        entry.records.push({ record, offset, end: entry.lineOffset, bytes });
         entry.bytes += bytes;
       }
     }
@@ -217,6 +220,7 @@ export class ClaudeChildTranscriptStore {
     path: string,
     before: string,
     entry: Entry,
+    inclusive: boolean,
   ): Promise<OlderPage> {
     const handle = await open(path, 'r');
     try {
@@ -225,10 +229,10 @@ export class ClaudeChildTranscriptStore {
         `${file.dev}:${file.ino}` === entry.identity &&
         file.size >= entry.offset &&
         (file.size > entry.offset || file.mtimeMs === entry.mtime);
-      const cursor = sameFile
-        ? (entry.records.find((item) => item.record.uuid === before)?.offset ??
-          entry.cursors.get(before))
+      const bounds = sameFile
+        ? (entry.records.find(item => item.record.uuid === before) ?? entry.cursors.get(before))
         : undefined;
+      const cursor = inclusive ? bounds?.end : bounds?.offset;
       let position =
         cursor ?? (sameFile ? Math.min(entry.offset, file.size) : file.size);
       let found = cursor !== undefined;
@@ -247,9 +251,12 @@ export class ClaudeChildTranscriptStore {
         const record = parseRecord(text);
         if (!record) return;
         if (!found) {
-          if (record.uuid === before) found = true;
-        } else if (text.length * 2 <= MAX_ENTRY_BYTES) {
-          const item = { record, offset, bytes: text.length * 2 };
+          if (record.uuid !== before) return;
+          found = true;
+          if (!inclusive) return;
+        }
+        if (text.length * 2 <= MAX_ENTRY_BYTES) {
+          const item = { record, offset, end: offset + line.length + 1, bytes: text.length * 2 };
           records.push(item);
           bytes += item.bytes;
         }

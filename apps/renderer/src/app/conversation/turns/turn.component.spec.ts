@@ -1,0 +1,567 @@
+import { Component, signal } from "@angular/core";
+import { TestBed } from "@angular/core/testing";
+import { describe, expect, it, vi } from "vitest";
+import type { TurnStatus, WorkStep } from "../conversation.models";
+import { TurnComponent, WORK_PENDING_CUE_MS } from "./turn.component";
+
+@Component({
+  imports: [TurnComponent],
+  template: `<ex-turn [status]="status()" [steps]="steps()" [duration]="12">
+    <p>Hi. How can I help?</p>
+  </ex-turn>`,
+})
+class ReplyHostComponent {
+  readonly status = signal<TurnStatus>("done");
+  readonly steps = signal<readonly WorkStep[]>([]);
+}
+
+describe("turn work disclosure", () => {
+  it('keeps a dwell across the reply and Worked, and retains independent keyboard focus', () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(TurnComponent);
+    try {
+      fixture.componentRef.setInput('deferredWork', { counts: {}, failures: 0, busy: false, ready: false });
+      fixture.componentRef.setInput('answer', 'Final reply');
+      fixture.detectChanges();
+      const host: HTMLElement = fixture.nativeElement;
+      const button = host.querySelector<HTMLButtonElement>('button.work')!;
+      const hint = vi.fn(), ended = vi.fn();
+      fixture.componentInstance.workHint.subscribe(hint);
+      fixture.componentInstance.workHintEnded.subscribe(ended);
+
+      host.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'touch' }));
+      fixture.detectChanges();
+      vi.advanceTimersByTime(250);
+      expect(hint).not.toHaveBeenCalled();
+
+      host.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }));
+      fixture.detectChanges();
+      vi.advanceTimersByTime(150);
+      // Resting on Worked itself is stronger intent than the reply's dwell.
+      button.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }));
+      fixture.detectChanges();
+      vi.advanceTimersByTime(59);
+      expect(hint).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(hint).toHaveBeenCalledOnce();
+
+      vi.spyOn(button, 'matches').mockImplementation(selector => selector === ':focus-visible');
+      button.dispatchEvent(new FocusEvent('focus'));
+      host.dispatchEvent(Object.assign(new Event('pointerleave'), { pointerType: 'mouse' }));
+      fixture.detectChanges();
+      expect(ended).not.toHaveBeenCalled();
+      button.dispatchEvent(new FocusEvent('blur'));
+      fixture.detectChanges();
+      expect(ended).toHaveBeenCalledOnce();
+    } finally {
+      fixture.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts warming on a mouse or keyboard press, but not on a touch press that may scroll', () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(TurnComponent);
+    try {
+      fixture.componentRef.setInput('deferredWork', { counts: {}, failures: 0, busy: false, ready: false });
+      fixture.detectChanges();
+      const host: HTMLElement = fixture.nativeElement;
+      const button = host.querySelector<HTMLButtonElement>('button.work')!;
+      const hint = vi.fn(), ended = vi.fn();
+      fixture.componentInstance.workHint.subscribe(hint);
+      fixture.componentInstance.workHintEnded.subscribe(ended);
+      const press = (pointerType: string) =>
+        button.dispatchEvent(Object.assign(new Event('pointerdown'), { pointerType, button: 0 }));
+
+      press('touch');
+      fixture.detectChanges();
+      expect(hint).not.toHaveBeenCalled();
+      press('mouse');
+      fixture.detectChanges();
+      expect(hint).toHaveBeenCalledOnce();
+      button.click();
+      fixture.detectChanges();
+      expect(ended).toHaveBeenCalledOnce();
+      button.click();
+      fixture.detectChanges();
+
+      button.dispatchEvent(new KeyboardEvent('keydown', { key: ' ' }));
+      fixture.detectChanges();
+      expect(hint).toHaveBeenCalledTimes(2);
+    } finally {
+      fixture.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it('cues a pending read only after an instant-feeling interval', () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(TurnComponent);
+    try {
+      const work = { counts: {}, failures: 0, busy: false, ready: false };
+      fixture.componentRef.setInput('deferredWork', work);
+      fixture.detectChanges();
+      const host: HTMLElement = fixture.nativeElement;
+      host.querySelector<HTMLButtonElement>('button.work')!.click();
+      fixture.componentRef.setInput('deferredWork', { ...work, busy: true });
+      fixture.detectChanges();
+      vi.advanceTimersByTime(WORK_PENDING_CUE_MS - 1);
+      fixture.detectChanges();
+      expect(host.classList).not.toContain('pending');
+      vi.advanceTimersByTime(1);
+      fixture.detectChanges();
+      expect(host.classList).toContain('pending');
+      fixture.componentRef.setInput('deferredWork', { ...work, ready: true });
+      fixture.detectChanges();
+      expect(host.classList).not.toContain('pending');
+
+      // A read answering within the interval never shows the cue.
+      fixture.componentRef.setInput('deferredWork', { ...work, busy: true });
+      fixture.detectChanges();
+      vi.advanceTimersByTime(WORK_PENDING_CUE_MS - 20);
+      fixture.componentRef.setInput('deferredWork', { ...work, ready: true });
+      fixture.detectChanges();
+      vi.advanceTimersByTime(100);
+      fixture.detectChanges();
+      expect(host.classList).not.toContain('pending');
+    } finally {
+      fixture.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it('warms a turn that becomes deferred while the mouse is already over its reply', () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(TurnComponent);
+    try {
+      fixture.componentRef.setInput('answer', 'Final reply');
+      fixture.detectChanges();
+      const hint = vi.fn();
+      fixture.componentInstance.workHint.subscribe(hint);
+      fixture.nativeElement.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }));
+      fixture.detectChanges();
+      vi.advanceTimersByTime(250);
+      expect(hint).not.toHaveBeenCalled();
+
+      fixture.componentRef.setInput('deferredWork', { counts: {}, failures: 0, busy: false, ready: false });
+      fixture.detectChanges();
+      vi.advanceTimersByTime(220);
+      expect(hint).toHaveBeenCalledOnce();
+    } finally {
+      fixture.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it('requires a fresh interaction to warm work again after an explicit close', () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(TurnComponent);
+    try {
+      fixture.componentRef.setInput('deferredWork', { counts: {}, failures: 0, busy: false, ready: false });
+      fixture.detectChanges();
+      const host: HTMLElement = fixture.nativeElement;
+      const button = host.querySelector<HTMLButtonElement>('button.work')!;
+      const hint = vi.fn();
+      fixture.componentInstance.workHint.subscribe(hint);
+      const pointer = (type: string) => host.dispatchEvent(Object.assign(new Event(type), { pointerType: 'mouse' }));
+
+      pointer('pointerenter');
+      fixture.detectChanges();
+      button.click();
+      fixture.detectChanges();
+      button.click();
+      fixture.detectChanges();
+      vi.advanceTimersByTime(250);
+      expect(hint).not.toHaveBeenCalled();
+
+      pointer('pointerleave');
+      pointer('pointerenter');
+      fixture.detectChanges();
+      vi.advanceTimersByTime(220);
+      expect(hint).toHaveBeenCalledOnce();
+    } finally {
+      fixture.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it("animates a fresh turn once, retaining entry through receipt and streaming updates", () => {
+    const fixture = TestBed.createComponent(TurnComponent);
+    fixture.componentRef.setInput("isNew", true);
+    fixture.componentRef.setInput("status", "live");
+    fixture.detectChanges();
+    const turn: HTMLElement = fixture.nativeElement;
+    const row = turn.querySelector(".work-row");
+    expect(turn.classList.contains("arriving")).toBe(true);
+    expect(row?.textContent).toContain("Working");
+
+    fixture.componentRef.setInput("isNew", false);
+    fixture.componentRef.setInput("elapsed", 1);
+    fixture.detectChanges();
+    expect(turn.classList.contains("arriving")).toBe(true);
+    expect(turn.querySelector(".work-row")).toBe(row);
+    turn.querySelector(".mark")?.dispatchEvent(new Event("animationend", { bubbles: true }));
+    fixture.detectChanges();
+    expect(turn.classList.contains("arriving")).toBe(true);
+
+    turn.dispatchEvent(new Event("animationend"));
+    fixture.detectChanges();
+    expect(turn.classList.contains("arriving")).toBe(false);
+    fixture.componentRef.setInput("isNew", true);
+    fixture.componentRef.setInput("elapsed", 2);
+    fixture.detectChanges();
+    expect(turn.classList.contains("arriving")).toBe(false);
+    fixture.destroy();
+  });
+
+  it("keeps history still and reveals entering work immediately for keyboard interaction", () => {
+    const fixture = TestBed.createComponent(TurnComponent);
+    fixture.componentRef.setInput("status", "live");
+    fixture.detectChanges();
+    const turn: HTMLElement = fixture.nativeElement;
+    expect(turn.classList.contains("arriving")).toBe(false);
+    fixture.destroy();
+
+    const fresh = TestBed.createComponent(TurnComponent);
+    fresh.componentRef.setInput("status", "live");
+    fresh.componentRef.setInput("isNew", true);
+    fresh.detectChanges();
+    const element: HTMLElement = fresh.nativeElement;
+    const stopped = vi.fn();
+    fresh.componentInstance.stop.subscribe(stopped);
+    const stop = element.querySelector<HTMLButtonElement>(".work-row button[exButton]")!;
+    stop.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    fresh.detectChanges();
+    expect(element.classList.contains("arriving")).toBe(false);
+    stop.click();
+    expect(stopped).toHaveBeenCalledOnce();
+    fresh.destroy();
+  });
+
+  it.each(["done", "failed", "stopped"] as const)(
+    "shows the answer directly without empty work for a %s turn",
+    (status) => {
+      const fixture = TestBed.createComponent(ReplyHostComponent);
+      fixture.componentInstance.status.set(status);
+      fixture.detectChanges();
+      const host: HTMLElement = fixture.nativeElement;
+      expect(host.querySelector(".work-row")).toBeNull();
+      expect(host.querySelector("ex-tool-step")).toBeNull();
+      expect(host.querySelector(".work-region")?.hasAttribute("inert")).toBe(true);
+      expect(host.querySelector(".answer")?.textContent).toContain(
+        "Hi. How can I help?",
+      );
+      if (status !== "done") {
+        expect(host.querySelector(".error")?.textContent).toContain(
+          status === "failed" ? "Retry" : "Continue",
+        );
+      }
+      fixture.destroy();
+    },
+  );
+
+  it("retains an inert live heading through completion and an interrupted reopen", () => {
+    const fixture = TestBed.createComponent(ReplyHostComponent);
+    fixture.componentInstance.status.set("live");
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    expect(host.querySelector(".work-row")?.textContent).toContain("Working");
+    const stop = host.querySelector<HTMLButtonElement>(".work-row button[exButton]")!;
+    const turn = host.querySelector("ex-turn")!;
+    const answer = host.querySelector(".answer");
+    const row = host.querySelector(".work-row");
+    expect(stop.textContent).toContain("Stop");
+    fixture.componentInstance.status.set("done");
+    fixture.detectChanges();
+    expect(host.querySelector("ex-turn")).toBe(turn);
+    expect(host.querySelector(".work-row")).toBe(row);
+    expect(row?.textContent).toContain("Working");
+    expect(row?.textContent).not.toContain("Worked");
+    expect(host.querySelector(".work-region")?.hasAttribute("inert")).toBe(true);
+    expect(stop.disabled).toBe(true);
+    expect(host.querySelector(".answer")).toBe(answer);
+    expect(host.querySelector(".answer")?.textContent).toContain("Hi.");
+    fixture.componentInstance.status.set("live");
+    fixture.detectChanges();
+    expect(host.querySelectorAll(".work-row")).toHaveLength(1);
+    expect(host.querySelector(".work-row")).toBe(row);
+    expect(host.querySelector(".work-region")?.hasAttribute("inert")).toBe(false);
+    expect(stop.disabled).toBe(false);
+    fixture.destroy();
+  });
+
+  it("moves focus out of closing work without stealing focus from other controls", () => {
+    const fixture = TestBed.createComponent(ReplyHostComponent);
+    const host: HTMLElement = fixture.nativeElement;
+    const other = document.createElement("button");
+    document.body.append(host, other);
+    fixture.componentInstance.status.set("live");
+    fixture.detectChanges();
+    const turn = host.querySelector<HTMLElement>("ex-turn")!;
+    host.querySelector<HTMLButtonElement>(".work-row button[exButton]")!.focus();
+    fixture.componentInstance.status.set("done");
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(turn);
+    fixture.componentInstance.status.set("live");
+    fixture.detectChanges();
+    other.focus();
+    fixture.componentInstance.status.set("done");
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(other);
+    fixture.destroy();
+    host.remove();
+    other.remove();
+  });
+
+  it("keeps earlier commentary behind Worked without counting it as a tool", () => {
+    const fixture = TestBed.createComponent(ReplyHostComponent);
+    fixture.componentInstance.steps.set([
+      { id: "say", kind: "say", text: "Checking the details." },
+      { id: "completed", kind: "note", text: "Turn completed" },
+    ]);
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    expect(fixture.componentInstance.steps().filter(step => step.kind !== 'say' && step.kind !== 'note')).toHaveLength(0);
+    expect(host.querySelector(".work-row")?.textContent).toContain("Worked");
+    expect(host.querySelector('ex-tool-step')).toBeNull();
+    expect(host.querySelector('.prose')?.closest("ex-fold")?.hasAttribute("inert")).toBe(true);
+    expect(host.querySelector('.prose')?.textContent).toContain('Checking the details.');
+    expect(host.querySelector('.answer')?.textContent).toContain('Hi.');
+    fixture.destroy();
+  });
+
+  it("retains the work disclosure for tool and thinking steps", () => {
+    const fixture = TestBed.createComponent(ReplyHostComponent);
+    const host: HTMLElement = fixture.nativeElement;
+    for (const step of [
+      { id: "read", kind: "read", status: "done", detail: "README.md" },
+      { id: "think", kind: "think", text: "Checking the details." },
+    ] as const) {
+      fixture.componentInstance.steps.set([step]);
+      fixture.detectChanges();
+      const work = host.querySelector<HTMLButtonElement>(".work")!;
+      expect(work.textContent).toContain("Worked for 12s");
+      expect(work.getAttribute("aria-expanded")).toBe("false");
+      work.click();
+      fixture.detectChanges();
+      expect(work.getAttribute("aria-expanded")).toBe("true");
+      expect(host.querySelector("ex-work-timeline ex-tool-step")).not.toBeNull();
+      work.click();
+      fixture.detectChanges();
+    }
+    fixture.destroy();
+  });
+});
+
+describe("turn evidence", () => {
+  it("keeps the live thinking preview anchored to the last visible text", () => {
+    const fixture = TestBed.createComponent(TurnComponent);
+    const host: HTMLElement = fixture.nativeElement;
+    const thinking = { id: "thinking", kind: "think", status: "running" } as const;
+    const update = (text: string) => {
+      fixture.componentRef.setInput("steps", [{ ...thinking, text }]);
+      fixture.detectChanges();
+    };
+    fixture.componentRef.setInput("status", "live");
+    update(" \t\r\n\n");
+    expect(host.querySelector("ex-now-line .verb")?.textContent).toContain("Thinking");
+    expect(host.querySelector("ex-now-line ex-stream-text")).toBeNull();
+
+    update("Checking the details.");
+    const stream = host.querySelector("ex-now-line ex-stream-text");
+    expect(stream?.querySelector(".caret")).toBeTruthy();
+    update("Checking the details.\n\n  ");
+    expect(host.querySelector("ex-now-line ex-stream-text")).toBe(stream);
+    expect(stream?.textContent).toBe("Checking the details.");
+
+    update("Checking the details.\n\nNext, check the tests.\n");
+    expect(stream?.textContent).toBe("Checking the details.\n\nNext, check the tests.");
+    fixture.destroy();
+  });
+
+  it.each(["live", "done", "stopped", "failed"] as const)(
+    "hands thinking to the timeline once when the turn is %s",
+    (status) => {
+      const fixture = TestBed.createComponent(TurnComponent);
+      const host: HTMLElement = fixture.nativeElement;
+      const thinking = {
+        id: "thinking", kind: "think", status: "running", text: "Checking the details.",
+      } as const;
+      fixture.componentRef.setInput("status", "live");
+      fixture.componentRef.setInput("open", true);
+      fixture.componentRef.setInput("steps", [thinking]);
+      fixture.detectChanges();
+      expect(host.querySelector("ex-now-line .verb")?.textContent).toContain("Thinking");
+      expect(host.querySelectorAll("ex-tool-step")).toHaveLength(0);
+
+      fixture.componentRef.setInput("status", status);
+      fixture.componentRef.setInput("steps", [{ ...thinking, status: "done" }]);
+      fixture.detectChanges();
+      // Check the very first render, before the 700ms hold or a Fold exit ends.
+      expect(host.querySelector("ex-now-line")).toBeNull();
+      expect(host.querySelectorAll("ex-work-timeline ex-tool-step")).toHaveLength(1);
+      expect(host.querySelector("ex-work-timeline ex-tool-step")?.textContent).toContain("Thought");
+
+      fixture.componentRef.setInput("status", "live");
+      fixture.componentRef.setInput("steps", [
+        { ...thinking, status: "done" },
+        { ...thinking, id: "next-thinking" },
+      ]);
+      fixture.detectChanges();
+      expect(host.querySelectorAll("ex-now-line")).toHaveLength(1);
+      expect(host.querySelectorAll("ex-work-timeline ex-tool-step")).toHaveLength(1);
+      fixture.destroy();
+    },
+  );
+
+  it("retains one tool across commentary and answer boundary updates", () => {
+    const fixture = TestBed.createComponent(TurnComponent);
+    const host: HTMLElement = fixture.nativeElement;
+    const running = { id: "tool", kind: "run", status: "running", detail: "Long command" } as const;
+    fixture.componentRef.setInput("status", "live");
+    fixture.componentRef.setInput("steps", [running]);
+    fixture.detectChanges();
+    const tool = host.querySelector("ex-tool-step");
+    expect(tool).not.toBeNull();
+    fixture.componentRef.setInput("steps", [running, { id: "say", kind: "say", text: "Still checking" }]);
+    fixture.detectChanges();
+    expect(host.querySelector("ex-now-line")).toBeNull();
+    expect(host.querySelectorAll("ex-work-timeline ex-tool-step")).toHaveLength(1);
+
+    fixture.componentRef.setInput("steps", [running]);
+    fixture.detectChanges();
+    fixture.componentRef.setInput("answerBeforeStepId", "tool");
+    fixture.detectChanges();
+    expect(host.querySelector("ex-now-line")).toBeNull();
+    expect(host.querySelector("ex-tool-step")).toBe(tool);
+    fixture.destroy();
+  });
+
+  it("restores focus for removed work and retains inspected completed tools", async () => {
+    const fixture = TestBed.createComponent(TurnComponent);
+    const host: HTMLElement = fixture.nativeElement;
+    document.body.append(host);
+    fixture.componentRef.setInput("status", "live");
+    const running = {
+      id: "first",
+      kind: "run",
+      detail: "pnpm test",
+      status: "running",
+      presentation: {
+        summary: "pnpm test",
+        blocks: [{ kind: "code", title: "Command", text: "pnpm test" }],
+      },
+    } as const;
+    fixture.componentRef.setInput("steps", [running]);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const head = host.querySelector<HTMLButtonElement>("ex-tool-step .head")!;
+    head.click();
+    head.focus();
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(head);
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+    fixture.componentRef.setInput("steps", [{ ...running, id: "second" }]);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(document.activeElement).toBe(host.querySelector(".work"));
+    const next = host.querySelector<HTMLButtonElement>("ex-tool-step .head")!;
+    expect(next).not.toBe(head);
+    expect(next.getAttribute("aria-expanded")).toBe("false");
+    next.focus();
+    fixture.componentRef.setInput("status", "done");
+    fixture.componentRef.setInput("steps", [
+      { ...running, id: "second", status: "done" },
+    ]);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(document.activeElement).toBe(next);
+    expect(next.closest(".step-fold")?.hasAttribute("inert")).toBe(false);
+    fixture.destroy();
+    host.remove();
+  });
+  it("counts a live turn from its start and settles on the supplied duration", () => {
+    vi.useFakeTimers({ now: Date.parse("2026-10-28T12:00:42Z") });
+    try {
+      const fixture = TestBed.createComponent(TurnComponent);
+      fixture.componentRef.setInput("status", "live");
+      fixture.componentRef.setInput("startedAt", Date.parse("2026-10-28T12:00:00Z"));
+      fixture.detectChanges();
+      const host: HTMLElement = fixture.nativeElement;
+      const work = () => host.querySelector(".work-label")?.textContent?.replace(/\s+/g, " ").trim();
+      expect(work()).toBe("Working for 42s");
+      vi.advanceTimersByTime(20_000);
+      fixture.detectChanges();
+      expect(work()).toBe("Working for 1m 2s");
+      expect(host.querySelector(".work-time")).not.toBeNull();
+      fixture.componentRef.setInput("steps", [{ id: "run", kind: "run", status: "done" }]);
+      fixture.componentRef.setInput("status", "stopped");
+      fixture.componentRef.setInput("duration", 63);
+      fixture.detectChanges();
+      vi.advanceTimersByTime(5_000);
+      fixture.detectChanges();
+      expect(work()).toBe("Stopped after 1m 3s");
+      fixture.destroy();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("restores completed-work facts beside the duration while keeping live work concise", () => {
+    const fixture = TestBed.createComponent(TurnComponent);
+    fixture.componentRef.setInput("status", "live");
+    fixture.componentRef.setInput("elapsed", 12);
+    fixture.componentRef.setInput("steps", [
+      { id: "run", kind: "run", status: "done" },
+      { id: "read", kind: "read", status: "done" },
+      { id: "unknown", kind: "read", status: "unknown" },
+      { id: "running", kind: "run", status: "running" },
+    ]);
+    fixture.componentRef.setInput("files", [{ path: "turn.css", add: 83, del: 12 }]);
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    expect(host.querySelector(".work")?.textContent?.trim()).toBe("Working for 12s");
+    expect(host.querySelector(".work-row")?.textContent).toContain("Stop");
+    expect(host.querySelector(".facts")).toBeNull();
+    fixture.componentRef.setInput("status", "done");
+    fixture.componentRef.setInput("duration", 12);
+    fixture.detectChanges();
+    expect(host.querySelector(".work-label")?.textContent?.trim()).toBe("Worked for 12s");
+    expect(Array.from(host.querySelectorAll(".fact"), fact =>
+      fact.textContent?.replace(/\s+/g, " ").trim(),
+    )).toEqual(["Edited 1 file +83−12", "1 command", "2 reads"]);
+    const work = host.querySelector<HTMLButtonElement>(".work")!;
+    expect(work.getAttribute("aria-expanded")).toBe("false");
+    work.click();
+    fixture.detectChanges();
+    expect(work.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector("ex-outcome-bar")?.textContent).toContain("turn.css");
+    fixture.componentRef.setInput("filesTotal", 8);
+    fixture.detectChanges();
+    expect(host.querySelector(".fact")?.textContent).toContain("Edited 8 files");
+    expect(host.querySelector(".fact .diff")).toBeNull();
+    fixture.componentRef.setInput("status", "live");
+    fixture.detectChanges();
+    expect(host.querySelector(".facts")).toBeNull();
+    fixture.destroy();
+  });
+  it("keeps overlapping running tools before later commentary in the timeline", () => {
+    const fixture = TestBed.createComponent(TurnComponent);
+    fixture.componentRef.setInput("status", "live");
+    fixture.componentRef.setInput("steps", [
+      { id: "tool", kind: "run", status: "running", detail: "Long command" },
+      { id: "say", kind: "say", text: "Still checking" },
+    ]);
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    const tool = host.querySelector("ex-tool-step")!;
+    const commentary = host.querySelector(".prose")!;
+    expect(
+      tool.compareDocumentPosition(commentary) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(host.querySelector("ex-now-line")).toBeNull();
+    expect(host.querySelector(".facts")).toBeNull();
+    fixture.destroy();
+  });
+});

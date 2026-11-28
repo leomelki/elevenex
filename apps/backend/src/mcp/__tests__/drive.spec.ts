@@ -1,5 +1,6 @@
+import { splitSessionAgentPrompt } from '../../sessions/session-agent-message.js';
 import { EventEmitter } from 'node:events';
-import { Logger } from '@nestjs/common';
+import type { AgentPromptOptions } from '../../agent-runtime/agent-runtime.types.js';
 import { readFile, unlink } from 'node:fs/promises';
 import { z } from 'zod';
 import { ConversationExportService } from '../../agent-runtime/conversation-export.service.js';
@@ -41,12 +42,14 @@ function makeCtx(services: unknown): ToolContext {
 /**
  * A baseline runtime provider double with every method drive tools may call.
  * It's a real EventEmitter (like the production ClaudeRuntimeService) so tools
- * that subscribe to `.on('event', ...)` (e.g. poll_session_status) can be
+ * that subscribe to `.on('event', ...)` can be
  * exercised elsewhere; drive tools here mostly just call it directly.
  */
 function makeRuntime(overrides: Record<string, unknown> = {}) {
   return Object.assign(new EventEmitter(), {
-    submitPrompt: jest.fn().mockResolvedValue(undefined),
+    submitPrompt: jest.fn(async (
+      _sessionId: number, _prompt: string, _title?: string, _images?: unknown, options?: AgentPromptOptions,
+    ) => { options?.onAccepted?.('running'); }),
     interrupt: jest.fn().mockResolvedValue(undefined),
     stopBackgroundTask: jest.fn().mockResolvedValue(undefined),
     setSelectedModel: jest.fn().mockResolvedValue({ selectedModel: null }),
@@ -86,6 +89,16 @@ function makeServices(opts: {
           return session;
         }),
         start: jest.fn().mockResolvedValue({ success: true, resumed: false }),
+        delegationHandoffs: {
+          cancellingSession: () => false,
+          outbox: { assignment: () => undefined },
+          prompts: {
+            read: jest.fn(),
+            reserve: jest.fn(input => ({ receipt: input, created: true })),
+            arm: jest.fn(),
+            record: jest.fn(),
+          },
+        },
         fork: jest.fn().mockResolvedValue({
           id: 99,
           name: 'S7 (fork)',
@@ -131,12 +144,14 @@ describe('Drive tool group', () => {
     expect(names).toEqual(
       [
         'archive_session',
+        'cancel_session_delegation',
         'rename_session',
         'unarchive_session',
         'fork_session',
         'get_pending_action',
         'interrupt_session',
         'prompt_session',
+        'send_session_message',
         'reset_session',
         'resume_pending_prompts',
         'resolve_action',
@@ -183,13 +198,28 @@ describe('Drive tool group', () => {
         makeCtx(services),
       );
       expect(services.sessions.start).toHaveBeenCalledWith(7);
-      expect(runtime.submitPrompt).toHaveBeenCalledWith(7, 'do the thing');
+      expect(runtime.submitPrompt).toHaveBeenCalledWith(
+        7, '[Elevenex session message from session #42]\n\ndo the thing', 'do the thing',
+        undefined, expect.objectContaining({ waitForCompletion: false }),
+      );
       expect(res.data).toMatchObject({
         sessionId: 7,
         accepted: true,
         provider: 'claude',
       });
       expect(res.deepLink).toBe('/sessions/7');
+    });
+
+    it('rejects Antigravity before restarting or dispatching its interactive turn', async () => {
+      const { services, runtime } = makeServices({
+        session: { id: 7, status: 'active', activeAgentProvider: 'antigravity' },
+      });
+      await expect(promptSessionTool.handler(
+        { sessionId: 7, prompt: 'go', mode: 'restart' }, makeCtx(services),
+      )).rejects.toMatchObject({ code: 'interactive_provider' });
+      expect(runtime.interrupt).not.toHaveBeenCalled();
+      expect(runtime.submitPrompt).not.toHaveBeenCalled();
+      expect(services.sessions.start).not.toHaveBeenCalled();
     });
 
     it('does not re-start an already active session', async () => {
@@ -201,6 +231,60 @@ describe('Drive tool group', () => {
         makeCtx(services),
       );
       expect(services.sessions.start).not.toHaveBeenCalled();
+    });
+
+    it.each(['auto', 'queue'] as const)('reports this follow-up delivery with mode=%s', async mode => {
+      const runtime = makeRuntime();
+      runtime.submitPrompt.mockImplementation(async (_id, _prompt, _title, _images, options) => {
+        options?.onAccepted?.(options.preferSteering ? 'steered' : 'queued');
+      });
+      const { services } = makeServices({
+        session: { id: 7, status: 'active', activeAgentProvider: 'codex', delegatedBySessionId: 42 },
+        runtime,
+      });
+      const result = await promptSessionTool.handler(
+        { sessionId: 7, prompt: 'Focus on the failing test', mode },
+        makeCtx(services),
+      );
+      expect(result.data).toMatchObject({
+        accepted: true,
+        disposition: mode === 'queue' ? 'queued' : 'steered',
+      });
+    });
+
+    it('uses explicit steering without starting an idle session', async () => {
+      const { services, runtime } = makeServices({
+        session: { id: 7, status: 'active', activeAgentProvider: 'codex' },
+      });
+      runtime.submitPrompt.mockImplementation(async (_id, _prompt, _title, _images, options) => {
+        expect(options).toMatchObject({ preferSteering: true, requireSteering: true });
+        options?.onAccepted?.('steered');
+      });
+      expect(await promptSessionTool.handler({ sessionId: 7, prompt: 'Redirect', mode: 'steer' }, makeCtx(services)))
+        .toMatchObject({ data: { disposition: 'steered' } });
+      expect(services.sessions.start).not.toHaveBeenCalled();
+    });
+
+    it('confirms restart before submitting and preserves existing queued work', async () => {
+      const { services, runtime } = makeServices({
+        session: { id: 7, status: 'active', activeAgentProvider: 'codex' },
+      });
+      const input = { sessionId: 7, prompt: 'Try again', mode: 'restart' as const };
+      runtime.getRuntimeState.mockResolvedValueOnce({
+        sessionState: 'running', runPhase: 'running', pendingPrompts: [{}],
+      });
+      await expect(promptSessionTool.handler(input, makeCtx(services)))
+        .rejects.toMatchObject({ code: 'restart_queue_not_empty' });
+      expect(runtime.interrupt).not.toHaveBeenCalled();
+      expect(runtime.submitPrompt).not.toHaveBeenCalled();
+
+      runtime.getRuntimeState.mockResolvedValueOnce({ sessionState: 'running', runPhase: 'running' });
+      runtime.submitPrompt.mockImplementation(async (_id, _prompt, _title, _images, options) => {
+        expect(runtime.interrupt).toHaveBeenCalledWith(7);
+        options?.onAccepted?.('running');
+      });
+      await expect(promptSessionTool.handler(input, makeCtx(services)))
+        .resolves.toMatchObject({ data: { disposition: 'running' } });
     });
 
     it.each(['claude', 'codex', 'opencode', 'pi'])(
@@ -267,9 +351,10 @@ describe('Drive tool group', () => {
           );
           expect(buildMention.mock.calls).toEqual([[42], [8]]);
           const sent = runtime.submitPrompt.mock.calls[0][1] as string;
-          expect(sent).toMatch(
-            /^Review the auth outcomes\n\n<elevenex_session_mention>/,
-          );
+          expect(splitSessionAgentPrompt(sent)).toMatchObject({
+            text: expect.stringMatching(/^Review the auth outcomes\n\n<elevenex_session_mention>/),
+            sender: { purpose: 'message', session: { sessionId: 42 }, messageId: expect.any(String) },
+          });
           expect(sent.match(/<elevenex_session_mention>/g)).toHaveLength(2);
           expect(sent).toContain('Session ID: 42'); // The caller may be mentioned.
           expect(sent).toContain('Session ID: 8');
@@ -437,6 +522,7 @@ describe('Drive tool group', () => {
       expect(currentRuntime.submitPrompt).toHaveBeenCalledWith(
         7,
         expect.stringContaining('Session ID: 8'),
+        'go', undefined, expect.objectContaining({ waitForCompletion: false }),
       );
     });
 
@@ -572,381 +658,79 @@ describe('Drive tool group', () => {
 
   describe('prompt_session bounded acceptance', () => {
     beforeEach(() => jest.useFakeTimers());
-    afterEach(() => {
-      jest.useRealTimers();
-      jest.restoreAllMocks();
-    });
-    const idle = { sessionState: 'idle', runPhase: 'idle', pendingPrompts: [] };
-    const running = {
-      sessionState: 'running',
-      runPhase: 'running',
-      pendingPrompts: [],
-    };
-    function pendingSubmit() {
-      let resolve!: () => void;
-      let reject!: (error: Error) => void;
-      const promise = new Promise<void>((yes, no) => {
-        resolve = yes;
-        reject = no;
-      });
-      return { promise, resolve, reject };
-    }
+    afterEach(() => jest.useRealTimers());
+    const running = { sessionState: 'running', runPhase: 'running', pendingPrompts: [] };
 
-    it.each([
-      ['claude', 'run_state'],
-      ['codex', 'run_state'],
-      ['claude', 'runtime_snapshot'],
-      ['codex', 'runtime_snapshot'],
-    ])(
-      'returns on %s %s while submit awaits the full turn',
-      async (provider, eventType) => {
-        const log = jest
-          .spyOn(Logger.prototype, 'error')
-          .mockImplementation(() => {});
-        const submit = pendingSubmit();
+    it.each(['running', 'queued', 'steered'] as const)(
+      'returns this prompt’s %s receipt while the harness continues working',
+      async disposition => {
         const runtime = makeRuntime({
-          getRuntimeState: jest.fn().mockResolvedValue(idle),
-        });
-        runtime.submitPrompt.mockImplementation(() => {
-          runtime.emit('event', {
-            type: eventType,
-            payload: { sessionId: 7, ...running },
-          });
-          return submit.promise;
-        });
-        const { services } = makeServices({
-          session: { id: 7, status: 'active', activeAgentProvider: provider },
-          runtime,
-        });
-        const res = await promptSessionTool.handler(
-          { sessionId: 7, prompt: 'go' },
-          makeCtx(services),
-        );
-        expect(res.data).toMatchObject({
-          accepted: true,
-          status: 'running',
-          provider,
-        });
-        expect(runtime.listenerCount('event')).toBe(0);
-        expect(jest.getTimerCount()).toBe(0);
-        submit.reject(new Error('later turn failure'));
-        await jest.advanceTimersByTimeAsync(0);
-        expect(log).toHaveBeenCalledWith(
-          expect.stringContaining('later turn failure'),
-        );
-      },
-    );
-
-    it.each(['result', 'history_snapshot', 'terminal'])(
-      'checks acceptance immediately on %s without waiting for fallback polling',
-      async (eventType) => {
-        const submit = pendingSubmit();
-        let state = {
-          ...running,
-          pendingPrompts: [] as { id: string; prompt: string }[],
-        };
-        const runtime = makeRuntime({
-          getRuntimeState: jest.fn().mockImplementation(async () => state),
-          submitPrompt: jest.fn().mockReturnValue(submit.promise),
-        });
-        const { services } = makeServices({ runtime });
-        const pending = promptSessionTool.handler(
-          { sessionId: 7, prompt: 'go' },
-          makeCtx(services),
-        );
-        const returned = jest.fn();
-        void pending.then(returned);
-        await jest.advanceTimersByTimeAsync(0);
-        expect(returned).not.toHaveBeenCalled();
-        expect(runtime.getRuntimeState).toHaveBeenCalledTimes(2);
-
-        state = { ...running, pendingPrompts: [{ id: 'new', prompt: 'go' }] };
-        runtime.emit('event', { type: eventType, payload: { sessionId: 7 } });
-        // No clock advance: the lifecycle event must wake the waiter before its 1s poll.
-        await jest.advanceTimersByTimeAsync(0);
-        expect(returned).toHaveBeenCalledTimes(1);
-        expect((await pending).data).toMatchObject({
-          accepted: true,
-          queued: true,
-        });
-        expect(runtime.getRuntimeState).toHaveBeenCalledTimes(3);
-        expect(runtime.listenerCount('event')).toBe(0);
-        expect(jest.getTimerCount()).toBe(0);
-        submit.resolve();
-      },
-    );
-
-    it('observes acceptance without an event while submit remains pending', async () => {
-      const submit = pendingSubmit();
-      const runtime = makeRuntime({
-        getRuntimeState: jest
-          .fn()
-          .mockResolvedValueOnce(idle)
-          .mockResolvedValue(running),
-        submitPrompt: jest.fn().mockReturnValue(submit.promise),
-      });
-      const { services } = makeServices({ runtime });
-      const res = await promptSessionTool.handler(
-        { sessionId: 7, prompt: 'go' },
-        makeCtx(services),
-      );
-      expect(res.data).toMatchObject({ accepted: true, status: 'running' });
-      expect(jest.getTimerCount()).toBe(0);
-      submit.resolve();
-    });
-
-    it('reports queued acceptance using new queue identities from a mutable snapshot', async () => {
-      const submit = pendingSubmit();
-      const state = { ...idle, pendingPrompts: [{ id: 'old', prompt: 'go' }] };
-      const runtime = makeRuntime({
-        getRuntimeState: jest.fn().mockResolvedValue(state),
-      });
-      runtime.submitPrompt.mockImplementation(() => {
-        state.pendingPrompts.push({ id: 'new', prompt: 'go' });
-        runtime.emit('event', {
-          type: 'run_state',
-          payload: { sessionId: 7, ...state },
-        });
-        return submit.promise;
-      });
-      const { services } = makeServices({ runtime });
-      const res = await promptSessionTool.handler(
-        { sessionId: 7, prompt: 'go' },
-        makeCtx(services),
-      );
-      expect(res.data).toMatchObject({
-        accepted: true,
-        status: 'running',
-        queued: true,
-      });
-      expect(res.nextStep).toContain('queued');
-      expect(jest.getTimerCount()).toBe(0);
-      submit.resolve();
-    });
-
-    it('keeps permission guidance when the accepted prompt is queued behind a blocked turn', async () => {
-      const runtime = makeRuntime({
-        getRuntimeState: jest
-          .fn()
-          .mockResolvedValueOnce(running)
-          .mockResolvedValue({
-            sessionState: 'requires_action',
-            runPhase: 'running',
-            pendingPrompts: [{ id: 'new', prompt: 'go' }],
+          getRuntimeState: jest.fn().mockResolvedValue({
+            ...running, pendingPrompts: [{ id: 'old', prompt: 'same text' }],
           }),
-      });
-      const { services } = makeServices({ runtime });
-      const res = await promptSessionTool.handler(
-        { sessionId: 7, prompt: 'go' },
-        makeCtx(services),
-      );
-      expect(res.data).toMatchObject({
-        accepted: true,
-        queued: true,
-        status: 'requires_action',
-      });
-      expect(res.nextStep).toContain('get_pending_action');
-      expect(jest.getTimerCount()).toBe(0);
-    });
-
-    it('does not label a steered prompt queued because older messages remain queued', async () => {
-      const state = {
-        ...running,
-        pendingPrompts: [{ id: 'old', prompt: 'later' }],
-      };
-      const runtime = makeRuntime({
-        getRuntimeState: jest.fn().mockResolvedValue(state),
-      });
-      const { services } = makeServices({ runtime });
-      const res = await promptSessionTool.handler(
-        { sessionId: 7, prompt: 'go' },
-        makeCtx(services),
-      );
-      expect(res.data).toMatchObject({ accepted: true, status: 'running' });
-      expect(res.data).not.toHaveProperty('queued');
-      expect(jest.getTimerCount()).toBe(0);
-    });
-
-    it.each(['already running', 'old matching queue', 'no state'])(
-      'returns honest unconfirmed acceptance for %s',
-      async (mode) => {
-        const submit = pendingSubmit();
-        const state =
-          mode === 'old matching queue'
-            ? { ...idle, pendingPrompts: [{ id: 'old', prompt: 'go' }] }
-            : running;
-        const runtime = makeRuntime({
-          getRuntimeState: jest
-            .fn()
-            .mockImplementation(() =>
-              mode === 'no state'
-                ? new Promise(() => {})
-                : Promise.resolve(state),
-            ),
-          submitPrompt: jest.fn().mockReturnValue(submit.promise),
+        });
+        runtime.submitPrompt.mockImplementation((_id, _prompt, _title, _images, options) => {
+          options?.onAccepted?.(disposition);
+          return new Promise(() => {});
         });
         const { services } = makeServices({ runtime });
-        const pending = promptSessionTool.handler(
-          { sessionId: 7, prompt: 'go' },
-          makeCtx(services),
-        );
-        await jest.advanceTimersByTimeAsync(5_000);
-        const res = await pending;
-        expect(res.data).toMatchObject({
-          accepted: false,
-          status: 'acceptance_pending',
-        });
-        expect(res.nextStep).toContain('Do not resubmit');
-        expect(runtime.submitPrompt).toHaveBeenCalledTimes(1);
+        const result = await promptSessionTool.handler({ sessionId: 7, prompt: 'same text' }, makeCtx(services));
+        expect(result.data).toMatchObject({ accepted: true, status: 'running', disposition });
+        expect('queued' in (result.data as object)).toBe(disposition === 'queued');
+        expect(runtime.getRuntimeState).toHaveBeenCalledTimes(1);
         expect(runtime.listenerCount('event')).toBe(0);
         expect(jest.getTimerCount()).toBe(0);
-        submit.resolve();
       },
     );
 
-    it('returns confirmed acceptance even when every state read hangs', async () => {
-      const runtime = makeRuntime({
-        getRuntimeState: jest.fn().mockReturnValue(new Promise(() => {})),
-      });
+    it('returns unconfirmed when unrelated events are the only evidence of activity', async () => {
+      const runtime = makeRuntime();
+      runtime.submitPrompt.mockReturnValue(new Promise(() => {}));
       const { services } = makeServices({ runtime });
-      const pending = promptSessionTool.handler(
-        { sessionId: 7, prompt: 'go' },
-        makeCtx(services),
-      );
-      await jest.advanceTimersByTimeAsync(350);
-      const res = await pending;
-      expect(res.data).toMatchObject({ accepted: true, status: 'running' });
-      expect(runtime.listenerCount('event')).toBe(0);
+      const pending = promptSessionTool.handler({ sessionId: 7, prompt: 'go' }, makeCtx(services));
+      await jest.advanceTimersByTimeAsync(0);
+      for (let i = 0; i < 20; i++)
+        runtime.emit('event', { type: 'run_state', payload: { sessionId: 7, ...running } });
+      await jest.advanceTimersByTimeAsync(5_000);
+      const result = await pending;
+      expect(result.data).toMatchObject({ accepted: false, status: 'acceptance_pending' });
+      expect(result.nextStep).toContain('Do not resend');
+      expect(runtime.submitPrompt).toHaveBeenCalledTimes(1);
+      expect(runtime.getRuntimeState).not.toHaveBeenCalled();
       expect(jest.getTimerCount()).toBe(0);
     });
 
-    it('propagates submit failure instead of claiming acceptance from an old running turn', async () => {
-      const runtime = makeRuntime({
-        getRuntimeState: jest.fn().mockResolvedValue(running),
-        submitPrompt: jest.fn().mockRejectedValue(new Error('dispatch failed')),
-      });
+    it('preserves an accepted receipt when the optional state read hangs', async () => {
+      const runtime = makeRuntime({ getRuntimeState: jest.fn().mockReturnValue(new Promise(() => {})) });
       const { services } = makeServices({ runtime });
-      await expect(
-        promptSessionTool.handler(
-          { sessionId: 7, prompt: 'go' },
-          makeCtx(services),
-        ),
-      ).rejects.toThrow('dispatch failed');
-      expect(runtime.listenerCount('event')).toBe(0);
+      const pending = promptSessionTool.handler({ sessionId: 7, prompt: 'go' }, makeCtx(services));
+      await jest.advanceTimersByTimeAsync(150);
+      expect((await pending).data).toMatchObject({ accepted: true, status: 'running' });
       expect(jest.getTimerCount()).toBe(0);
     });
 
-    it('aborts while submit or a state read is pending and observes late failures', async () => {
-      const log = jest
-        .spyOn(Logger.prototype, 'error')
-        .mockImplementation(() => {});
-      const submit = pendingSubmit();
-      const runtime = makeRuntime({
-        getRuntimeState: jest.fn().mockResolvedValue(running),
-        submitPrompt: jest.fn().mockReturnValue(submit.promise),
-      });
+    it('reports a harness rejection even if a previous turn is still running', async () => {
+      const runtime = makeRuntime({ getRuntimeState: jest.fn().mockResolvedValue(running) });
+      runtime.submitPrompt.mockRejectedValue(new Error('dispatch failed'));
       const { services } = makeServices({ runtime });
-      const ctx = makeCtx(services);
+      await expect(promptSessionTool.handler({ sessionId: 7, prompt: 'go' }, makeCtx(services)))
+        .rejects.toThrow('dispatch failed');
+      expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it('cleans up a cancelled wait while the harness retains its send', async () => {
+      const runtime = makeRuntime();
+      runtime.submitPrompt.mockReturnValue(new Promise(() => {}));
+      const { services } = makeServices({ runtime });
       const controller = new AbortController();
-      ctx.signal = controller.signal;
-      const remove = jest.spyOn(ctx.signal, 'removeEventListener');
-      const pending = promptSessionTool.handler(
-        { sessionId: 7, prompt: 'go' },
-        ctx,
-      );
+      const ctx = { ...makeCtx(services), signal: controller.signal };
+      const pending = promptSessionTool.handler({ sessionId: 7, prompt: 'go' }, ctx);
       const rejected = expect(pending).rejects.toThrow('cancelled');
       await jest.advanceTimersByTimeAsync(0);
       controller.abort(new Error('cancelled'));
       await rejected;
-      expect(runtime.listenerCount('event')).toBe(0);
-      expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+      expect(runtime.submitPrompt).toHaveBeenCalledTimes(1);
       expect(jest.getTimerCount()).toBe(0);
-      submit.reject(new Error('late dispatch failure'));
-      await jest.advanceTimersByTimeAsync(0);
-      expect(log).toHaveBeenCalledWith(
-        expect.stringContaining('late dispatch failure'),
-      );
-    });
-
-    it('bounds reads during message/thinking delta storms while awaiting acceptance', async () => {
-      const submit = pendingSubmit();
-      const runtime = makeRuntime({
-        getRuntimeState: jest.fn().mockResolvedValue(running),
-        submitPrompt: jest.fn().mockReturnValue(submit.promise),
-      });
-      const { services } = makeServices({ runtime });
-      const pending = promptSessionTool.handler(
-        { sessionId: 7, prompt: 'go' },
-        makeCtx(services),
-      );
-      await jest.advanceTimersByTimeAsync(0);
-      for (let i = 0; i < 20; i++) {
-        for (const type of ['message_delta', 'thinking_delta']) {
-          runtime.emit('event', { type, payload: { sessionId: 7 } });
-          await jest.advanceTimersByTimeAsync(0);
-        }
-      }
-      expect(runtime.getRuntimeState).toHaveBeenCalledTimes(2);
-      await jest.advanceTimersByTimeAsync(1_000);
-      expect(runtime.getRuntimeState).toHaveBeenCalledTimes(3);
-      await jest.advanceTimersByTimeAsync(4_000);
-      expect((await pending).data).toMatchObject({
-        accepted: false,
-        status: 'acceptance_pending',
-      });
-      expect(runtime.listenerCount('event')).toBe(0);
-      expect(jest.getTimerCount()).toBe(0);
-      submit.resolve();
-    });
-
-    it('handles runtime errors immediately even when the state read is hung', async () => {
-      const submit = pendingSubmit();
-      const runtime = makeRuntime({
-        getRuntimeState: jest
-          .fn()
-          .mockResolvedValueOnce(running)
-          .mockReturnValue(new Promise(() => {})),
-        submitPrompt: jest.fn().mockReturnValue(submit.promise),
-      });
-      const { services } = makeServices({ runtime });
-      const pending = promptSessionTool.handler(
-        { sessionId: 7, prompt: 'go' },
-        makeCtx(services),
-      );
-      const rejected = expect(pending).rejects.toThrow('runtime failed');
-      await jest.advanceTimersByTimeAsync(0);
-      runtime.emit('event', {
-        type: 'error',
-        payload: { sessionId: 7, message: 'runtime failed' },
-      });
-      await rejected;
-      expect(runtime.listenerCount('event')).toBe(0);
-      expect(jest.getTimerCount()).toBe(0);
-      submit.resolve();
-    });
-
-    it('does not overlap polling reads while waiting for acceptance', async () => {
-      const submit = pendingSubmit();
-      const runtime = makeRuntime({
-        getRuntimeState: jest
-          .fn()
-          .mockResolvedValueOnce(running)
-          .mockReturnValue(new Promise(() => {})),
-        submitPrompt: jest.fn().mockReturnValue(submit.promise),
-      });
-      const { services } = makeServices({ runtime });
-      const pending = promptSessionTool.handler(
-        { sessionId: 7, prompt: 'go' },
-        makeCtx(services),
-      );
-      await jest.advanceTimersByTimeAsync(0);
-      for (let i = 0; i < 10; i++)
-        runtime.emit('event', { type: 'complete', payload: { sessionId: 7 } });
-      await jest.advanceTimersByTimeAsync(5_000);
-      expect((await pending).data).toMatchObject({ accepted: false });
-      expect(runtime.getRuntimeState).toHaveBeenCalledTimes(2);
-      expect(jest.getTimerCount()).toBe(0);
-      submit.resolve();
     });
   });
 

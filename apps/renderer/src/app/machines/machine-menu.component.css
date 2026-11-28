@@ -1,0 +1,6 @@
+:host { display: block; }
+ex-dropdown-menu { min-width: 236px; max-width: calc(100vw - var(--space-4)); }
+button span { flex: 1; }
+button ex-icon { color: var(--ink-muted); }
+button.danger ex-icon { color: var(--danger); }
+.separator { height: 1px; margin: var(--space-1) 0; background: var(--line); }

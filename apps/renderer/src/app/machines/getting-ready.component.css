@@ -1,0 +1,9 @@
+:host { display: block; width: min(420px, 100%); }
+.ready { display: flex; flex-direction: column; gap: 14px; padding: 20px; border-radius: var(--radius-lg); color: var(--ink); background: var(--surface); box-shadow: var(--shadow-raised), inset 0 0 0 1px var(--line); }
+header { display: flex; align-items: flex-start; gap: var(--space-3); }
+.icon { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 10px; color: var(--accent); background: var(--accent-soft); }
+h2 { margin: 0; font-size: 16px; line-height: 22px; letter-spacing: -.01em; font-weight: 600; }
+p { margin: 2px 0 0; color: var(--ink-muted); font-size: 12.5px; line-height: 18px; }
+footer { display: flex; align-items: center; gap: var(--space-2); }
+footer span { margin-left: auto; color: var(--ink-muted); font-size: var(--text-caption-size); }
+footer:empty { display: none; }

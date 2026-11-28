@@ -1,0 +1,482 @@
+# Connected workspace navigation
+
+Navigation uses an event-driven, cancellable revision wait when the engine
+advertises `revisionWait`, with five-second polling retained for older engines.
+The observer owns one wait, cancels it when hidden or disposed, and reconciles
+only visible bounded pages. It advances the revision after successful reads so
+changes during hydration and transient failures cannot be lost. Live session
+rows publish as each task page arrives, independently of archived-history reads.
+
+Background revision, Git status and archived-history checks revalidate visible
+windows in place. They retain the last successful data while pending or
+temporarily unavailable, without navigation loading states or transient error
+banners. Failed navigation revisions retry on the next observation; explicit
+navigation, refresh and mutations retain their loading and error feedback.
+
+Saved task setup failures explain workspace quota limits and offer **Create
+workspace anyway** only when the backend advertises that recovery. This explicit
+choice retries the same task above the limit without changing the configured
+limit. Ordinary retry remains available after freeing a workspace. Busy and
+uncertain setup writes retain the existing disabled/reconciliation behavior.
+
+Missing workspace folders retain their task and conversation identities. Visible
+task pages check directory availability without scanning Git or transcripts.
+The saved conversation remains readable, with a **Review setup** action and a
+disabled composer until the workspace is ready. **Prepare workspace** resumes
+the current branch; it does not reset it to the task's initial commit. A deleted
+branch can be restored from its saved revision, and interrupted setup with local
+changes offers a separate workspace. These choices appear only when advertised
+by the engine. Locks, edits, active agents and background processes remain
+protected; reconnects never start recovery automatically.
+
+`MachineWorkspaceComponent` provides one `WorkspaceStore` for its connected
+machine and calls `connect(machine, active || preparing)`. Preparation permits
+bounded reads for the selected candidate behind inert Home; interaction remains
+controlled by `active`. Returning Home or cancelling preparation releases the
+scope as before. The store owns backend-scoped
+project/task/session selection, bounded navigation windows, creation drafts and
+durable navigation operations. It calls only named methods on the typed preload
+bridge. The backend connection service continues to own connection state alone.
+
+The workspace saves its selected project/task/session, Closed view, focus/status
+filter, bounded project/task cursors and side-panel tab/open/wider-review state
+through `saveEnvironmentContext`. Main stores a separate context per window and
+backend (local or saved SSH host) in application data. Opening a fresh workspace
+always starts in Active tasks. A saved Closed view's task cursor and status
+filter are discarded. A reopened task can resume in the active list. If the
+selected task finished while the workspace was away, the workspace shows the
+project's default active list. A reconnect in the same workspace owner can
+retain Closed when it is already visible. Explicit chat links still open
+their target conversation, including read-only history for finished tasks.
+Old contexts without layout fields retain the default closed Changes panel.
+Unsent input and domain-event cursors in the existing context are preserved.
+
+Restoration has three owners. `WorkspaceResume` handles context persistence and
+save coordination. `WorkspaceRestoration` is a read-only coordinator with a narrow
+bridge dependency: it reconciles saved identities and returns immutable bounded
+project/task/session windows. It has no Angular state, UI callbacks, watchers or
+mutation methods. Its caller supplies the scope/navigation lifetime predicate;
+each read checks it before dispatch and after completion, including failures.
+`WorkspaceStore` applies those windows through the same page hydration used by
+ordinary navigation. `WorkspaceSessionArchives` adopts reconciled archive pages
+only for its retained scope/tasks and invalidates earlier in-flight replies.
+Already reconciled session windows are reused instead of fetched again.
+
+The numeric, exclusive keyset policy lives in `workspace-restoration.ts`, including
+the project-window boundary reused after creation. Future protocol ordering or
+cursor-format changes belong there rather than in the UI state owner. These
+helpers and coordinator remain private to this feature's module boundary; the
+family's public component/store API and persisted context format are unchanged.
+
+Restoration uses bounded keyset windows around saved IDs when newer tasks or
+sessions have displaced them. Missing resources clear selection; transient read
+failures retain the saved state for Refresh. Explicit navigation and scope
+changes discard late restoration replies. Archived conversations under active
+tasks remain read-only when selected. Task setup, commands, prompts and session
+creation are never replayed. Panels restore their frames and selected tab.
+Terminal and browser processes and unsent modal forms are outside layout
+restoration. Failed saves appear in the
+navigation notice and retry on the next change. Exit dispatches the latest queued
+snapshot before releasing the workspace owner.
+
+Compose the exported `WorkspaceProjectRailComponent` in `shellRail`,
+`WorkspaceNavigationComponent` in `shellSidebar`, `WorkspaceTaskHeaderComponent`
+above the selected session’s streaming chat, and `WorkspaceDialogsComponent` beside the
+shell. `WorkspaceOnboardingComponent` is the first-project card. It emits
+`projectSubmitted(CreateProjectIntent)` before dispatching creation and accepts
+`launching`; the machine container owns source retention and the existing
+`jumpHome`/`settleMark` flight into the rail. The task header accepts `panelOpen`
+and emits `panelToggle`; panel processes are outside this feature.
+Git loading, retry and behind-upstream Sync controls share the header's reserved
+metadata row. Late Git replies and failures keep the chat's viewport height fixed.
+
+Later projects open from the rail's supplied plus-button origin through
+`dialogFrom`. Cancellation keeps that origin for the return morph. A successful
+creation clears the origin, preserves the outgoing draft through the actual
+modal exit, then uses `ModalLayer.closed` to request focus on the new project's
+visible New task action. The app remains visible; the task form opens only on
+request. The focus request is scoped and cancelled by another dialog or navigation; it
+does not depend on a guessed animation timeout.
+Task name and repository fields mark their initial focus for the modal's CDK
+trap; modal forms keep component autofocus disabled. Dialog widths follow the
+supplied cards (task 560px, project 540px, delete 460px), and the child owns its
+surface. Git drafts submit through native forms, including Enter in the field.
+
+`selected()` returns `{scopeId, taskId, sessionId}` with numeric resource IDs.
+`selectedTask()`, `selectedSession()` and `selectedProject()` expose loaded DTOs.
+Session activity comes from authoritative backend navigation pages. Persisted
+session `active` is not an indication that an agent is running.
+
+Inactive historical conversations use their persisted lifecycle and native
+conversation identity even when older releases did not record completion dates.
+They show Done; a missing date alone never makes an existing conversation Queued.
+Only unused sessions or an explicit pending prompt queue use the dotted circle.
+New reply still requires the durable unseen-completion marker, so recovering old
+sessions does not manufacture unread replies. Legacy `idle`/`active` activity
+replies map to Done as well. Backend navigation and chat share the same provider
+inference for old rows that retain a default Claude choice after using another
+harness. Recovery uses bounded metadata pages, without reading transcript files,
+starting runtimes or scanning all sessions at startup.
+
+The selected task header shows **Temporary task** with **Keep open** in its
+**Task actions** menu when the engine marks an agent-created task as temporary.
+Keep open persists the user's decision under the selected backend scope and revokes the creating session's
+permission to close it independently. Older engines omit the temporary flag.
+Regular tasks get a labeled **Close task** shortcut when Git reports a clean
+checkout in sync with its same-named upstream and no loaded session is active.
+Both paths to Close task check live work and running resources before closing.
+
+## Bounds and invalidation
+
+- Project pages contain at most 50 projects; task pages contain at most 20 tasks.
+  Each task initially loads at most 20 sessions, with four concurrent reads.
+  Older reveals loaded rows first, then appends another bounded history batch
+  without changing the selection. The workspace remembers how much history the
+  user loaded for each task and revalidates that amount on refresh. Show fewer
+  restores the cap. A selected older session and its parent can supplement the
+  history window during refresh. Engines advertising
+  `sessionPriority` supply running, needs-action, failed and unseen-reply
+  sessions on separate metadata pages of up to 100, with root context for nested
+  rows. The workspace merges and deduplicates those pages independently of the
+  history cursor for each task in the current task window. A failed continuation
+  keeps the previous priority snapshot. Older engines prioritize sessions within
+  their loaded history and child windows. Background updates revalidate the
+  open child page at its current cursor and retain its rows and controls while
+  the read is pending or fails. Explicit paging takes precedence. A selected
+  child can receive a focused status update without changing its nesting order.
+- The initial `workspaceRevision` probe verifies protocol version 1 before
+  dispatching a workspace snapshot. Unsupported older runtimes receive an update
+  message. `WorkspaceNavigationObserver` owns a five-second revision probe; only
+  a changed revision reloads the visible resource windows. Probes pause while
+  hidden, busy or preparing a task, and resume on visibility/focus. The store
+  disposes the observer on scope replacement and destruction.
+- Status summary counts describe visible sessions rather than unbounded global
+  totals. Focus mode mutes the other loaded project tiles. Task list identity
+  and folds remain owned by the reusable outline components.
+- The sidebar scrolls its bounded task window independently of the project header,
+  status summary and footer. Refresh lives in the footer to preserve project-title
+  space. Closed history omits the active-session filters. Project navigation
+  removes only tasks outside the destination view before loading its replacement.
+  All matching tasks and their sessions stay mounted throughout loading and on
+  read failure, preserving row identity and local folds independently of selection.
+  After initial history loads, the active outline also stays mounted when no
+  tasks overlap the destination project. Its outgoing rows fold away while a
+  folding loading status bridges the read; incoming rows then grow in. Empty
+  state is reserved for completed reads. Backend scope changes reset retention.
+  A matching selected task also keeps its main view mounted. Closed history
+  clears the previous view before loading its replacement.
+- Optional `WorkspaceTask.projectRepositoryCount` arrives with task summaries;
+  the backend counts through the project/path index without loading repository
+  lists or issuing extra renderer requests. Exactly one repository suppresses
+  its tag in both the outline and selected header. Older runtimes that omit the
+  count keep their existing repository hint.
+- New-task branch search uses `branchQueryRequested` and separate branch/base
+  windows. The owner debounces requests for 160ms, asks the backend for at most
+  50 matches, and rejects replies from a previous search or dialog. Search
+  includes local and fetched remote-tracking refs. Uses of an existing branch
+  and starting points for new branches carry their full Git ref into task setup.
+  The backend supplies the repository default and held-task metadata. A branch
+  held by a task is available as a starting point at its committed tip.
+- `WorkspaceTaskGitService`, provided by the selected header, owns one focused
+  five-second git-status probe, visibility/focus listeners and mutation epochs.
+  Unknown git state is not presented as “Up to date”. Commit and branch rename
+  require explicit drafts; push is non-force and sync uses the backend's safe
+  fast-forward behavior. PR and merge commands are excluded from this slice.
+  Failed pushes retain local commits and show fixed guidance for authentication,
+  a remote branch with newer commits, or other Git failures. Raw Git output stays
+  on the backend; SSH authentication uses the connected machine's credentials or
+  forwarded local agent, so a locked/unavailable agent requires attention before
+  retrying Push.
+
+## Creation, failures and cleanup
+
+New sessions in ready tasks open immediately on a local welcome/composer and a
+selected sidebar row. `WorkspaceSessionCreation` owns at most ten unfinished
+creates, coalesces repeated creation in the same task, and retains writing through
+definite rejection or an unconfirmed outcome. It has no invented backend session
+ID. Local rows cannot be archived or mentioned. `selected()` continues to expose
+only durable identities; `selectedCreation()` supplies the local view and
+`taskSelection()` supplies real task context to Git and the side panels.
+
+Confirmation adopts the local draft into `SessionChatDrafts`, retains the sidebar
+row's render key and selects the saved session only if its local view is still
+selected. Navigation never cancels/replays a create or loses its accepted draft.
+Task/project navigation, scope replacement and disposal reject late selection
+changes. Same-machine recovery retains local writing, marks interrupted creation
+unconfirmed, and never resends it. Definite rejections offer explicit retry;
+unconfirmed creation offers Check sessions and explicit draft dismissal. These
+errors belong to the local session rather than disabling other workspace actions.
+The local composer saves unfinished text for the task in this window's saved
+workspace. If the app closes before confirmation, the text is recovered the next
+time the user chooses New session in that task. Confirmation moves it to the
+saved session in one local write. Discard draft clears the task's local text.
+Restoring text never initiates session creation. Offline new-session requests
+retain the existing journaled waiting-session flow.
+
+
+Task creation returns a preparing task. The store keeps `pendingTask()` and
+polls that task alone with a 400ms to five-second backoff for at most five
+minutes. The backend creates the initial session; the renderer never creates a
+duplicate initial conversation. `preparationPaused()` offers reconciliation
+after a timeout/read failure, and `retryPreparation()` explicitly retries failed
+setup. Project/session navigation, Closed, scope replacement and destruction
+stop polling and reject late responses. Empty task rows reopen this preparation
+context, or create a session once the workspace is ready.
+
+Tasks may carry an optional `setupStep` (`queued`, `fetching`, `waiting`,
+`checkout`, `sessions`): the current step while preparing, or the step where a
+failed setup stopped. `workspace-task-progress.ts` owns its presentation. The
+setup surface shows a `StepList` checklist (Fetch the latest commits → Prepare
+the workspace → Open the session) with the branch, the active step's detail
+(including the per-repository wait, since checkout work is serialized) and a
+locally observed elapsed time after five seconds. Fetch and checkout say large
+repositories can take a few minutes after 20 seconds. Only step changes are
+announced; the ticking time stays out of the live region, and its timer stops
+with the setup or the component. A failed setup marks its step above the
+recovery actions. A paused setup and runtimes that report no step keep the
+indeterminate line rather than inferring progress from time.
+
+`workspaceTaskSignal(task)` summarizes any workspace that isn't simply ready
+(setting up, needs setup, close failed, closing, releasing, released). The
+sidebar row shows its short label in place of session counts with the full
+description in the tooltip, and an open session shows it as a banner above the
+chat; attention and released states offer **Review setup** (or **Review close**).
+Stage changes invalidate navigation, so these update without polling.
+
+Failed task replies may carry optional `setupIssue` display data. The backend
+maps persisted setup errors to bounded messages and supported choices; raw Git
+output, setup configuration and credentials stay private. An existing branch
+checked out elsewhere offers Use existing workspace (explicit consent including
+its local edits) or Use committed revision (a separate, pinned workspace). The
+sidebar avoids repeating the failure while the main setup surface owns it.
+
+`retryPreparation(recovery?)` retries the saved task ID, never creates another
+task, and rejects late replies after navigation. The existing numeric
+`workspaceRetryTask(scope, id)` call retains its default; optional `use-existing`
+and `snapshot` choices are validated against the durable failed task before
+calling the existing task lifecycle. Busy/owned/locked workspace checks are
+unchanged. An uncertain recovery blocks replay until a focused task refresh
+reconciles its durable state; a failed refresh leaves replay blocked.
+
+Mutations capture the scope that supplied their IDs. Late same-scope selection
+replies cannot select a task in another project. Definite backend rejections keep
+their safe message. Uncertain writes block another mutation until a durable
+refresh; task creation retains its request ID for the current draft. No mutation,
+prompt or git command is replayed after reconnect. Closing first requests real
+session/process/unpushed counts; Push and close must finish the push before the
+task is closed. When close cleanup fails, the task keeps its workspace reserved
+and offers Retry close even if its conversations have already been archived.
+The retry checks current process counts and uses the same confirmation flow.
+The sidebar removes an active selection once the scoped session read confirms
+it has left the active list. Archive has Undo; deletion uses the shared confirmation.
+Confirmed deletion closes the project's open tasks and stops its sessions before
+removing history. A cleanup failure keeps the project for an explicit retry.
+Progress and cleanup errors retain keyboard focus inside the confirmation.
+
+New project lists one directory level through an abortable provider, debouncing
+superseded queries before IPC dispatch. `folderProvider()` captures the current
+backend scope and rotates identity on replacement, clearing the picker's bounded
+cache. Folder errors remain local to the picker.
+Existing repositories show their current branch from bounded Git metadata reads.
+A path without a trailing slash selects/completes that folder; a trailing slash
+lists only its immediate children. Plain folders can be selected for Git setup.
+The picker can also offer an HTTPS /
+SSH Git URL and its destination under `~/code`. The store sends explicit,
+validated setup intents alongside the legacy-compatible path fields. Setup is
+request-owned and bounded to two minutes; the bridge allows a short margin for
+the response. The backend never overwrites an existing clone destination.
+Plain-folder setup creates an empty root commit to support task workspaces,
+leaving the person's files uncommitted. A failed clone removes only its newly
+created destination; successfully prepared repositories survive later failures.
+The creation card retains its draft and offers explicit durable reconciliation
+for an uncertain outcome. Creation opens a bounded project window around the new ID when the first page
+is full; its cursor survives background revision refreshes.
+
+The production settings sheet offers persisted project name, appearance,
+instructions and repository addition. Unimplemented PR/ticket linking and
+workspace-pool management remain disabled. Dialog content stays mounted through
+its modal exit; each new draft has a new identity. Timers, listeners, queued
+branch queries and selection epochs belong to their scoped owner.
+
+Project creation and settings offer a file picker on engines advertising
+`projectImages`. The renderer prepares a bounded raster thumbnail locally and
+uses the existing scope-bound project mutations to save it with project metadata.
+Project list requests explicitly opt into thumbnails to preserve the legacy page
+size. An appearance update with no image field preserves the stored image and
+an explicit null removes it, revealing the saved fallback face.
+
+Focused tests cover bounded/focused reconciliation, stale scopes, task setup and
+navigation cleanup, uncertain writes, server branch search, revision probing,
+git polling cleanup and navigating away/back during a git mutation. The
+`/connected-workspace` preview composes the production feature with an isolated
+typed fixture; it is not part of the production import graph.
+
+The October 27 task-screen update replaces the commit modal with the anchored
+`CommitPanel`. A scope-bound `workspaceCommitPreview` returns 100-file windows,
+server-side filtering and complete selection totals; it never supplies an entire
+repository to Angular. The advertised `commitPanel` capability gates the new
+flow on older engines. Empty messages use the backend's existing agent message
+generator. A private index freezes selected changes before generation; excluded
+staged entries and edits made later by running sessions remain outside the commit.
+`WorkspaceTaskGitService` observes writing/committing/pushing phases only while
+its own operation is pending. Timers and replies belong to the selected task/scope.
+The visible selected task preloads one default 100-file commit page. The optional
+`changesRevision` from Git status covers local HEAD/index/worktree state, so
+unchanged polls and incoming upstream commits do not reload the file preview.
+Engines without the token retain bounded periodic reads. One pending default
+read is shared by preloading and panel opening; searches, exceptions and pages
+always use their exact query. A preload less than five seconds old opens without
+another read; older or locally invalidated data remains visible while the panel
+checks again. The backend's existing commit revision guard remains authoritative
+at submission. Cache metadata (including running-session warnings) expires after
+five seconds even when the local-change token stays the same.
+The header supplies cached data as `initialWindow`. Task/scope changes, Git
+mutations and teardown invalidate the cache and late replies. Failed background
+reads retain the previous page for display; they never mark it fresh. Background
+input updates do not replace an open panel's selection or page.
+No write is replayed on reconnect. Refresh status after an uncertain outcome.
+
+Close checks authoritative uncommitted, unpushed and process counts. A clean,
+idle task closes directly; other tasks show the existing confirmation. The
+workspace retains a scope-bound Toast/Undo operation after either flow. New
+session is discoverable on the selected task and through ⌥⌘N.
+
+Session rows expose archive only when the backend advertises `sessionArchive`.
+The owner removes a row from the normal list only after confirmed success, selects its next normal
+neighbour when necessary, and retains a scoped Toast/Undo. Main validates IDs,
+confirmation and response identity; backend checks task ownership/readiness and
+live activity before strict process cleanup.
+
+A session's `status` is the legacy value, in which detached shell commands make
+it read as `running`. Engines that separate them also send `turnStatus` (the
+agent's own state) and `commandCount`, only while commands run. The store prefers
+`turnStatus` for the glyph and the project and header counts, and passes
+`commandCount` to the row as `commands`. Archiving a session with commands
+requires `confirmStop`, because it stops them. Older engines omit both fields
+and keep their previous display.
+
+Unstarted sessions expose an engine-owned `canDelete` flag and use the named
+`workspaceDeleteSession` operation instead. The engine rechecks persisted
+conversation identity, completion and live activity while claiming the row;
+started sessions must be archived. Existing session cleanup releases prewarmed
+runtimes before removal; cleanup failures restore the unused row for retry. Empty deletion promotes children, removes the
+row and moves selection/focus like archive, but creates no archive or Undo.
+Older engines omit the flag and retain their archive behavior.
+
+Desktop row archives retain `archivedByTask` so normal task reopen restores them, without changing legacy
+standalone archive behavior. Completed and stopped conversations remain normal
+sessions in chronological order; only explicit archiving removes a row. Archiving
+the selected session selects the next remaining conversation, wrapping to the
+first. Undo restores a stopped conversation. Unknown writes require
+refresh/reconciliation; neither archive nor restore is replayed.
+
+The session cap is a device-local user preference owned by
+`SidebarPreferencesService`, independent of backend/project settings. Settings →
+Tasks applies it across projects and synchronizes other windows through storage
+events. Session reads opt into newest-first keyset pages returned in chronological
+order; omitted ordering retains legacy oldest-first behavior. Each window stays
+bounded to 20 sessions with explicit older-page navigation. The cap and attention
+exceptions apply to this supplied window; this slice does not enumerate all
+historical sessions just to render the sidebar.
+
+Session disclosures belong to the workspace's backend scope, keyed by
+task ID, rather than the lifetime of one project-view component. The TaskList
+binds its bounded `sessionDisclosures` model to that map. Changing project views,
+refreshing resource DTOs, creating sessions and archiving sessions retain the
+remaining hidden identities; only Show fewer resets the task's disclosure.
+The map retains at most 200 task entries and is released on scope reset, so
+unrelated backends cannot inherit disclosures for coincidentally equal IDs.
+
+Backends advertising `sessionArchiveHistory` also expose a collapsible Archived
+section for each ready active task. `WorkspaceSessionArchives` owns independent
+newest-first 20-session keyset windows, retained only for the current bounded
+task page. A bounded one-session probe establishes whether each task has any archives;
+empty tasks omit the section. First opening loads the full bounded history page,
+and refresh reconciles requested windows without enumerating all archives.
+Restoring the last archived conversation removes the section. Empty older pages
+reconcile against the newest window before deciding whether any history remains. Main validates the optional lifecycle
+filter and rejects replies from the wrong task or lifecycle. Older runtimes keep
+their existing behavior and do not receive archive-history reads.
+
+Archived conversations can be selected without restoring them. Restore works
+independently of the Undo notification, returns a stopped conversation to the
+normal list, selects it and transfers focus once its entry fold becomes active.
+Changing an archive page clears a selection that leaves that window. Scope reset,
+task removal and disposal discard stale reads and release history state. A
+successful mutation invalidates earlier archive reads, waits for their shared
+transport request to settle, then reconciles durable history. Failed reads remain
+retryable inside the section; interrupted writes retain the existing uncertain
+outcome flow rather than being replayed.
+
+Project creation supplies a scope-bound `ProjectNameProvider` to both onboarding
+and the later-project dialog. The named `workspaceProjectNameAvailability` bridge
+reads `GET /desktop-workspace/projects/name-availability?name=…`, using the exact
+database name lookup across active, archived and hidden projects. It does not
+enumerate project pages. Pending/failed checks block progression and editing the
+name starts a new check; stale scope/cancelled replies are rejected. Creation also checks the name
+before repository setup, while the database constraint remains the final guard
+against concurrent creates. This check needs a backend exposing the new endpoint;
+an unavailable check leaves the draft intact and blocked.
+
+## Outages
+
+Losing readiness suspends observers, reads and preparation timers without clearing
+loaded navigation, selected sessions, dialogs or panel layout. The retained task
+window remains browsable locally. Recovery reconciles bounded saved project,
+task and session windows (including later pages) before rebinding IDs to the new
+scope. A changed configured machine clears the retained state. Home suspends the
+workspace while retaining it for a warm return.
+
+`WorkspaceTaskOutbox` owns up to ten local task drafts. Their original repository,
+project and stable request IDs travel together; a repository read precedes each
+first dispatch. Editing/removal is local until dispatch. Cancelling an edit
+restores the original waiting task. Dispatched creates never retry automatically.
+The existing backend request-ID uniqueness protects explicit create retries;
+new engines advertise `taskRequests` and supply the named `workspaceTaskRequest`
+read for exact uncertain-creation reconciliation. It queries the indexed request
+ID and expected repository, never enumerates tasks or creates a workspace.
+Older engines retain manual inspection with no unsupported requests.
+
+Git keeps its last loaded summary through an outage. Both the presentational
+GitBar and the integrating service block offline writes and state that nothing
+was sent. An interrupted git write remains unconfirmed until a fresh status read;
+it never enters either outbox. Close, delete, stage/settings changes and other
+nonqueued mutations retain pre-dispatch scope guards and explicit reconciliation.
+
+`WorkspaceSessionOutbox` similarly retains up to ten requests for a new session
+in an existing task. It checks that the task is still ready, journals its claim,
+and dispatches once. Accepted sessions appear in refreshed navigation without
+stealing the current conversation. An interrupted session create requires
+inspecting that task; it is not offered as a retryable mutation. Waiting task and
+session entries are marked “when back” in the sidebar and remain cancellable.
+Each creation outbox refreshes navigation once after its waiting burst drains,
+including requests added while that refresh is pending. Accepted creates are
+not reclassified or replayed if refreshing their rows fails.
+
+`WorkspaceWritingJournal` merges chat/task/session writing snapshots and sends
+saves immediately to main, where `AtomicJsonFile` coalesces disk work to one
+active and one latest pending write. The private sidecar is bounded to 16 MiB,
+with one MiB per window/machine snapshot. Saving failures are visible and block
+queued dispatch. Restored sending claims become unknown. Opaque backend scopes,
+SSH credentials and authentication challenges are never saved with writing.
+
+## Session organization
+
+The optional `sessionNesting` capability enables two-level session groups.
+`workspaceSessions` retains flat paging when `parentSessionId` is omitted; null
+selects roots and an ID selects a bounded child page. Normal child windows contain
+20 conversations, replace rather than accumulate earlier pages, and are retained
+only for visible roots. `WorkspaceSessionHierarchy` owns pending reads, deduplication,
+errors and stale-result rejection. WorkspaceStore owns confirmed moves through
+`workspaceMoveSession`, task/scope validation and uncertain-outcome reconciliation.
+Moves do not restart agents or change tasks, workspaces or fork provenance.
+
+With `sessionArchiveChildren`, archiving a parent also archives its subsessions,
+including children outside the loaded page. The engine preserves their grouping and
+confirms before stopping live work. Each conversation can be restored from Archived.
+Older engines promote children to task level when their parent is archived. Deleting
+a parent preserves children through `ON DELETE SET NULL`. Closing a task retains its
+organizational relationships for reopening. The automatic migration
+maps each old nonempty folder to its earliest active durable session (or earliest
+archived member), preserving names and archive states. Legacy folder tables and
+endpoints remain available for older clients; the new desktop does not create folders.

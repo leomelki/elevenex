@@ -9,7 +9,7 @@ export const resumePendingPromptsTool = defineTool({
   mutates: true,
   disallowSelfTarget: 'session',
   description:
-    'Explicitly resume another session’s paused prompt queue after an interruption. 🟡scoped. Resumes existing queued work through its active provider; inspect session_status first, then poll_session_status or await_session_event for progress. Sending a new prompt does not resume a paused queue.',
+    'Explicitly resume another session’s paused prompt queue after an interruption. 🟡scoped. Resumes existing queued work through its active provider; inspect session_status first, then await_session_event for progress. Sending a new prompt does not resume a paused queue.',
   inputShape: {
     sessionId: z
       .number()
@@ -22,6 +22,13 @@ export const resumePendingPromptsTool = defineTool({
       ctx,
       args.sessionId,
     );
+    if (provider === 'antigravity') {
+      throw new ToolError({
+        code: 'interactive_provider',
+        message: 'Resume the Antigravity queue from desktop chat.',
+        remediation: 'Open the Antigravity session in the desktop app and select Resume queue.',
+      });
+    }
     if (session.status === 'archived') {
       throw new ToolError({
         code: 'session_archived',
@@ -38,7 +45,7 @@ export const resumePendingPromptsTool = defineTool({
       data: { sessionId: args.sessionId, resumed: true, provider },
       deepLink: ctx.deepLink.session(args.sessionId),
       nextStep:
-        'Queue resume requested. Inspect session_status, or poll_session_status / await_session_event for progress.',
+        'Queue resume requested. Inspect session_status, or await_session_event for progress.',
     };
   },
 });

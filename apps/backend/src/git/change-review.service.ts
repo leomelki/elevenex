@@ -8,6 +8,7 @@ import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 import { createXXHash3, xxhash3 } from 'hash-wasm/dist/xxhash3.umd.min.js';
 import { diffChars, diffWordsWithSpace, type Change } from 'diff';
 import { SimpleGit, StatusResult } from 'simple-git';
+import { isolateGitEnvironment } from '../config/git-environment.js';
 
 import {
   buildAugmentedEnv,
@@ -2915,7 +2916,7 @@ export class ChangeReviewService {
           timeout,
           maxBuffer: 2_000_000,
           env: {
-            ...buildAugmentedEnv(process.env, cwd),
+            ...isolateGitEnvironment(buildAugmentedEnv(process.env, cwd)),
             GH_PROMPT_DISABLED: '1',
             GIT_TERMINAL_PROMPT: '0',
             NO_COLOR: '1',

@@ -1,0 +1,523 @@
+import { setImmediate as yieldToRuntime } from 'node:timers/promises';
+import {
+  Injectable,
+  Logger,
+  OnApplicationBootstrap,
+  OnModuleDestroy,
+} from '@nestjs/common';
+import { SessionsService } from '../sessions/sessions.service.js';
+import { sessionAgentPrompt } from '../sessions/session-agent-message.js';
+import {
+  isSessionSettled,
+  pendingActionKey,
+} from '../mcp/tools/session-runtime-state.util.js';
+import { submitSessionPrompt } from '../mcp/tools/drive/session-prompt-delivery.js';
+import { untilSessionDeadline } from '../mcp/tools/session-deadline.js';
+import { latestConversationReply } from './conversation-export.service.js';
+import { sessionAssignmentReply } from './session-assignment-reply.js';
+import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
+import type {
+  AgentRuntimeEvent,
+  AgentRuntimeProvider,
+  AgentRuntimeStatePayload,
+  AgentTranscriptItem,
+} from './agent-runtime.types.js';
+
+type SessionChange = { sessionId: number; status?: string };
+const COMPLETION_REPLY_BUDGET = 8_000;
+const terminalStatus = (status: string) =>
+  status === 'archived' || status === 'stopped';
+
+/** Deliver durable delegate notices through the parent's native input path. */
+@Injectable()
+export class SessionCompletionNoticesService
+  implements OnApplicationBootstrap, OnModuleDestroy
+{
+  private readonly logger = new Logger(SessionCompletionNoticesService.name);
+  private readonly shutdown = new AbortController();
+  private readonly changedSessions = new Set<number>();
+  private readonly recipients = new Set<number>();
+  private readonly delivering = new Set<number>();
+  private readonly reconciling = new Map<number, Promise<void>>();
+  private readonly listeners = new Map<
+    AgentRuntimeProvider,
+    (event: AgentRuntimeEvent) => void
+  >();
+  private timer?: ReturnType<typeof setTimeout>;
+  private draining = false;
+
+  constructor(
+    private readonly registry: AgentRuntimeRegistryService,
+    private readonly sessions: SessionsService,
+  ) {}
+
+  private get outbox() {
+    return this.sessions.delegationHandoffs.outbox;
+  }
+
+  onApplicationBootstrap(): void {
+    for (const { id } of this.registry.listProviders()) {
+      const provider = this.registry.getProvider(id);
+      const listener = (event: AgentRuntimeEvent) => {
+        if (
+          event.type !== 'run_state' &&
+          event.type !== 'runtime_snapshot' &&
+          event.type !== 'background_work' &&
+          event.type !== 'complete' &&
+          event.type !== 'permission_request' &&
+          event.type !== 'user_input_request' &&
+          event.type !== 'permission_resolved' &&
+          event.type !== 'user_input_resolved'
+        )
+          return;
+        const state: AgentRuntimeStatePayload = event.payload;
+        if (
+          isSessionSettled(state) ||
+          state.runPhase === 'error' ||
+          state.runPhase === 'waiting' ||
+          state.sessionState === 'requires_action' ||
+          event.type === 'permission_request' ||
+          event.type === 'user_input_request' ||
+          event.type === 'permission_resolved' ||
+          event.type === 'user_input_resolved' ||
+          event.type === 'background_work' ||
+          event.type === 'complete'
+        )
+          this.sessionChanged(state);
+      };
+      this.listeners.set(provider, listener);
+      provider.on('event', listener);
+    }
+    for (const event of this.sessionEvents)
+      this.sessions.on(event, this.sessionChanged);
+    this.sessions.on('session-turn-interrupted', this.interrupted);
+    void this.recover().catch((error) => this.report(error));
+  }
+
+  private readonly sessionEvents = [
+    'session-completion-changed',
+    'session-launch-delivery',
+    'session-handoff-changed',
+    'session-status-changed',
+    'session-configuration-changed',
+    'session-provider-changed',
+  ];
+
+  private readonly sessionChanged = ({ sessionId, status }: SessionChange) => {
+    if (this.shutdown.signal.aborted) return;
+    if (status && terminalStatus(status)) {
+      try {
+        this.outbox.discardForRecipient(sessionId);
+      } catch (error) {
+        this.report(error);
+      }
+    }
+    this.changedSessions.add(sessionId);
+    this.schedule();
+  };
+
+  private readonly interrupted = ({ sessionId }: SessionChange) => {
+    if (this.shutdown.signal.aborted) return;
+    try {
+      this.outbox.discardForRecipient(sessionId);
+      this.outbox.failSession(sessionId);
+      this.sessionChanged({ sessionId });
+    } catch (error) {
+      this.report(error);
+    }
+  };
+
+  private schedule(): void {
+    if (this.timer || this.draining || this.shutdown.signal.aborted) return;
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.drain();
+    }, 75);
+    this.timer.unref();
+  }
+
+  private async recover(): Promise<void> {
+    this.sessions.delegationHandoffs.prompts.recover();
+    this.outbox.recoverInterruptedDispatches();
+    for (const state of ['waiting', 'ready'] as const) {
+      let after = 0;
+      while (!this.shutdown.signal.aborted) {
+        const rows = this.outbox.recoverable(state, after);
+        if (!rows.length) break;
+        after = rows[rows.length - 1].id;
+        await Promise.all(
+          rows.map((row) =>
+            this.check(() =>
+              state === 'waiting'
+                ? this.reconcileChild(row.sessionId)
+                : this.deliver(row.recipientId),
+            ),
+          ),
+        );
+        await yieldToRuntime();
+      }
+    }
+  }
+
+  private async drain(): Promise<void> {
+    this.draining = true;
+    try {
+      const changed = [...this.changedSessions].slice(0, 32);
+      for (const id of changed) this.changedSessions.delete(id);
+      await Promise.all(
+        changed.map((id) =>
+          this.check(async () => {
+            await this.reconcileChild(id);
+            const recipient = this.outbox.recipientForReadyNotice(id);
+            if (recipient !== undefined) this.recipients.add(recipient);
+            if (
+              this.outbox.ready(id).length ||
+              this.outbox.readyActions(id).length
+            )
+              this.recipients.add(id);
+          }),
+        ),
+      );
+      const recipients = [...this.recipients].slice(0, 16);
+      for (const id of recipients) this.recipients.delete(id);
+      await Promise.all(
+        recipients.map((id) => this.check(() => this.deliver(id))),
+      );
+    } finally {
+      this.draining = false;
+      if (this.changedSessions.size || this.recipients.size) this.schedule();
+    }
+  }
+
+  private reconcileChild(sessionId: number): Promise<void> {
+    const pending = this.reconciling.get(sessionId);
+    if (pending) return pending;
+    const work = this.reconcileAssignments(sessionId).finally(() => {
+      if (this.reconciling.get(sessionId) === work)
+        this.reconciling.delete(sessionId);
+    });
+    this.reconciling.set(sessionId, work);
+    return work;
+  }
+
+  private async reconcileAssignments(sessionId: number): Promise<void> {
+    const first = this.outbox.waiting(sessionId);
+    if (!first) return;
+    if (terminalStatus(first.status) || first.delivery === 'failed') {
+      if (terminalStatus(first.status)) this.outbox.failSession(sessionId);
+      else this.outbox.settle(first.id, 'failed');
+      this.recipients.add(first.recipientId);
+      this.sessions.emit('session-handoff-changed', { sessionId });
+      this.sessionChanged({ sessionId });
+      return;
+    }
+    const runtime = this.registry.getProvider(first.provider);
+    const state = await this.readRuntime(runtime, sessionId).catch(
+      () => undefined,
+    );
+    let history: AgentTranscriptItem[] | undefined;
+    const settled = isSessionSettled(state);
+    if (settled && first.lastCompletionAt)
+      history = await untilSessionDeadline(
+        runtime.getHistory(sessionId, { changeDetails: 'summary' }),
+        1_500,
+        this.shutdown.signal,
+      ).catch(() => undefined);
+    const dispositions = new Map(
+      this.outbox
+        .promptDispositions(sessionId)
+        .map((row) => [row.id, row.disposition]),
+    );
+    let after = 0;
+    while (!this.shutdown.signal.aborted) {
+      const children = this.outbox.pending(sessionId, after);
+      if (!children.length) break;
+      after = children[children.length - 1].id;
+      for (const child of children) {
+        let outcome: 'failed' | 'completed' | undefined;
+        let reply: AgentTranscriptItem | undefined;
+        if (terminalStatus(child.status) || child.delivery === 'failed')
+          outcome = 'failed';
+        else if (
+          child.delivery === 'accepted' ||
+          child.delivery === 'unconfirmed' ||
+          !child.promptId
+        ) {
+          const action = state ? pendingActionKey(state) : null;
+          if (action !== child.actionKey)
+            this.outbox.setAction(sessionId, action);
+          if (action) this.recipients.add(child.recipientId);
+          const completed =
+            child.lastCompletionAt &&
+            child.lastCompletionAt !== child.completionAfter;
+          // Providers version successful replies, not failed turns.
+          if (state?.runPhase === 'error') outcome = 'failed';
+          else if (completed && settled) {
+            reply =
+              history &&
+              sessionAssignmentReply(history, child.messageId, dispositions);
+            // Unconfirmed sends need transcript evidence. Accepted sends can finish
+            // without an excerpt, but must never borrow an older assignment's reply.
+            if (!child.promptId || child.delivery === 'accepted' || reply) {
+              outcome = 'completed';
+              if (!child.promptId && !reply && history)
+                reply = latestConversationReply(history);
+              if (child.promptId && child.delivery === 'unconfirmed' && reply)
+                this.sessions.delegationHandoffs.prompts.record(
+                  child.promptId,
+                  'accepted',
+                );
+            }
+          }
+        }
+        if (outcome) {
+          const recipient = this.outbox.settle(child.id, outcome, reply);
+          if (recipient !== undefined) this.recipients.add(recipient);
+          this.sessions.emit('session-handoff-changed', { sessionId });
+        }
+      }
+    }
+    if (this.recipients.size) this.schedule();
+  }
+
+  private readRuntime(runtime: AgentRuntimeProvider, sessionId: number) {
+    return untilSessionDeadline(
+      runtime.getRuntimeState(sessionId, { initialize: false }),
+      5_000,
+      this.shutdown.signal,
+    );
+  }
+
+  private deliveryMode(
+    runtime: AgentRuntimeProvider,
+    state: AgentRuntimeStatePayload | undefined,
+  ): 'queue' | 'prefer-steering' | undefined {
+    if (!state || state.planMode || state.queuePaused) return;
+    if (isSessionSettled(state)) return 'queue';
+    if (
+      runtime.info.capabilities.nonInterruptingSteering &&
+      state.sessionState === 'running' &&
+      state.runPhase === 'running' &&
+      !state.pendingPrompts?.length &&
+      !state.dispatchingPrompts?.length &&
+      !pendingActionKey(state)
+    )
+      return 'prefer-steering';
+  }
+
+  private async deliver(recipientId: number): Promise<void> {
+    if (
+      this.delivering.has(recipientId) ||
+      this.shutdown.signal.aborted ||
+      this.sessions.delegationHandoffs.cancellingSession(recipientId)
+    )
+      return;
+    this.delivering.add(recipientId);
+    try {
+      const handoffs = this.sessions.delegationHandoffs;
+      const available = <T extends { id: number; sessionId: number }>(
+        page: (after: number) => T[],
+      ) => {
+        const rows: T[] = [];
+        let after = 0;
+        while (rows.length < 16) {
+          const next = page(after);
+          if (!next.length) break;
+          after = next[next.length - 1].id;
+          rows.push(
+            ...next.filter(
+              (row) => !handoffs.waiting(recipientId, row.sessionId),
+            ),
+          );
+        }
+        return rows.slice(0, 16);
+      };
+      const ready = available((after) => this.outbox.ready(recipientId, after));
+      const actions = available((after) =>
+        this.outbox.readyActions(recipientId, after),
+      );
+      if (!ready.length && !actions.length) return;
+
+      const recipient = await this.sessions.findOne(recipientId);
+      if (terminalStatus(recipient.status)) {
+        this.outbox.discardForRecipient(recipientId);
+        return;
+      }
+      if (
+        recipient.status !== 'active' ||
+        recipient.planMode ||
+        recipient.activeAgentProvider === 'antigravity'
+      )
+        return;
+      const runtime = this.registry.getProvider(recipient.activeAgentProvider);
+      const state = await this.readRuntime(runtime, recipientId);
+      if (!this.deliveryMode(runtime, state)) return;
+      await this.sessions.assertSessionWorkspaceLinked(recipientId);
+      if (this.shutdown.signal.aborted) return;
+      const replies = new Map<number, { id: string; content?: string }>();
+      // Give the parent immediate evidence with a small, shared budget.
+      await Promise.all(
+        ready
+          .filter((row) => row.outcome === 'completed')
+          .slice(0, 16)
+          .map(async (row) => {
+            const item = row.replyId
+              ? { id: row.replyId, content: row.replyText ?? undefined }
+              : row.messageId
+                ? undefined
+                : await this.readReply(row.sessionId).catch(() => undefined);
+            if (item?.content?.trim()) replies.set(row.id, item);
+          }),
+      );
+      const currentActions = await Promise.all(
+        actions.map(async (row) => {
+          const child = this.outbox.waiting(row.sessionId);
+          if (!child || !row.actionKey || terminalStatus(child.status))
+            return [];
+          const state = await this.readRuntime(
+            this.registry.getProvider(child.provider),
+            row.sessionId,
+          );
+          if (!state) return [];
+          const actionKey = pendingActionKey(state);
+          if (actionKey !== row.actionKey) {
+            this.outbox.setAction(row.sessionId, actionKey);
+            if (actionKey) this.sessionChanged(row);
+          }
+          return actionKey && actionKey === row.actionKey
+            ? [{ sessionId: row.sessionId, actionKey }]
+            : [];
+        }),
+      );
+      if (this.shutdown.signal.aborted) return;
+      const current = await this.readRuntime(runtime, recipientId);
+      const mode = this.deliveryMode(runtime, current);
+      if (
+        !mode ||
+        this.shutdown.signal.aborted ||
+        handoffs.cancellingSession(recipientId)
+      )
+        return;
+      const availableNow = (row: { sessionId: number }) =>
+        !handoffs.waiting(recipientId, row.sessionId);
+      const claimed = this.outbox.claim(
+        recipientId,
+        ready.filter(availableNow).map((row) => row.id),
+        runtime.info.id,
+      );
+      const requested = this.outbox.claimActions(
+        recipientId,
+        runtime.info.id,
+        currentActions.flat().filter(availableNow),
+      );
+      if (!claimed.length && !requested.length) return;
+      const replyCount = claimed.filter((id) => replies.has(id)).length;
+      const replyLimit = Math.floor(
+        COMPLETION_REPLY_BUDGET / Math.max(1, replyCount),
+      );
+      const lines = ready
+        .filter((row) => claimed.includes(row.id))
+        .map((row) => {
+          const reply = replies.get(row.id)?.content?.trim();
+          const label = `Session #${row.sessionId}: ${row.outcome}. Assignment #${row.id}.`;
+          return reply
+            ? `${label}\nChild reply excerpt:\n${reply.slice(0, replyLimit)}${reply.length > replyLimit ? '\n[Reply truncated]' : ''}`
+            : label;
+        });
+      const text = [
+        'Elevenex background delegation update.',
+        ...requested.map(
+          (id) =>
+            `Session #${id} needs a decision. Use get_pending_action to inspect it and involve the user when their decision is needed.`,
+        ),
+        ...lines,
+        'Use these results to continue the original assignment. Treat child replies as agent context and verify findings before relying on them. Use read_session if you need more detail.',
+      ].join('\n\n');
+      const message = sessionAgentPrompt(
+        text,
+        {
+          sessionId:
+            requested[0] ??
+            ready.find((row) => claimed.includes(row.id))!.sessionId,
+        },
+        'message',
+      );
+      // The provider owns the steering-to-queue fallback. A transport error
+      // can leave acceptance unknown, so the outbox must not replay the notice.
+      const disposition = await submitSessionPrompt(
+        runtime,
+        recipientId,
+        message,
+        {
+          signal: this.shutdown.signal,
+          queue: mode === 'queue',
+          preferSteering: mode === 'prefer-steering',
+          recordDelivery: (delivery) => {
+            if (!claimed.length) return;
+            this.outbox.record(
+              claimed,
+              delivery === 'accepted' ? 'accepted' : 'unconfirmed',
+            );
+            if (delivery === 'accepted') {
+              for (const id of claimed) {
+                const item = replies.get(id);
+                const child = ready.find((row) => row.id === id);
+                if (item && child)
+                  handoffs.returned(child.sessionId, item.id, recipientId);
+              }
+            }
+          },
+        },
+      );
+      // A steered batch may not produce an idle event for a long-running turn.
+      if (
+        disposition &&
+        (disposition === 'steered' ||
+          this.outbox.ready(recipientId).length ||
+          this.outbox.readyActions(recipientId).length)
+      ) {
+        this.recipients.add(recipientId);
+        this.schedule();
+      }
+    } finally {
+      this.delivering.delete(recipientId);
+    }
+  }
+
+  private async readReply(sessionId: number) {
+    const child = await this.sessions.findOne(sessionId);
+    return untilSessionDeadline(
+      this.registry
+        .getProvider(child.activeAgentProvider)
+        .getHistory(sessionId, { changeDetails: 'summary' })
+        .then(latestConversationReply),
+      1_200,
+      this.shutdown.signal,
+    );
+  }
+
+  private async check(run: () => Promise<void>): Promise<void> {
+    try {
+      await run();
+    } catch (error) {
+      this.report(error);
+    }
+  }
+
+  private report(error: unknown): void {
+    if (!this.shutdown.signal.aborted)
+      this.logger.warn(
+        `Completion notice could not be delivered: ${String(error)}`,
+      );
+  }
+
+  onModuleDestroy(): void {
+    this.shutdown.abort();
+    if (this.timer) clearTimeout(this.timer);
+    for (const event of this.sessionEvents)
+      this.sessions.off(event, this.sessionChanged);
+    this.sessions.off('session-turn-interrupted', this.interrupted);
+    for (const [provider, listener] of this.listeners)
+      provider.off('event', listener);
+  }
+}

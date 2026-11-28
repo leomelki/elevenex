@@ -1,0 +1,198 @@
+name: Reusable desktop build
+
+on:
+  workflow_call:
+    inputs:
+      source-sha:
+        description: Exact commit to build
+        type: string
+        required: true
+      release-tag:
+        description: Release containing the matching runtimes (empty for CI)
+        type: string
+        default: ''
+    secrets:
+      APPLE_CERT_BASE64:
+        required: false
+      APPLE_CERT_PASSWORD:
+        required: false
+      APPLE_ID_EMAIL:
+        required: false
+      APPLE_APP_SPECIFIC_PASSWORD:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
+      WINDOWS_CERT_BASE64:
+        required: false
+      WINDOWS_CERT_PASSWORD:
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  ELEVENEX_BACKEND_VERSION: ${{ inputs.source-sha }}
+  ELEVENEX_RELEASE_TAG: ${{ inputs.release-tag || format('runtime-{0}', inputs.source-sha) }}
+
+jobs:
+  desktop:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            runner: macos-15
+            arch: arm64
+            package-args: --mac dmg
+            installers: elevenex-new-desktop-macos-arm64.dmg
+            executable: mac-arm64/Elevenex Desktop.app/Contents/MacOS/Elevenex Desktop
+          - target: linux-x64
+            runner: ubuntu-22.04
+            arch: x64
+            package-args: --linux AppImage deb
+            installers: elevenex-new-desktop-linux-x86_64.AppImage elevenex-new-desktop-linux-amd64.deb
+            executable: linux-unpacked/elevenex-desktop
+          - target: linux-arm64
+            runner: ubuntu-22.04-arm
+            arch: arm64
+            package-args: --linux AppImage deb
+            installers: elevenex-new-desktop-linux-arm64.AppImage elevenex-new-desktop-linux-arm64.deb
+            executable: linux-arm64-unpacked/elevenex-desktop
+          - target: windows-x64
+            runner: windows-2022
+            arch: x64
+            package-args: --win nsis
+            installers: elevenex-new-desktop-windows-x64.exe
+            executable: win-unpacked/Elevenex Desktop.exe
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source-sha }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.3
+          cache: pnpm
+
+      - name: Install Linux packaging and display dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y fakeroot openssh-server libasound2 libgbm1 libgtk-3-0 libnss3 xvfb
+
+      - name: Initialize macOS disk image subsystem
+        if: runner.os == 'macOS'
+        run: sudo hdiutil info > /dev/null
+
+      - name: Install desktop and renderer dependencies
+        run: pnpm --filter @elevenex/desktop... --filter @elevenex/renderer... install --frozen-lockfile
+
+      - name: Lint and test desktop and renderer
+        if: matrix.target == 'linux-x64'
+        run: |
+          pnpm desktop:lint
+          xvfb-run -a pnpm desktop:test
+
+      - name: Package desktop
+        env:
+          ARCH: ${{ matrix.arch }}
+          PACKAGE_ARGS: ${{ matrix.package-args }}
+          RELEASE_BUILD: ${{ inputs.release-tag != '' }}
+          CSC_LINK: ${{ inputs.release-tag != '' && (runner.os == 'macOS' && secrets.APPLE_CERT_BASE64 || runner.os == 'Windows' && secrets.WINDOWS_CERT_BASE64) || '' }}
+          CSC_KEY_PASSWORD: ${{ inputs.release-tag != '' && (runner.os == 'macOS' && secrets.APPLE_CERT_PASSWORD || runner.os == 'Windows' && secrets.WINDOWS_CERT_PASSWORD) || '' }}
+          APPLE_ID: ${{ inputs.release-tag != '' && runner.os == 'macOS' && secrets.APPLE_ID_EMAIL || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ inputs.release-tag != '' && runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ inputs.release-tag != '' && runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+        run: |
+          args=()
+          if [[ "$RUNNER_OS" == macOS && "$RELEASE_BUILD" == true ]]; then
+            for key in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+              test -n "${!key}" || { echo "Missing required signing credential: $key"; exit 1; }
+            done
+            args+=(-c.mac.forceCodeSigning=true -c.mac.hardenedRuntime=true -c.mac.notarize=true -c.dmg.sign=true)
+          elif [[ "$RUNNER_OS" == Windows && -n "$CSC_LINK" ]]; then
+            args+=(-c.win.signAndEditExecutable=true -c.win.forceCodeSigning=true)
+          else
+            unset CSC_LINK CSC_KEY_PASSWORD
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            if [[ "$RUNNER_OS" == macOS ]]; then
+              # Apple Silicon needs an ad-hoc signature for the local smoke test.
+              args+=(-c.mac.identity=- -c.mac.hardenedRuntime=false -c.mac.notarize=false)
+            elif [[ "$RUNNER_OS" == Windows && "$RELEASE_BUILD" == true ]]; then
+              echo 'Windows installer is unsigned because WINDOWS_CERT_BASE64 is unset.' >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            display=(xvfb-run -a)
+          else
+            display=()
+          fi
+          read -ra targets <<< "$PACKAGE_ARGS"
+          "${display[@]}" pnpm desktop:package "${targets[@]}" "--$ARCH" "${args[@]}"
+
+      - name: Launch packaged desktop
+        env:
+          EXECUTABLE: apps/desktop/release/${{ matrix.executable }}
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            # Match the DEB installer's sandbox setup on hosts without user namespaces.
+            if ! unshare --user true; then
+              helper="$(dirname "$EXECUTABLE")/chrome-sandbox"
+              sudo chown root:root "$helper"
+              sudo chmod 4755 "$helper"
+            fi
+            xvfb-run -a node .github/scripts/smoke-packaged-desktop.cjs "$EXECUTABLE"
+          else
+            node .github/scripts/smoke-packaged-desktop.cjs "$EXECUTABLE"
+          fi
+
+      - name: Verify macOS signature and notarization
+        if: runner.os == 'macOS' && inputs.release-tag != ''
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          app='apps/desktop/release/mac-arm64/Elevenex Desktop.app'
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv --verbose=4 "$app" 2>&1 | grep -Fx "TeamIdentifier=$APPLE_TEAM_ID"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          codesign --verify --strict apps/desktop/release/elevenex-new-desktop-macos-arm64.dmg
+
+      - name: Verify Windows signatures when configured
+        if: runner.os == 'Windows' && inputs.release-tag != ''
+        env:
+          SIGNING_CONFIGURED: ${{ secrets.WINDOWS_CERT_BASE64 != '' }}
+        shell: pwsh
+        run: |
+          if ($env:SIGNING_CONFIGURED -ne 'true') { exit 0 }
+          foreach ($file in @('elevenex-new-desktop-windows-x64.exe', 'win-unpacked/Elevenex Desktop.exe')) {
+            $signature = Get-AuthenticodeSignature (Join-Path 'apps/desktop/release' $file)
+            if ($signature.Status -ne 'Valid') { throw "Invalid signature for ${file}: $($signature.Status)" }
+          }
+
+      - name: Stage installers with SHA-256 checksums
+        env:
+          INSTALLERS: ${{ matrix.installers }}
+        run: |
+          read -ra installers <<< "$INSTALLERS"
+          node .github/scripts/stage-release-assets.cjs dist-desktop "${installers[@]/#/apps/desktop/release/}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elevenex-new-desktop-${{ matrix.target }}
+          path: dist-desktop/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.release-tag != '' && 30 || 7 }}

@@ -1,5 +1,7 @@
 import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
 
+export type OpenCodeSteerReceipt = (signal: AbortSignal) => Promise<boolean>;
+
 export interface OpenCodeTurnSelection {
   model?: { providerID: string; modelID: string };
   agent?: string;
@@ -57,10 +59,15 @@ export interface OpenCodeClient {
     auth: Operations<OpencodeClient['mcp']['auth'], 'start'>;
   };
   event: Pick<OpencodeClient['event'], 'subscribe'>;
-  /** Native V2 operations where the newer protocol improves on V1. */
+  /** Protocol-specific operations implemented by the adapters. */
   moveSession?(sessionID: string, directory: string): Promise<void>;
   rewindHistory?(sessionID: string, messageID: string): Promise<void>;
-  steerPrompt?(sessionID: string, prompt: string): Promise<void>;
+  steerPrompt?(
+    sessionID: string,
+    prompt: string,
+    selection?: OpenCodeTurnSelection,
+    options?: { signal?: AbortSignal },
+  ): Promise<void | OpenCodeSteerReceipt>;
   answerForm?(
     requestID: string,
     content: Record<string, string | number | boolean | string[]>,

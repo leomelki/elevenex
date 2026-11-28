@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
 import type {
   OpenCodeClient,
@@ -7,7 +8,33 @@ import { openCodeModel } from './opencode-transcript.js';
 
 /** Keeps legacy protocol extensions separate from the native server's process lifecycle. */
 export function createOpenCodeV1Client(legacy: OpencodeClient): OpenCodeClient {
+  let messageClock = 0n;
   return Object.assign(legacy, {
+    steerPrompt: async (
+      sessionID: string,
+      text: string,
+      selection?: OpenCodeTurnSelection,
+      options?: { signal?: AbortSignal },
+    ) => {
+      // Legacy OpenCode sorts messages by ID. Reserve an ascending ID so
+      // admission can be reconciled after the original prompt returns.
+      const time = BigInt(Date.now()) * 0x1000n;
+      messageClock = time > messageClock ? time : messageClock + 1n;
+      const stamp = BigInt.asUintN(48, messageClock).toString(16).padStart(12, '0');
+      const messageID = `msg_${stamp}${randomBytes(14).toString('hex')}`;
+      await legacy.session.promptAsync(
+        { sessionID, messageID, ...selection, parts: [{ type: 'text', text }] },
+        options,
+      );
+      return async (signal: AbortSignal) => {
+        const result = await legacy.session.message(
+          { sessionID, messageID }, { signal, throwOnError: false },
+        );
+        if (!result.data && result.response.status !== 404)
+          throw new Error('Could not confirm OpenCode steering admission.');
+        return result.data?.info.id === messageID;
+      };
+    },
     resources: async () => {
       const [agents, skills, config] = await Promise.all([
         legacy.app.agents(),

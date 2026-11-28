@@ -1,0 +1,251 @@
+<div
+  class="composer"
+  [class.dropping]="dropping()"
+  [class.disabled]="disabled()"
+  cdkOverlayOrigin
+  #origin="cdkOverlayOrigin"
+>
+  <div class="input-height" exAutoHeight>
+    <div class="contents">
+      @if (waiting().length) {
+        <ex-composer-queue [items]="waiting()" (editingChanged)="waitingEditing.emit($event)" [waitingFor]="waitingFor() || 'the machine'" [reorderable]="false" (remove)="waitingRemoved.emit($event)" (edited)="waitingEdited.emit($event)" />
+      }
+      <ex-composer-queue
+        [items]="queue()"
+        [editable]="queueEditable()"
+        [reorderable]="queueReorderable()"
+        [disabled]="disabled() || (queueDisabled() ?? sending())"
+        (steer)="queueSteer.emit($event)"
+        (remove)="queueRemove.emit($event)"
+        (edited)="queueEdited.emit($event)"
+        (reordered)="queueReordered.emit($event)"
+      />
+      @if (otherFiles().length) { <ex-attachments [files]="otherFiles()" [editing]="true" [disabled]="disabled() || sending()" (removed)="attachmentRemoved.emit($event)" (retry)="attachmentRetry.emit($event)" /> }
+      @if (context().length) {
+        <div class="context">
+          @for (mention of context(); track mention.kind + ":" + mention.id) {
+            <ex-mention
+              [mention]="mention"
+              [removable]="true"
+              (removed)="contextRemoved.emit($event)"
+            />
+          }
+        </div>
+      }
+      <div class="drop-label" [class.visible]="!!dropping()" aria-hidden="true">
+        <span class="drop-icon"><ex-icon [name]="dropping() === 'session' ? 'at' : 'attach'" [size]="20" /></span>
+        <strong>{{ dropping() === 'session' ? 'Drop to mention session' : 'Drop files to attach' }}</strong>
+        <span>{{ dropping() === 'session' ? 'Add this conversation as context' : 'Add files to your message' }}</span>
+      </div>
+      <span class="drop-announcement" role="status">{{ dropAnnouncement() }}</span>
+      <div class="field">
+      @if (richMode()) {
+        <ex-element-editor [value]="draft()" [files]="elementFiles()" [disabled]="disabled()" [sending]="sending()"
+          [pickAvailable]="elementPickAvailable()" [initialSelection]="initialEditorSelection" [autofocus]="editorAutofocus"
+          [placeholder]="placeholder()"
+          [controls]="mentions()?.listId() || null" [activeOption]="mentions()?.activeOptionId() || null"
+          (changed)="updateRich($event)" (keyed)="onKey($event)" (removed)="removeElementById($event)"
+          (retry)="attachmentRetry.emit($event)" (repick)="elementRepick.emit($event)" (mention)="insertElement($event)" />
+        @if (unreferencedElements().length) {
+          <div class="staged-elements" aria-label="Attached browser elements">
+          @for (file of unreferencedElements(); track file.id) {
+            <ex-element-chip
+              [file]="file"
+              [editing]="true"
+              [disabled]="disabled() || sending()"
+              [mentioned]="referencedMarkers().has(file.marker!)"
+              [pickAvailable]="elementPickAvailable()"
+              (mention)="insertElement(file.marker!)"
+              (removed)="removeElement(file)"
+              (retry)="attachmentRetry.emit($event)"
+              (repick)="elementRepick.emit($event)"
+            />
+          }
+          </div>
+        }
+      } @else {
+      <textarea
+        #textarea
+        [class.words-leaving]="wordsLeaving()"
+        (animationend)="wordsLeaving.set(false)"
+        aria-label="Message the agent"
+        aria-autocomplete="list"
+        [attr.aria-controls]="mentions()?.listId() || null"
+        [attr.aria-activedescendant]="mentions()?.activeOptionId() || null"
+        rows="2"
+        [disabled]="disabled()"
+        [placeholder]="placeholder()"
+        [value]="draft()"
+        (input)="update($event)"
+        (keydown)="onKey($event)"
+      ></textarea>
+      }
+      </div>
+      @if (recording(); as recording) {
+        <div class="recording" role="status">
+          <ex-icon name="mic" [size]="14" /><span>{{ recording.time }}</span
+          ><span class="interim">{{ recording.interim }}</span>
+          <ex-icon-button
+            icon="check"
+            label="Keep dictation"
+            size="sm"
+            (pressed)="recordingKept.emit()"
+          />
+          <ex-icon-button
+            icon="x"
+            label="Discard dictation"
+            size="sm"
+            (pressed)="recordingDiscarded.emit()"
+          />
+        </div>
+      }
+    </div>
+  </div>
+  <div class="bar" [class.offline-bar]="!!waitingFor()" [class.compact-offline-settings]="!!waitingFor() && settingsDisabled()">
+    @if (showSettings() && modeAvailable()) {
+      <ex-mode-toggle
+        [value]="mode()"
+        [disabled]="disabled() || settingsDisabled() || settingsBusy()"
+        (changed)="modeChanged.emit($event)"
+      />
+    }
+    <ng-content select="[composerSettings]" />
+    @if (agent(); as value) {
+      @if (!hideAgent()) {
+        <ex-agent-picker
+          [value]="value"
+          [harnesses]="harnesses()"
+          [locked]="agentLocked()"
+          [disabled]="disabled() || settingsDisabled()"
+          [busy]="settingsBusy()"
+          [modelsRefreshAvailable]="modelsRefreshAvailable()"
+          [modelsError]="modelsError()"
+          (modelsRefreshRequested)="modelsRefreshRequested.emit()"
+          [showFork]="showFork()"
+          [showSavePreset]="showSavePreset()"
+          [reasoningAvailable]="reasoningAvailable()"
+          [fastAvailable]="fastAvailable()"
+          [canCompact]="canCompact()"
+          (changed)="agentChanged.emit($event)"
+          (fork)="forkAgent.emit()"
+          (savePreset)="savePreset.emit($event)"
+          (compactRequested)="compactRequested.emit()"
+        />
+      }
+    }
+    @if (
+      showSettings() && (!permissionChoices() || permissionChoices()!.length)
+    ) {
+      <ex-presence [show]="mode() === 'code'">
+        @if (permissionChoices(); as choices) {
+          <ex-permission-picker
+            [value]="permission()"
+            [choices]="choices"
+            [disabled]="
+              disabled() ||
+              settingsDisabled() ||
+              settingsBusy() ||
+              mode() !== 'code'
+            "
+            (changed)="permissionChanged.emit($event)"
+          />
+        } @else {
+          <ex-permission-picker
+            [value]="permission()"
+            [disabled]="
+              disabled() ||
+              settingsDisabled() ||
+              settingsBusy() ||
+              mode() !== 'code'
+            "
+            (changed)="permissionChanged.emit($event)"
+          />
+        }
+      </ex-presence>
+    }
+    <span class="grow"></span>
+    @if (waitingFor(); as machine) {
+      <div class="offline-chip" [title]="machine + ' is offline'">
+        <ex-icon name="server" [size]="14" />
+        <span role="status">
+          <span class="offline-machine">{{ machine }} is offline</span>
+          <span class="offline-short" aria-hidden="true">Offline</span>
+        </span>
+        <button exButton variant="ghost" class="offline-reconnect" (click)="reconnectRequested.emit()">{{ waitingAction() }}</button>
+      </div>
+    }
+    @if (attachmentsEnabled()) {
+      <input #fileInput type="file" multiple hidden (change)="filesChosen($event)" />
+      <ex-icon-button icon="attach" label="Attach files (⌘U)" [disabled]="disabled() || sending()" (pressed)="chooseFiles()" />
+    }
+    @if (showTools()) {
+      <ex-tools-menu
+        [servers]="servers()"
+        (attach)="attach.emit()"
+        (mention)="openMentions()"
+        (manage)="manageServers.emit()"
+        (serverChanged)="serverChanged.emit($event)"
+      />
+    }
+    @if (showDictation()) {
+      <ex-icon-button
+        icon="mic"
+        label="Dictate (⌘D)"
+        [disabled]="disabled() || !!recording()"
+        (pressed)="dictate.emit()"
+      />
+    }
+    @if (running() && stoppable()) {
+      <ex-icon-button
+        icon="stop"
+        label="Stop agent (⌘.)"
+        [disabled]="disabled()"
+        (pressed)="stop.emit()"
+      />
+    }
+    <button
+      exButton
+      variant="primary"
+      #sendButton
+      class="send"
+      [class.queue-send]="!!waitingFor()"
+      type="button"
+      [disabled]="disabled() || sending() || submissionDisabled() || !canSend() || !!recording()"
+      [attr.aria-busy]="sending()"
+      [attr.aria-label]="
+        waitingFor() ? 'Queue message (Enter)' : running() && steeringEnabled()
+          ? 'Queue message (Enter), or Alt Enter to steer'
+          : running() ? 'Queue message (Enter)' : 'Send message (Enter)'
+      "
+      [title]="waitingFor() ? 'Queue · ↵' : running() ? steeringEnabled() ? 'Queue · ↵, Steer · ⌥↵' : 'Queue · ↵' : 'Send · ↵'"
+      (click)="send()"
+    >
+      @if (waitingFor()) { <ex-icon name="clock" [size]="14" /> Queue }
+      @else { <ex-icon [name]="running() ? 'layers' : 'arrow-up'" [size]="16" /> }
+    </button>
+  </div>
+</div>
+<ng-template
+  cdkConnectedOverlay
+  [cdkConnectedOverlayOrigin]="origin"
+  [cdkConnectedOverlayOpen]="mentionQuery() !== null"
+  [cdkConnectedOverlayPositions]="[
+    {
+      originX: 'start',
+      originY: 'top',
+      overlayX: 'start',
+      overlayY: 'bottom',
+      offsetY: -8,
+    },
+  ]"
+  (overlayOutsideClick)="mentionQuery.set(null)"
+>
+  <ex-mention-menu
+    [query]="mentionQuery() || ''"
+    [items]="allMentionItems()"
+    [actionLabel]="elementPickAvailable() ? 'Point at an element in the browser' : ''"
+    (selected)="insertMention($event)"
+    (action)="pickFromMentions()"
+    (closed)="mentionQuery.set(null)"
+  />
+</ng-template>

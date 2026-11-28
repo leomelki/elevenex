@@ -238,7 +238,11 @@ export class SpeechToTextSettingsComponent {
   );
 
   readonly cleanupModelOptions = computed<OptionSelectItem[]>(() =>
-    agentModelOptions(this.cleanupCatalog(), this.settings().cleanupModel ?? ''),
+    agentModelOptions(
+      this.cleanupCatalog(),
+      this.settings().cleanupModel ?? '',
+      this.settings().cleanupProvider ?? undefined,
+    ),
   );
 
   readonly cleanupModelSelectable = computed(() => {
@@ -246,7 +250,8 @@ export class SpeechToTextSettingsComponent {
     if (!catalog || !catalog.supportsModelSelection) {
       return false;
     }
-    return catalog.models.length > 0 || !!this.settings().cleanupModel;
+    return catalog.models.length > 0 ||
+      (catalog.provider !== 'codex' && !!this.settings().cleanupModel);
   });
 
   /** Explains an empty or disabled picker rather than leaving it inert. */

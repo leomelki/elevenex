@@ -1,5 +1,4 @@
-import { yieldEditorWork } from '../files/editor-work.js';
-import { EditorBaselines } from './editor-baselines.js';
+
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -7,6 +6,7 @@ import { execFile, spawn, type ExecFileOptions } from 'node:child_process';
 import * as path from 'node:path';
 import { SimpleGit, StatusResult, LogResult } from 'simple-git';
 import type { RemoteWithRefs } from 'simple-git';
+import { isolateGitEnvironment } from '../config/git-environment.js';
 
 import {
   buildAugmentedEnv,
@@ -39,6 +39,7 @@ import { scheduledReadGit } from './git-read-scheduler.js';
 import { readWorktreeTextStats } from './git-file-stats.js';
 import type { WorktreeStatusFingerprintSnapshot } from './git-worktree-fingerprint.js';
 import { registerWorktreeCache } from './git-worktree-cache-lifecycle.js';
+import { readCommitMessageDiff } from './git-commit-message-diff.js';
 
 const SAFE_REF_PATTERN = /^[a-zA-Z0-9\/_.-]+$/;
 const MAX_COMMIT_MESSAGE_DIFF_CHARS = 24_000;
@@ -132,6 +133,8 @@ export interface GitStatusSummary {
   upstream: string | null;
   headSha: string | null;
   worktreeFingerprint: string;
+  /** Local changes only; remote tracking updates do not invalidate file previews. */
+  changesRevision?: string;
   ahead: number;
   behind: number;
   hasChanges: boolean;
@@ -145,6 +148,16 @@ export interface CommitResult {
   hash: string;
   message: string;
   generatedMessage: boolean;
+}
+
+export class NoStagedChangesException extends BadRequestException {
+  constructor(includeUnstaged: boolean) {
+    super(
+      includeUnstaged
+        ? 'No changes are available to commit.'
+        : 'No staged changes are available to commit.',
+    );
+  }
 }
 
 @Injectable()
@@ -171,58 +184,6 @@ export class GitService {
   constructor(
     private readonly textAgentGenerationService: TextAgentGenerationService,
   ) {}
-
-  async getEditorStatus(
-    worktreePath: string,
-    signal?: AbortSignal,
-  ): Promise<FileStatus[]> {
-    const raw = await this.editorBaselines.status(worktreePath, signal);
-    const files: FileStatus[] = [];
-    let start = 0,
-      count = 0;
-    while (start < raw.length) {
-      signal?.throwIfAborted();
-      const end = raw.indexOf('\0', start);
-      if (end === -1) break;
-      const x = raw[start],
-        y = raw[start + 1];
-      const file = raw.slice(start + 3, end);
-      start = end + 1;
-      let oldPath: string | undefined;
-      if (x === 'R' || x === 'C' || y === 'R' || y === 'C') {
-        const oldEnd = raw.indexOf('\0', start);
-        oldPath = raw.slice(start, oldEnd);
-        start = oldEnd + 1;
-      }
-      if (['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'].includes(x + y))
-        files.push({ path: file, status: 'conflicted', staged: false });
-      else if (x === '?')
-        files.push({ path: file, status: 'untracked', staged: false });
-      else
-        for (const [code, staged] of [
-          [x, true],
-          [y, false],
-        ] as const) {
-          if (!code || code === ' ' || code === '!') continue;
-          const status =
-            code === 'A'
-              ? 'added'
-              : code === 'D'
-                ? 'deleted'
-                : code === 'R' || code === 'C'
-                  ? 'renamed'
-                  : 'modified';
-          files.push({
-            path: file,
-            status,
-            staged,
-            ...(oldPath ? { oldPath } : {}),
-          });
-        }
-      if (++count % 2048 === 0) await yieldEditorWork();
-    }
-    return files;
-  }
 
   releaseWorktree(worktreePath: string): void {
     this.invalidateStatusSummaries(worktreePath);
@@ -427,6 +388,7 @@ export class GitService {
       upstream,
       headSha,
       worktreeFingerprint: statusSnapshot.fingerprint,
+      changesRevision: createHash('sha256').update(localVersion).update('\0').update(statusSnapshot.fingerprint).digest('hex'),
       ahead,
       behind,
       hasChanges: files.length > 0,
@@ -509,11 +471,16 @@ export class GitService {
       includeUnstaged?: boolean;
       provider?: AgentProviderId;
       requestId?: string;
+      /** Private snapshot index, owned and removed by the caller. */
+      indexFile?: string;
+      beforeCommit?: () => Promise<void>;
+      onPhase?: (phase: 'writing' | 'committing') => void;
     } = {},
   ): Promise<CommitResult> {
     const requestId = options.requestId ?? this.createRequestId();
     this.invalidateStatusSummaries(worktreePath);
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
+    if (options.indexFile) git.env('GIT_INDEX_FILE', options.indexFile);
 
     this.logger.log(
       `[commit:${requestId}] service started worktreePath="${worktreePath}" includeUnstaged=${Boolean(options.includeUnstaged)}`,
@@ -528,7 +495,11 @@ export class GitService {
         this.logger.log(`[commit:${requestId}] git add --all completed`);
       }
 
-      const status = await readWorktreeStatus(worktreePath, git);
+      // The worktree status cache copies the live index. Desktop commits
+      // validate the staged files in their private snapshot instead.
+      const status = options.indexFile
+        ? await git.status(['--untracked-files=no', '--no-ahead-behind'])
+        : await readWorktreeStatus(worktreePath, git);
       const stagedFiles = this.getUniqueStagedFiles(status);
       this.logger.log(
         `[commit:${requestId}] status loaded branch="${status.current || 'HEAD'}" staged=${stagedFiles.length} modified=${status.modified.length} deleted=${status.deleted.length} renamed=${status.renamed.length} untracked=${status.not_added.length} conflicted=${status.conflicted.length} stagedFiles=${this.previewList(stagedFiles)}`,
@@ -538,11 +509,7 @@ export class GitService {
         this.logger.warn(
           `[commit:${requestId}] aborting: no commit candidates after status check includeUnstaged=${Boolean(options.includeUnstaged)}`,
         );
-        throw new BadRequestException(
-          options.includeUnstaged
-            ? 'No changes are available to commit.'
-            : 'No staged changes are available to commit.',
-        );
+        throw new NoStagedChangesException(Boolean(options.includeUnstaged));
       }
 
       let message = options.message?.trim() ?? '';
@@ -552,9 +519,11 @@ export class GitService {
         this.logger.log(
           `[commit:${requestId}] no message provided; generating commit message`,
         );
+        options.onPhase?.('writing');
         const suggestion = await this.suggestCommitMessage(
           worktreePath,
           options.provider,
+          options.indexFile,
         );
         message = suggestion.body?.trim()
           ? `${suggestion.subject.trim()}\n\n${suggestion.body.trim()}`
@@ -570,6 +539,8 @@ export class GitService {
       }
 
       this.logger.log(`[commit:${requestId}] running git commit`);
+      await options.beforeCommit?.();
+      options.onPhase?.('committing');
       const result = await git.commit(message);
       this.invalidateStatusSummaries(worktreePath);
       this.logger.log(
@@ -596,6 +567,7 @@ export class GitService {
   async suggestCommitMessage(
     worktreePath: string,
     provider: AgentProviderId | undefined,
+    indexFile?: string,
   ): Promise<CommitMessageSuggestion> {
     const requestId = this.createRequestId();
     const messageProvider = this.normalizeCommitMessageProvider(provider);
@@ -604,8 +576,12 @@ export class GitService {
     );
 
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
+    if (indexFile) git.env('GIT_INDEX_FILE', indexFile);
     try {
-      const status = await readWorktreeStatus(worktreePath, git);
+      // The shared status cache reads the live index, not a supplied snapshot.
+      const status = indexFile
+        ? await git.status()
+        : await readWorktreeStatus(worktreePath, git);
       const stagedFiles = this.getUniqueStagedFiles(status);
       this.logger.log(
         `[commit-message:${requestId}] status loaded branch="${status.current || 'HEAD'}" staged=${stagedFiles.length} stagedFiles=${this.previewList(stagedFiles)}`,
@@ -621,7 +597,11 @@ export class GitService {
       }
 
       const [diff, branchName, log, conventionDocs] = await Promise.all([
-        this.getDiff(worktreePath, { staged: true }),
+        readCommitMessageDiff(
+          worktreePath,
+          MAX_COMMIT_MESSAGE_DIFF_CHARS,
+          indexFile,
+        ),
         this.getCurrentBranch(git),
         this.getLog(worktreePath, MAX_COMMIT_MESSAGE_LOG_ENTRIES),
         this.readCommitConventionDocs(worktreePath),
@@ -821,8 +801,6 @@ export class GitService {
     return git.diff(args);
   }
 
-  private readonly editorBaselines = new EditorBaselines();
-
   async show(
     worktreePath: string,
     ref: string,
@@ -834,12 +812,9 @@ export class GitService {
     }
 
     try {
-      const content = await this.editorBaselines.read(
-        worktreePath,
-        ref,
-        path,
-        signal,
-      );
+      signal?.throwIfAborted();
+      const content = await worktreeSimpleGit(worktreePath).show([`${ref}:${path}`]);
+      signal?.throwIfAborted();
       return content;
     } catch (error: any) {
       throw new Error(
@@ -1103,7 +1078,9 @@ export class GitService {
       const child = spawn('git', ['ls-remote', '--heads', '--', remote, ref], {
         cwd: worktreePath,
         env: {
-          ...buildAugmentedEnv(process.env, worktreePath),
+          ...isolateGitEnvironment(
+            buildAugmentedEnv(process.env, worktreePath),
+          ),
           GIT_TERMINAL_PROMPT: '0',
         },
         stdio: ['ignore', 'pipe', 'ignore'],
@@ -1418,7 +1395,10 @@ export class GitService {
       attempt += 1
     ) {
       const result = await generate(retryHint);
-      lastRawText = result?.text ?? '';
+      // A null result means startup, authentication, timeout or transport failed.
+      // A JSON correction prompt cannot repair it; avoid restarting the provider.
+      if (!result) return null;
+      lastRawText = result.text;
       const suggestion = this.parseCommitSuggestion(lastRawText, source);
       if (suggestion) {
         return suggestion;
@@ -1780,8 +1760,6 @@ export class GitService {
         if (file.startsWith('apps/backend/')) return 'backend';
         if (file.startsWith('apps/frontend/')) return 'frontend';
         if (file.startsWith('apps/electron/')) return 'electron';
-        if (file.startsWith('vscode-scm-extension/')) return 'scm';
-        if (file.startsWith('vscode-filesystem-provider/')) return 'filesystem';
         if (file === 'package.json' || file === 'pnpm-lock.yaml') return 'deps';
         return '';
       })

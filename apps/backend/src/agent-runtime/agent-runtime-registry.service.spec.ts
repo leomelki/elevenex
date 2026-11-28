@@ -11,6 +11,17 @@ jest.mock('../config/system-paths.js', () => ({
 }));
 
 describe('provider catalog capabilities', () => {
+  it('does not invent effort levels when a harness catalog fails', async () => {
+    const registry = new AgentRuntimeRegistryService([
+      {
+        info: { id: 'custom', displayName: 'Custom' },
+        getModelCatalog: jest.fn().mockRejectedValue(new Error('offline')),
+      } as unknown as AgentRuntimeProvider,
+    ]);
+    expect((await registry.listModelCatalogs())[0].reasoningEfforts).toEqual(
+      [],
+    );
+  });
   it('does not query an unrelated slow provider for a picker read', async () => {
     const payload = {
       models: [],

@@ -1,0 +1,45 @@
+@if (asset()?.kind === 'page') {
+  <section class="page">
+    <header>
+      <span>{{ pageTitle() }}</span>
+      <button type="button" (click)="openPage.emit(path())">Open in Browser</button>
+    </header>
+    <p class="page-note">{{ path() }}</p>
+  </section>
+} @else if (asset()?.kind === 'video') {
+  @if (asset(); as file) {
+    @if (file.kind === 'video') {
+      <ex-markdown-recording
+        [source]="file.src || ''" [loading]="!!file.loading" [error]="file.error || ''"
+        [knownDuration]="file.dur || 0" [poster]="file.poster || ''"
+        [width]="file.w" [height]="file.h" [caption]="caption()"
+        [showCaption]="showCaption()" [compact]="compact()" [marks]="file.marks || []"
+        [active]="active()"
+        (openFile)="openFile.emit(path())"
+      />
+    }
+  }
+} @else {
+  <figure>
+    <div class="media-frame" [attr.aria-busy]="imageLoading() ? 'true' : null">
+      @if (imageSource(); as source) {
+        <button #imageTrigger type="button" class="image" (click)="showViewer(imageTrigger)"
+          [attr.aria-label]="'Enlarge ' + (caption() || path())">
+          <img [src]="source" [alt]="caption()" loading="lazy" (error)="failedSource.set(source)" />
+        </button>
+      } @else {
+        <div class="media-status" role="status">
+          <span>{{ imageStatus() }}</span>
+          @if (!imageLoading()) {
+            <button type="button" (click)="openFile.emit(path())">Open {{ caption() || path() }}</button>
+          }
+        </div>
+      }
+    </div>
+    @if (showCaption()) { <figcaption>{{ caption() }}</figcaption> }
+  </figure>
+}
+@if (viewer(); as preview) {
+  <ex-image-viewer [source]="preview.source" [label]="preview.label" [from]="preview.from"
+    [open]="active() && viewerOpen()" (closeRequested)="viewerOpen.set(false)" (closed)="viewer.set(null)" />
+}

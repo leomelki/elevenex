@@ -1,0 +1,54 @@
+name: Git runtime compatibility
+
+on:
+  pull_request:
+    paths:
+      - "apps/backend/**"
+      - "packages/**"
+      - "scripts/test-git-runtime.mjs"
+      - ".github/workflows/git-runtime.yml"
+      - "pnpm-lock.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  git-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        git: [modern, legacy]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.4
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install backend dependencies
+        run: pnpm --filter elevenex-backend... install --frozen-lockfile --ignore-scripts
+      - name: Prepare shared packages and SQLite
+        run: |
+          pnpm --filter @elevenex/shared --filter @elevenex/browser-network --filter @elevenex/browser-inspection --filter @elevenex/browser-agent build
+          pnpm --dir apps/backend rebuild better-sqlite3
+      - name: Build isolated legacy Git
+        if: matrix.git == 'legacy'
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 https://www.kernel.org/pub/software/scm/git/git-2.25.1.tar.xz -o "$RUNNER_TEMP/git.tar.xz"
+          tar -xJf "$RUNNER_TEMP/git.tar.xz" -C "$RUNNER_TEMP"
+          make -C "$RUNNER_TEMP/git-2.25.1" -j2 NO_OPENSSL=YesPlease NO_CURL=YesPlease NO_EXPAT=YesPlease NO_TCLTK=YesPlease NO_PERL=YesPlease NO_PYTHON=YesPlease NO_GETTEXT=YesPlease git
+      - name: Test maintained Git and modern storage
+        if: matrix.git == 'modern'
+        run: node scripts/test-git-runtime.mjs "$(command -v git)" --modern
+      - name: Test legacy fallbacks
+        if: matrix.git == 'legacy'
+        run: node scripts/test-git-runtime.mjs "$RUNNER_TEMP/git-2.25.1/git"

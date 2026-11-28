@@ -37,6 +37,7 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
         actionKind?: string | null;
         actionLabel?: string | null;
         backgroundActive?: boolean;
+        failed?: boolean;
       }) => {
         this.broadcast({
           type: 'status-changed',
@@ -46,6 +47,7 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
           actionKind: data.actionKind ?? null,
           actionLabel: data.actionLabel ?? null,
           backgroundActive: data.backgroundActive ?? false,
+          ...(data.failed ? { failed: true } : {}),
         });
       },
     );

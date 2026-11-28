@@ -1,0 +1,24 @@
+:host { display: inline-flex; min-width: 0; max-width: 100%; }
+:host(.well) { width: 100%; }
+.value { font: inherit; position: relative; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; height: 28px; box-sizing: border-box; padding: 0 8px; margin-left: -8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink); font-size: 13px; text-align: left; cursor: text; transition: background-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
+.value.mono, .value.mono input { font-family: var(--font-mono); font-size: 12.5px; }
+button.value:hover { background: var(--surface-sunken); }
+button.value:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
+.text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.empty .text { color: var(--ink-muted); font-family: var(--font-sans); font-size: 13px; }
+.prompt { flex: none; color: var(--ink-muted); }
+.pencil { flex: none; color: var(--ink-muted); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+button:hover .pencil, button:focus-visible .pencil { opacity: 1; }
+.editing { width: 280px; background: var(--surface-raised); box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 3px var(--accent-soft); cursor: auto; }
+input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-size: 13px; outline: 0; }
+.well { margin-left: 0; width: 100%; height: 34px; padding: 0 10px; background: var(--surface-sunken); }
+.well .pencil { margin-left: auto; }
+button.well:hover { background: color-mix(in srgb, var(--surface-sunken) 70%, var(--line)); }
+.well.editing { background: var(--surface-raised); }
+.field { margin-left: 0; flex: none; width: 220px; height: 30px; padding: 0 10px; background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.field .pencil { margin-left: auto; opacity: .8; }
+button.field:hover { background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--ink-muted); }
+button.field:hover .pencil { opacity: 1; color: var(--ink); }
+button.field:focus-visible { box-shadow: inset 0 0 0 1px var(--line-strong), var(--focus-ring); }
+.field.editing { width: 220px; box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 3px var(--accent-soft); }
+button:disabled { opacity: .45; cursor: default; }

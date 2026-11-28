@@ -1,0 +1,728 @@
+import type { DelegatedSessionWork, SessionAgentContext, SessionAgentSender, SessionAgentTurnEntry } from './session-agents';
+
+/** Bounded, provider-neutral conversation contracts. Raw provider payloads stay in main/backend. */
+export interface SessionChatTarget {
+  readonly taskId: number;
+  readonly sessionId: number;
+}
+export interface SessionChatRead extends SessionChatTarget {
+  readonly requestId: string;
+  /** Omitted by older clients: 80-item pages. Window mode requests up to 320. */
+  readonly loadingMode?: 'window' | 'progressive';
+  /** Older engines can ignore this option and return ordinary transcript items. */
+  readonly summarizeCompleted?: true;
+  /** Include small recent saved turns in the completed view. */
+  readonly summarizeRecent?: true;
+  /** Tool rows include display headings and versioned references to their evidence. */
+  readonly deferToolDetails?: true;
+  readonly after?: string;
+  readonly before?: string;
+  /** Exclusive item cursor for continuing toward the live end of history. */
+  readonly following?: string;
+}
+
+export interface SessionChatWatch extends SessionChatTarget {
+  readonly watchId: string;
+  readonly loadingMode: 'window' | 'progressive';
+  /** The last applied live cursor for this session and view. */
+  readonly after?: string;
+}
+
+export type SessionChatStreamEvent = SessionChatTarget & {
+  readonly scopeId: string;
+  readonly watchId: string;
+} & (
+  | { readonly type: 'page'; readonly delivery: number; readonly page: SessionChatStreamUpdate }
+  | { readonly type: 'reconnecting' }
+  | { readonly type: 'closed'; readonly error: import('./backend-client').BackendClientError }
+);
+
+/** One application event in the desktop chat SSE protocol. */
+export interface SessionChatStreamPage {
+  readonly after: string | null;
+  readonly page: SessionChatStreamUpdate;
+}
+export type SessionChatStreamUpdate = Omit<SessionChatPage, 'state'> & {
+  /** Present on connection and every reset, then only when state changes. */
+  readonly state?: SessionChatState;
+};
+export const SESSION_CHAT_STREAM_FRAME_BYTES = 4 * 1024 * 1024;
+/** Display metadata from a durable session-context snapshot; never includes its contents or path. */
+export interface SessionChatMention {
+  readonly sessionId: number;
+  readonly title: string;
+}
+export type AssistantMessagePhase = "commentary" | "final";
+
+export interface SessionChatRecord {
+  readonly id: string;
+  /** A saved user prompt with a provider history boundary. */
+  readonly editable?: true;
+  readonly kind:
+    | "user"
+    | "assistant"
+    | "thinking"
+    | "tool_use"
+    | "tool_result"
+    | "system"
+    | "error";
+  /** Provider-reported phase of an assistant message. Older engines may omit it. */
+  readonly assistantPhase?: AssistantMessagePhase;
+  /** Attachment references only; bytes are fetched separately for the selected chat. */
+  readonly media?: readonly SessionChatMediaReference[];
+  readonly mentions?: readonly SessionChatMention[];
+  readonly sender?: SessionAgentSender;
+  /** Structured orchestration from recognized tools, retained when evidence is deferred. */
+  readonly agent?: SessionAgentTurnEntry;
+  readonly text: string;
+  readonly timestamp: string;
+  readonly toolId: string | null;
+  readonly toolName: string | null;
+  readonly toolKind: string | null;
+  readonly input: string;
+  readonly error: boolean;
+  readonly truncated: boolean;
+  /** Provider-reported command facts; absent values remain unknown. */
+  readonly execution?: {
+    readonly exitCode?: number;
+    readonly cwd?: string;
+    readonly interrupted?: boolean;
+  };
+  /** Bounded outcome metadata; captured net changes take precedence over tool edits. */
+  readonly changes?: SessionChatChangeSummary;
+  /** Present on tool rows whose input and text are available through the detail read. */
+  readonly toolDetails?: SessionChatToolHeading;
+  /** Result identity and outcome, including when a page only contains the call. */
+  readonly receipt?: { readonly id: string; readonly error: boolean; readonly toolDetails?: SessionChatToolHeading };
+  /** The matching call's heading on a deferred result that may be paged separately. */
+  readonly invocation?: {
+    readonly id: string;
+    readonly toolKind: string | null;
+    readonly toolDetails: SessionChatToolHeading;
+  };
+}
+export interface SessionChatToolHeading {
+  readonly revision: string;
+  readonly summary?: string;
+  readonly meta?: string;
+}
+export interface SessionChatToolReference {
+  readonly id: string;
+  readonly revision: string;
+}
+export interface SessionChatToolSource {
+  /** Saved timeline addresses use the enclosing turn revision for both records. */
+  readonly turnId?: string;
+  readonly item: SessionChatToolReference;
+  readonly result?: SessionChatToolReference;
+}
+export interface SessionChatToolDetailsRead extends SessionChatTarget, SessionChatToolSource {
+  readonly requestId: string;
+}
+export type SessionChatToolRecord = Omit<SessionChatRecord, 'kind' | 'media' | 'mentions' | 'changes' | 'receipt' | 'invocation' | 'toolDetails'> & {
+  readonly kind: 'tool_use' | 'tool_result';
+};
+export interface SessionChatToolEvidence extends SessionChatToolReference {
+  readonly record: SessionChatToolRecord;
+}
+export interface SessionChatToolDetailsReply extends SessionChatTarget {
+  readonly turnId?: string;
+  readonly item: SessionChatToolEvidence;
+  readonly result?: SessionChatToolEvidence;
+}
+export interface SessionChatItem extends SessionChatRecord {
+  /** A complete history entry at the user record. Its hidden rows page separately. */
+  readonly completedTurn?: SessionChatCompletedTurn;
+  /** Reconciled changes for a complete saved turn sent as ordinary records. */
+  readonly turnChanges?: SessionChatChangeSummary;
+}
+export interface SessionChatCompletedTurn {
+  readonly revision: string;
+  /** Last source item, used as the exclusive cursor when paging forward. */
+  readonly endId: string;
+  readonly reply: readonly SessionChatRecord[];
+  /** Bounded index for agent chips before the saved activity is opened. */
+  readonly agents?: readonly SessionAgentTurnEntry[];
+  /** Number of hidden records before the visible reply, for chronological playback. */
+  readonly beforeReply: number;
+  readonly total: number;
+  readonly counts: Readonly<Partial<Record<SessionChatToolCategory, number>>>;
+  readonly failures: number;
+  readonly duration?: number;
+  readonly changes?: SessionChatChangeSummary;
+}
+export interface SessionChatTurnWorkRead extends SessionChatTarget {
+  readonly requestId: string;
+  readonly turnId: string;
+  readonly revision: string;
+  readonly offset: number;
+  readonly deferToolDetails?: true;
+  /** Prefer a compact timeline. Engines can return an ordinary work page instead. */
+  readonly timeline?: true;
+  /** Optional larger batch for ordinary work pages. */
+  readonly limit?: number;
+}
+export interface SessionChatTurnWorkPage extends SessionChatTarget {
+  readonly turnId: string;
+  readonly revision: string;
+  readonly offset: number;
+  readonly total: number;
+  readonly nextOffset: number | null;
+  readonly items: readonly SessionChatRecord[];
+}
+
+export interface SessionChatTurnToolRow {
+  readonly agent?: SessionAgentTurnEntry;
+  readonly kind: 'call' | 'result';
+  readonly id: string;
+  readonly toolKind: string | null;
+  readonly label: string;
+  /** The ordinary heading when it differs from the original compact label. */
+  readonly fullLabel?: string;
+  readonly resultId?: string;
+  readonly error?: true;
+  readonly meta?: string;
+  readonly fullMeta?: string;
+  readonly media?: readonly SessionChatMediaReference[];
+}
+
+export interface SessionChatTurnMediaRow {
+  readonly kind: 'media';
+  readonly id: string;
+  readonly callId: string;
+  readonly media: readonly SessionChatMediaReference[];
+}
+
+/** A paired result already represented by its call occupies a null slot, so
+ * offsets and the saved reply boundary use the same coordinates in both formats. */
+export type SessionChatTurnTimelineRow = SessionChatTurnToolRow | SessionChatTurnMediaRow | SessionChatRecord | null;
+export interface SessionChatTurnTimelinePage extends Omit<SessionChatTurnWorkPage, 'items'> {
+  readonly timeline: readonly SessionChatTurnTimelineRow[];
+}
+export type SessionChatTurnWorkReply = SessionChatTurnWorkPage | SessionChatTurnTimelinePage;
+
+export const SESSION_CHAT_TURN_WORK_LIMIT = 40;
+export const SESSION_CHAT_TURN_WORK_MAX_LIMIT = 512;
+export const SESSION_CHAT_TURN_WORK_BATCH_BYTES = 1024 * 1024;
+export const SESSION_CHAT_TURN_TIMELINE_BYTES = 512 * 1024;
+export const SESSION_CHAT_TURN_TIMELINE_SLOTS = 8192;
+export const SESSION_CHAT_FULL_TIMELINE_BYTES = 4 * 1024 * 1024;
+export const SESSION_CHAT_FULL_TIMELINE_SLOTS = 32_768;
+export const SESSION_CHAT_TURN_TOOL_LABEL_LIMIT = 120;
+export const SESSION_CHAT_TURN_TOOL_META_LIMIT = 40;
+export const SESSION_CHAT_TOOL_LABEL_LIMIT = 500;
+export const SESSION_CHAT_TOOL_META_LIMIT = 100;
+export const SESSION_CHAT_TURN_REPLY_LIMIT = 8;
+export const SESSION_CHAT_TURN_FILES_LIMIT = 3;
+export const SESSION_CHAT_TOOL_CATEGORIES = [
+  'read', 'create', 'edit', 'run', 'search', 'list', 'web', 'ask', 'tool',
+] as const;
+export type SessionChatToolCategory = (typeof SESSION_CHAT_TOOL_CATEGORIES)[number];
+const toolCategories: Readonly<Record<string, SessionChatToolCategory>> = {
+  read: 'read',
+  image_view: 'read',
+  write: 'create',
+  edit: 'edit',
+  file_changes: 'edit',
+  notebook_edit: 'edit',
+  bash: 'run',
+  grep: 'search',
+  glob: 'list',
+  web_fetch: 'web',
+  web_search: 'web',
+  ask_user_question: 'ask',
+};
+export function sessionChatToolCategory(toolKind: string | null | undefined): SessionChatToolCategory {
+  return toolKind && Object.hasOwn(toolCategories, toolKind) ? toolCategories[toolKind]! : 'tool';
+}
+/** Missing receipts are distinct from successful receipts. */
+export function sessionChatToolStatus(callFailed: boolean, resultFailed: boolean | undefined, live: boolean) {
+  if (callFailed || resultFailed) return 'failed';
+  if (resultFailed !== undefined) return 'done';
+  return live ? 'running' : 'unknown';
+}
+export interface SessionChatQuestion {
+  readonly id: string;
+  readonly question: string;
+  readonly multiple: boolean;
+  readonly options: readonly {
+    readonly label: string;
+    readonly detail: string;
+  }[];
+}
+/** Provider-reported subscription allowance; API-key sessions omit it. */
+export interface SessionChatPlanUsage {
+  readonly provider: "codex" | "claude";
+  readonly planName: string | null;
+  readonly status: "available" | "warning" | "exhausted";
+  readonly windows: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly remainingPercentage: number;
+    /** Unix seconds, never a renderer-local countdown. */
+    readonly resetsAt: number | null;
+  }[];
+  readonly updatedAt: string;
+}
+/**
+ * Provider-reported allowance metered per model, such as Antigravity's.
+ * Separate from `planUsage` so desktops that validate that field strictly
+ * ignore it; a model absent from `models` has no reported quota state.
+ */
+export interface SessionChatModelQuota {
+  readonly provider: string;
+  /** The provider's name for the account's quota tier. */
+  readonly tier: string | null;
+  readonly models: readonly {
+    /** Matches a `SessionChatState.models` ID. */
+    readonly id: string;
+    readonly label: string;
+    /** 0–100 when reported; null when the provider reports only exhaustion. */
+    readonly remainingPercentage: number | null;
+    readonly exhausted: boolean;
+    /** Unix seconds, never a renderer-local countdown. */
+    readonly resetsAt: number | null;
+  }[];
+  readonly updatedAt: string;
+}
+export interface SessionChatState {
+  /** Changes after the engine replaces saved history in this conversation. */
+  readonly historyRewrite?: string;
+  /** Wake hint for an exact receipt read. This field alone does not carry an outcome. */
+  readonly settledDeliveryId?: string;
+  /** Durable transcript prompt ID for the current foreground turn, when known. */
+  readonly activePromptId?: string;
+  /** Present on engines supporting mark-seen; null means no unseen completion. */
+  readonly unseenCompletionAt?: string | null;
+  /** Explicit send can resolve at most eight session identities into context. */
+  readonly sessionMentions?: boolean;
+  readonly attachments?: boolean;
+  readonly browserElements?: boolean;
+  /** Bounded saved starting configurations; omitted by older engines. */
+  readonly presets?: readonly SessionChatPreset[];
+  readonly presetCatalogs?: boolean;
+  readonly presetEditing?: boolean;
+  readonly presetDefault?: SessionChatPresetDefault;
+  readonly provider: string;
+  readonly providers?: readonly {
+    readonly id: string;
+    readonly label: string;
+  }[];
+  /** Omitted by older engines, which do not support harness selection. */
+  readonly providerLocked?: boolean;
+  /** Optional capabilities keep older engines usable without speculative controls. */
+  readonly controls?: {
+    readonly plan: boolean;
+    readonly reasoning: boolean;
+    readonly fast: boolean;
+  };
+  readonly fast?: boolean;
+  readonly phase: "idle" | "running" | "waiting" | "error";
+  readonly canInterrupt: boolean;
+  readonly canSteer?: boolean;
+  readonly error: string | null;
+  readonly model: string | null;
+  readonly models: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly reasoningEfforts?: readonly string[];
+    readonly supportsFastMode?: boolean;
+  }[];
+  readonly reasoning: string | null;
+  readonly plan: boolean;
+  readonly permissionMode: string | null;
+  readonly permissionModes: readonly string[];
+  readonly context: {
+    readonly tokens: number;
+    readonly limit: number;
+    readonly percentage: number;
+  } | null;
+  /** Optional for compatibility with engines predating subscription usage. */
+  readonly planUsage?: SessionChatPlanUsage | null;
+  /** Optional; omitted by engines and providers without per-model quota. */
+  readonly modelQuota?: SessionChatModelQuota | null;
+  readonly queue: readonly { readonly id: string; readonly text: string; readonly sender?: SessionAgentSender }[];
+  readonly queuePaused: boolean;
+  /** Queue entries handed off to the harness, awaiting native transcript items. */
+  readonly dispatchingPrompts?: readonly Pick<SessionChatItem, "id" | "text" | "timestamp" | "media" | "mentions" | "sender">[];
+  readonly permission: {
+    readonly id: string;
+    readonly title: string;
+    readonly description: string;
+    readonly input: string;
+    readonly allowAlways: boolean;
+  } | null;
+  readonly question: {
+    readonly id: string;
+    readonly message: string;
+    readonly questions: readonly SessionChatQuestion[];
+    readonly url: string | null;
+    /** Present when the engine recognizes a one-shot form confirmation or
+     * cannot offer an answer for this elicitation. Older engines omit it. */
+    readonly decision?:
+      | { readonly kind: "confirm"; readonly title: string; readonly source: string; readonly description: string }
+      | { readonly kind: "unsupported" };
+  } | null;
+  /**
+   * Legacy flat list kept for older desktops. Engines derive it from `work`;
+   * renderers that understand `work` ignore it.
+   */
+  readonly activity: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly detail: string;
+  }[];
+  /** Background work and noteworthy runtime events. Omitted by older engines. */
+  readonly work?: SessionChatWork;
+  readonly nativeAgentInspection?: boolean;
+  readonly delegation?: SessionAgentContext;
+}
+/** Live delegated agents and authoritative background tasks. */
+export interface SessionChatBackgroundWork {
+  /** Stable runtime key (`task:<id>` or `subagent:<id>`), also the stop target. */
+  readonly id: string;
+  readonly kind: "agent" | "task";
+  /** Display label; includes the role so older desktops keep showing it. */
+  readonly label: string;
+  /** Primary task title, or the label without its role on older engines. */
+  readonly title?: string;
+  /** Agent nickname, displayed secondarily when a task title is available. */
+  readonly agentName?: string;
+  /** Harness agent type, such as `reviewer`. Omitted by older engines. */
+  readonly role?: string;
+  /** Latest summary, message or tool; empty when unreported. */
+  readonly detail: string;
+  /** ISO start time; null when unreported. */
+  readonly startedAt: string | null;
+  /** The harness can stop this item without interrupting the conversation. */
+  readonly stoppable: boolean;
+  /** Launched by work that already finished, so nothing waits for its result. */
+  readonly orphaned: boolean;
+  readonly tokens?: number;
+  readonly toolUses?: number;
+  readonly status?: SessionChatWorkStatus;
+  /** False for foreground delegated agents. Omitted by older engines. */
+  readonly background?: boolean;
+  readonly agentId?: string;
+  readonly parentToolUseId?: string;
+  readonly inspectable?: boolean;
+  readonly canBackground?: boolean;
+  readonly model?: string;
+  readonly effort?: string;
+  readonly context?: SessionChatAgentContext;
+}
+export type SessionChatWorkStatus = "pending" | "running" | "waiting" | "paused" | "completed" | "interrupted" | "stopped" | "error" | "closed" | "unavailable";
+export interface SessionChatAgentContext {
+  readonly tokens: number;
+  readonly limit: number;
+  readonly percentage: number;
+}
+export interface SessionChatAgentRead extends SessionChatTarget {
+  readonly requestId: string;
+  readonly agentId: string;
+  readonly before?: string;
+}
+export interface SessionChatAgentPage {
+  readonly agentId: string;
+  readonly label: string;
+  readonly title?: string;
+  readonly agentName?: string;
+  readonly role?: string;
+  readonly status: SessionChatWorkStatus;
+  readonly prompt: string;
+  readonly model: string | null;
+  readonly context: SessionChatAgentContext | null;
+  readonly items: readonly SessionChatItem[];
+  readonly before: string | null;
+  readonly availability: "available" | "starting" | "unavailable" | "error";
+  readonly message: string;
+}
+/** A bounded, already-filtered runtime event worth a person's attention. */
+export interface SessionChatWorkEvent {
+  readonly id: string;
+  readonly kind:
+    | "finished"
+    | "hook"
+    | "retry"
+    | "compaction"
+    | "notification"
+    | "transcript"
+    | "plugin";
+  readonly tone: "info" | "success" | "warning" | "danger";
+  readonly title: string;
+  readonly detail: string;
+  /** ISO time; null when unreported. */
+  readonly at: string | null;
+  readonly agentId?: string;
+  readonly agentStatus?: SessionChatWorkStatus;
+  readonly model?: string;
+  readonly effort?: string;
+  readonly parentToolUseId?: string;
+}
+export interface SessionChatWork {
+  /** At most 16 live items; waiting work first, then oldest first. */
+  readonly running: readonly SessionChatBackgroundWork[];
+  /** At most 12 events, newest first. Routine successes are never included. */
+  readonly recent: readonly SessionChatWorkEvent[];
+  readonly totalRunning?: number;
+  /** Separate from legacy native work so older IPC validators remain compatible. */
+  readonly sessions?: readonly DelegatedSessionWork[];
+  readonly totalSessionsRunning?: number;
+}
+export type SessionChatEvent =
+  | { readonly type: "item"; readonly item: SessionChatItem }
+  | { readonly type: "delta"; readonly id: string; readonly text: string }
+  | { readonly type: "reset" };
+export interface SessionChatPage extends SessionChatTarget {
+  readonly cursor: string;
+  /** A reset replaces the visible tail after reconnect, log expiry or transcript rewrite. */
+  readonly reset: boolean;
+  /** Prompt preceding a page that starts mid-turn; outside the contiguous item window. */
+  readonly leadingPrompt?: SessionChatItem | null;
+  readonly items: readonly SessionChatItem[];
+  readonly events: readonly SessionChatEvent[];
+  readonly before: string | null;
+  /** Omitted by older engines. Null means this page reaches the live end. */
+  readonly next?: string | null;
+  readonly state: SessionChatState;
+}
+export interface SessionChatPresetDefault {
+  readonly id: string | null;
+  readonly provider: string;
+  /** Provider-level defaults are retained so Undo can restore them exactly. */
+  readonly defaultIds: readonly string[];
+  readonly revision: string;
+}
+export interface SessionChatCommandReply {
+  readonly accepted: true;
+  readonly presetRemoval?: { readonly position: number; readonly revision: string };
+  readonly defaultChange?: {
+    readonly before: SessionChatPresetDefault;
+    readonly after: SessionChatPresetDefault;
+  };
+}
+export const SESSION_CHAT_PROMPT_LIMIT = 64000;
+
+export interface SessionChatPromptEditRead extends SessionChatTarget {
+  readonly requestId: string;
+  readonly itemId: string;
+}
+
+export interface SessionChatPromptEdit extends SessionChatTarget {
+  readonly itemId: string;
+  readonly revision: string;
+  readonly text: string;
+  readonly laterPrompts: number;
+  readonly keepsContext: boolean;
+}
+interface SavedPresetFields {
+  readonly id: string;
+  readonly name: string;
+  readonly provider: string;
+  readonly model: string | null;
+  readonly reasoning: string | null;
+  readonly fast: boolean;
+}
+export type SessionChatAction =
+  | { readonly type: "mark-seen"; readonly completionAt: string }
+  | ({ readonly type: "preset-update"; readonly expectedRevision: string } & SavedPresetFields)
+  | { readonly type: "preset-reorder"; readonly ids: readonly string[]; readonly expectedRevision: string }
+  | { readonly type: "preset-delete"; readonly id: string; readonly expectedRevision: string }
+  | ({
+      readonly type: "preset-restore";
+      readonly position: number;
+      readonly defaultProvider: string;
+      readonly defaultIds: readonly string[];
+      readonly expectedRevision: string;
+    } & SavedPresetFields)
+  | {
+      readonly type: "preset-default";
+      readonly id: string;
+      readonly expectedProvider: string;
+      readonly expectedRevision: string;
+    }
+  | {
+      readonly type: "preset-default-restore";
+      readonly provider: string;
+      readonly defaultIds: readonly string[];
+      readonly expectedRevision: string;
+    }
+  | {
+      readonly type: "preset";
+      readonly id: string;
+      readonly expectedProvider: string;
+      readonly expectedMix?: {
+        readonly model: string | null;
+        readonly reasoning: string | null;
+        readonly fast: boolean;
+        readonly revision: string;
+      };
+    }
+  | {
+      readonly type: "save-preset";
+      /** Optional for compatibility: omitted means the current conversation harness. */
+      readonly provider?: string;
+      readonly makeDefault?: boolean;
+      readonly expectedDefaultRevision?: string;
+      readonly id: string;
+      readonly name: string;
+      readonly expectedProvider: string;
+      readonly model: string | null;
+      readonly reasoning: string | null;
+      readonly fast: boolean;
+    }
+  | {
+      readonly type: "provider";
+      readonly provider: string;
+      readonly expectedProvider: string;
+    }
+  | { readonly type: "send"; readonly text: string; readonly queue: boolean; readonly sessionIds?: readonly number[] }
+  | { readonly type: "edit-prompt"; readonly itemId: string; readonly revision: string; readonly text: string }
+  | { readonly type: "stop" }
+  /** Ends one `work.running` item; the conversation and its turn continue. */
+  | { readonly type: "stop-background"; readonly id: string }
+  | { readonly type: "background-agent"; readonly id: string }
+  | { readonly type: "cancel-queued" | "steer-queued"; readonly id: string }
+  | { readonly type: "resume-queue" }
+  | {
+      readonly type: "permission";
+      readonly id: string;
+      readonly decision: "approved" | "always" | "denied";
+    }
+  | {
+      readonly type: "answer";
+      readonly id: string;
+      readonly answers: Readonly<Record<string, readonly string[]>>;
+      readonly decline?: boolean;
+    }
+  | { readonly type: "model"; readonly model: string | null }
+  | { readonly type: "plan"; readonly enabled: boolean }
+  | { readonly type: "reasoning"; readonly effort: string | null }
+  | { readonly type: "fast"; readonly enabled: boolean }
+  | { readonly type: "permission-mode"; readonly mode: string };
+export interface SessionChatCommand extends SessionChatTarget {
+  readonly action: SessionChatAction;
+  /** Stable identity for one send, across lost replies and reconnects. */
+  readonly deliveryId?: string;
+}
+export interface SessionChatDeliveryRead extends SessionChatTarget {
+  readonly deliveryId: string;
+  readonly requestId: string;
+}
+export interface SessionChatDelivery extends SessionChatTarget {
+  readonly deliveryId: string;
+  readonly status: 'pending' | 'accepted' | 'failed' | 'unconfirmed' | null;
+}
+export function isSessionChatDeliveryId(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+}
+export interface SessionChatContentRead extends SessionChatTarget {
+  readonly requestId: string;
+  readonly itemId: string;
+  readonly part: "text" | "input";
+  readonly offset: number;
+}
+export interface SessionChatContent {
+  readonly itemId: string;
+  readonly part: "text" | "input";
+  readonly offset: number;
+  readonly text: string;
+  readonly nextOffset: number | null;
+  readonly total: number;
+}
+
+export interface SessionChatPreset {
+  readonly id: string;
+  readonly name: string;
+  readonly provider: string;
+  readonly providerLabel: string;
+  readonly model: string | null;
+  readonly modelLabel: string;
+  readonly reasoning: string | null;
+  readonly fast: boolean;
+}
+
+export interface SessionChatCatalogRead extends SessionChatTarget {
+  readonly refresh?: boolean;
+  readonly provider: string;
+  readonly requestId: string;
+}
+/** A bounded, session-independent catalog; this read never switches or starts a harness. */
+export interface SessionChatCatalog {
+  readonly provider: string;
+  readonly label: string;
+  readonly models: SessionChatState["models"];
+  readonly model: string | null;
+  readonly reasoning: string | null;
+  readonly fast: boolean;
+  readonly reasoningAvailable: boolean;
+  readonly fastAvailable: boolean;
+  readonly error: string | null;
+}
+
+export interface SessionChatChangedFile {
+  readonly path: string;
+  readonly status: "A" | "M" | "D";
+  readonly add: number;
+  readonly del: number;
+}
+export type SessionChatChangeSource = "net" | "provider" | "command";
+
+export interface SessionChatChangeSummary {
+  readonly files: readonly SessionChatChangedFile[];
+  readonly total: number;
+  /** Line counts across the full list when the supplied preview is partial. */
+  readonly lineTotals?: { readonly add: number; readonly del: number };
+  /** The worktree capture includes changes observed during overlapping work. */
+  readonly shared?: true;
+  readonly sources?: readonly Exclude<SessionChatChangeSource, "net">[];
+  readonly notice?: string;
+}
+export interface SessionChatChangesRead extends SessionChatTarget {
+  readonly requestId: string;
+  readonly turnId: string;
+  readonly offset: number;
+  readonly path?: string;
+  readonly lineOffset?: number;
+  readonly revision?: string;
+  readonly source?: SessionChatChangeSource;
+}
+export interface SessionChatChangeLine {
+  readonly id: string;
+  readonly kind: "context" | "add" | "del";
+  readonly oldNumber?: number;
+  readonly newNumber?: number;
+  readonly text: string;
+  readonly evidence?: string;
+}
+export interface SessionChatChangesPage extends SessionChatChangeSummary {
+  readonly turnId: string;
+  readonly revision: string;
+  readonly offset: number;
+  readonly source?: SessionChatChangeSource;
+  readonly nextOffset: number | null;
+  readonly content: {
+    readonly path: string;
+    readonly lines: readonly SessionChatChangeLine[];
+    readonly nextOffset: number | null;
+    readonly error?: string;
+  } | null;
+}
+
+export interface SessionChatMediaReference {
+  readonly kind?: "image" | "video" | "file";
+  readonly id: string;
+  readonly path: string;
+  readonly caption: string;
+  readonly inline: boolean;
+}
+export interface SessionChatMediaRead extends SessionChatTarget {
+  readonly requestId: string;
+  readonly itemId: string;
+  readonly mediaId: string;
+}
+export interface SessionChatMedia {
+  readonly itemId: string;
+  readonly mediaId: string;
+  readonly source: string;
+}

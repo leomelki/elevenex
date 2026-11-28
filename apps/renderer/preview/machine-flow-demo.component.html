@@ -1,0 +1,31 @@
+<div class="demo">
+  <header class="intro"><h1>Machine flow</h1><p>First run and returning Home use the same components. Preparation stays on the cards.</p></header>
+  <div class="controls"><button id="first-run" exButton variant="secondary" size="sm" (click)="reset(true)">First run</button><button id="later-run" exButton variant="secondary" size="sm" (click)="reset(false)">Later visit</button><button id="advance-machine" exButton variant="secondary" size="sm" (click)="advance()">Advance preparation</button><button id="ready-machine" exButton variant="secondary" size="sm" (click)="advance(true)">Ready</button><button id="fail-machine" exButton variant="ghost" size="sm" (click)="fail()">Fail preparation</button><button id="change-machine" exButton variant="ghost" size="sm" [disabled]="!opened()" (click)="opened.set(false); updating.set(false)">Change machine</button><button id="update-machine" exButton variant="ghost" size="sm" [disabled]="!opened()" (click)="updating.set(true)">Update open machine</button></div>
+  <output>{{ event() }}</output>
+  <div class="frame ex-window" data-modal-window>
+    <div class="window-content" data-modal-background>
+      <ex-title-bar><ex-title-island [label]="islandStatus()?.text ?? (opened() ? current().name : 'Machines')" controls="machine-flow-panel" [contentKey]="islandStatus()?.key ?? (opened() ? current().id : 'home')" [tone]="islandStatus()?.tone ?? 'rest'" [progress]="islandStatus()?.progress" (pressed)="pressIsland()">
+        @if (islandStatus(); as status) { <ex-icon [name]="status.icon" [size]="13" /><span>{{ status.text }}</span> }
+        @else if (opened()) { <ex-island-name [machine]="current()" /> }
+        @else if (wasOpened()) { <ex-island-name [machine]="current()" [back]="true" /> }
+        @else { <ex-icon name="grid" [size]="13" /><span>Machines</span> }
+      </ex-title-island></ex-title-bar>
+      <div class="stage"><ex-machine-launch [open]="opened()" [machineId]="current().id" (transitionFinished)="$event && firstRun.set(false)">
+        <ex-machine-home machineHome [machines]="machines()" [firstRun]="firstRun()" [pending]="pending()?.machine.id ?? null" [ping]="ping()" [(findOpen)]="findOpen" highlighted="local" (opened)="openMachine($event)" (addServer)="add('ssh', $event)" (pairComputer)="add('peer', $event)" />
+        <div machineView class="machine-view">
+          @for (machine of [current()]; track machine.id) {
+          @if (updating()) {
+            <div class="update-screen"><ex-getting-ready [title]="'Updating ' + current().name" sub="It has to match the app" note="Other windows keep working" [steps]="[{ id: 'download', label: 'Download the engine', state: 'done' }, { id: 'update', label: 'Update the engine', state: 'active', progress: .56, meta: '56%' }, { id: 'restart', label: 'Restart Elevenex', state: 'todo' }]"><button readyActions exButton variant="ghost" size="sm" (click)="updating.set(false)">Complete preview update</button></ex-getting-ready></div>
+          } @else {
+            <div class="project-background" inert><div class="empty-shell"><ex-project-rail [all]="false" /><aside class="empty-sidebar"><i></i><i></i><i></i></aside><main class="empty-main"></main></div></div>
+            <div class="new-project"><ex-new-project [machine]="current().name" [machineIcon]="current().kind === 'local' ? 'laptop' : 'server'" [autoFocus]="false" [active]="opened()" [listFolders]="folders" (create)="event.set('Create project: ' + $event.project.name)" /></div>
+          }
+          }
+        </div>
+      </ex-machine-launch></div>
+    </div>
+    <ex-modal-layer [open]="dialogOpen()" [from]="dialogFrom()" (closeRequested)="closeDialog()">
+      <ex-add-machine [kind]="dialogKind()" [step]="step()" [query]="query()" [hosts]="hosts" [picked]="picked()" [fingerprint]="fingerprint()" [text]="pairText()" [found]="found()" [loading]="loading()" [error]="error()" (queryChange)="editHost($event)" (hostSelected)="selectHost($event)" (hostSubmitted)="resolveHost($event)" (keyRequested)="checkKey()" (textChange)="discover($event)" (backRequested)="step.set('host')" (cancelled)="closeDialog()" (confirmed)="confirm($event)" />
+    </ex-modal-layer>
+  </div>
+</div>

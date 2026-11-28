@@ -101,6 +101,18 @@ describe('Claude incremental child history', () => {
     expect(atBoundary.records[0].uuid).toBe('message-900');
     expect(atBoundary.hasEarlier).toBe(true);
   });
+  it('includes the requested raw record after a busy child moves it outside the retained tail', async () => {
+    await writeFile(path, Array.from({ length: 320 }, (_, i) => line(i)).join(''));
+    const store = new ClaudeChildTranscriptStore();
+    await store.read(path);
+    await appendFile(path, Array.from({ length: 4200 }, (_, i) => line(320 + i)).join(''));
+    const inclusive = await store.read(path, 'message-310', true);
+    expect(inclusive.records).toHaveLength(300);
+    expect(inclusive.records[0]?.uuid).toBe('message-11');
+    expect(inclusive.records.at(-1)?.uuid).toBe('message-310');
+    expect(inclusive.hasEarlier).toBe(true);
+    expect((await store.read(path, 'message-310')).records.at(-1)?.uuid).toBe('message-309');
+  });
   it('pages to the beginning without repeatedly scanning the whole file', async () => {
     await writeFile(
       path,

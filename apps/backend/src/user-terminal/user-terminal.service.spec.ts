@@ -1,4 +1,7 @@
 import { promises as fs } from 'fs';
+jest.mock('./user-pty-manager.service.js', () => ({
+  UserPtyManager: class UserPtyManager {},
+}));
 import { UserTerminalService } from './user-terminal.service.js';
 
 function createDeferred<T>() {
@@ -13,6 +16,7 @@ function createDeferred<T>() {
 
 describe('UserTerminalService', () => {
   let service: UserTerminalService;
+  let findOne: jest.SpyInstance;
   let ptyManager: {
     destroy: jest.Mock;
     isAlive: jest.Mock;
@@ -31,10 +35,11 @@ describe('UserTerminalService', () => {
     };
 
     service = new UserTerminalService({} as never, ptyManager as never);
-    jest.spyOn(service, 'findOne').mockResolvedValue({
+    findOne = jest.spyOn(service, 'findOne').mockResolvedValue({
       id: 3,
       worktreePath: process.cwd(),
       workspaceId: null,
+      desktopOwner: null,
       shell: '/bin/zsh',
       name: 'zsh',
       createdAt: new Date().toISOString(),
@@ -96,7 +101,7 @@ describe('UserTerminalService', () => {
       { success: true },
       { success: true },
     ]);
-    expect(service.findOne).toHaveBeenCalledTimes(1);
+    expect(findOne).toHaveBeenCalledTimes(1);
     expect(ptyManager.spawn).toHaveBeenCalledTimes(1);
   });
 });

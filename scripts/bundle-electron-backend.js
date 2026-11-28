@@ -1,4 +1,4 @@
-const { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } = require('fs');
+const { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } = require('fs');
 const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '..');
@@ -7,6 +7,9 @@ const backendDistEntry = path.join(backendRoot, 'dist', 'main.js');
 const backendBundleRoot = path.join(backendRoot, 'bundle');
 const backendBundleEntry = path.join(backendBundleRoot, 'main.cjs');
 const EXTERNAL_MODULES = [
+  'patchright-core',
+  'patchright',
+  'ffmpeg-static',
   'better-sqlite3',
   'node-pty',
   '@vscode/ripgrep',
@@ -106,6 +109,19 @@ async function main() {
 
   rmSync(backendBundleRoot, { recursive: true, force: true });
   mkdirSync(backendBundleRoot, { recursive: true });
+  // Runtime-read shell adapters must travel with the single-file backend.
+  cpSync(path.join(backendRoot, 'src/user-terminal/shell-integration/scripts'),
+    path.join(backendBundleRoot, 'shell-integration/scripts'), { recursive: true });
+
+  const bin = path.join(backendBundleRoot, 'bin');
+  cpSync(path.join(backendRoot, 'bin'), bin, { recursive: true });
+  if (process.platform === 'darwin') {
+    const { buildMacAppDisplay } = require('./build-task-app-macos.cjs');
+    await buildMacAppDisplay({ binDirectory: bin });
+  } else if (process.platform === 'win32') {
+    const { buildWindowsAppDisplay } = require('./build-task-app-windows.cjs');
+    await buildWindowsAppDisplay({ outputPath: path.join(bin, 'task-app-windows.exe') });
+  }
 
   const esbuild = require(findEsbuildModule());
   await esbuild.build({
@@ -140,6 +156,22 @@ async function main() {
       createSharpStubPlugin(),
     ],
     logLevel: 'info',
+  });
+
+  // Standalone administrative entry: loading it must not start the backend or
+  // import native agent/database/PTY dependencies.
+  await esbuild.build({
+    entryPoints: [path.join(backendRoot, 'dist/browser-host/cli.js')],
+    outfile: path.join(backendBundleRoot, 'browser-setup.cjs'),
+    bundle: true, platform: 'node', format: 'cjs', target: 'node22',
+    external: ['patchright-core'], sourcemap: true,
+  });
+
+  // Screen parsing runs outside the backend event loop in local and SSH builds.
+  await esbuild.build({
+    entryPoints: [path.join(backendRoot, 'dist/user-terminal/screen/terminal-screen-worker.js')],
+    outfile: path.join(backendBundleRoot, 'terminal-screen-worker.cjs'),
+    bundle: true, platform: 'node', format: 'cjs', target: 'node22', sourcemap: true,
   });
 
   // Pi loads the mission extension in its own CLI process, outside main.cjs.

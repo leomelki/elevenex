@@ -1,0 +1,61 @@
+:host([data-tone="success"]) .glyph {
+  color: var(--done);
+}
+:host([data-tone="warning"]) .glyph {
+  color: var(--attention);
+}
+:host([data-tone="danger"]) .glyph {
+  color: var(--danger);
+}
+.title {
+  font-weight: 400;
+}
+.detail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* Failure output keeps its lines and reads as output, not prose. */
+.output {
+  grid-column: 2 / 4;
+  grid-row: 2;
+  margin-top: var(--space-1);
+}
+pre {
+  margin: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--surface-sunken);
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: var(--text-mono-meta-size) / var(--text-mono-meta-line)
+    var(--font-mono);
+}
+pre.clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+.more {
+  margin-top: var(--space-1);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--text-caption-size);
+  cursor: pointer;
+}
+.more:hover {
+  text-decoration: underline;
+}
+.more:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}

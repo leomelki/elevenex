@@ -7,7 +7,6 @@ import {
   Injector,
   OnInit,
   OnDestroy,
-  afterNextRender,
   effect,
   signal,
   computed,
@@ -28,7 +27,6 @@ import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-pro
 import { NavigationService } from '../../../shared/services/navigation.service';
 import { ClaudeTerminalComponent } from '../terminal';
 import { ClaudeWorkspaceComponent } from '../claude-workspace';
-import { VSCodeWebPanelComponent } from '@/features/vscode-web';
 import { BrowserPanelComponent } from '@/features/browser-panel/browser-panel.component';
 import { ScratchpadPanelComponent } from '@/features/productivity/scratchpad-panel/scratchpad-panel';
 import { TodoPanelComponent } from '@/features/productivity/todo-panel/todo-panel';
@@ -58,10 +56,6 @@ import { migrateScopedKey, migratedWindowScopedKey, serverScopedKey } from '@/sh
 import { ActionsPanelComponent, ActionsStateService } from '@/features/actions';
 import { UserTerminalPanelComponent, UserTerminalStateService } from '@/features/user-terminal';
 import {
-  VSCodeWebStateService,
-  buildVSCodeIframeKey,
-} from '@/features/vscode-web/vscode-web-state.service';
-import {
   BrowserViewStateService,
   buildBrowserViewProjectPrefix,
 } from '@/features/browser-panel/browser-view-state.service';
@@ -83,7 +77,6 @@ import {
 import { CreateSessionForkResponse, Session, SessionFork } from '@/shared/models/session.model';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
-import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 import { shouldAutoReviewSessionCompletion } from '../session-completion-review.util';
 import { shouldCloseActiveSessionTab } from '../close-tab-shortcut.util';
 import { ModalOverlayStateService } from '@/shared/services/modal-overlay-state.service';
@@ -107,7 +100,6 @@ interface CompletionMarkerState {
 
 type SidePanelMode =
   | 'none'
-  | 'files'
   | 'browser'
   | 'changes'
   | 'plannotator'
@@ -124,7 +116,6 @@ type ClaudeSurfaceMode = 'workspace' | 'terminal';
     TabBar,
     ClaudeTerminalComponent,
     ClaudeWorkspaceComponent,
-    VSCodeWebPanelComponent,
     BrowserPanelComponent,
     ScratchpadPanelComponent,
     TodoPanelComponent,
@@ -188,7 +179,6 @@ export class SessionContainer implements OnInit, OnDestroy {
   private actionsState = inject(ActionsStateService);
   private todosService = inject(TodosService);
   private userTerminalState = inject(UserTerminalStateService);
-  private vscodeWebState = inject(VSCodeWebStateService);
   private browserViewState = inject(BrowserViewStateService);
   private browserTabsState = inject(BrowserTabsStateService);
   private browserIsolationService = inject(BrowserIsolationService);
@@ -212,8 +202,6 @@ export class SessionContainer implements OnInit, OnDestroy {
   claudeTerminals = viewChildren(ClaudeTerminalComponent);
   claudeWorkspaces = viewChildren(ClaudeWorkspaceComponent);
   private readonly browserPanel = viewChild(BrowserPanelComponent);
-  private readonly vscodePanel = viewChild(VSCodeWebPanelComponent);
-  protected readonly editorStartupSessionId = signal<number | null>(null);
 
   tabs = this.tabService.tabs;
   readonly openingSessionId = signal<number | null>(null);
@@ -272,7 +260,6 @@ export class SessionContainer implements OnInit, OnDestroy {
   taskWorktreeUnavailable(tab: Tab | null | undefined): boolean {
     return !!tab?.workspaceTaskState && tab.workspaceTaskState !== 'ready';
   }
-  showFilesPanel = computed(() => this.sidePanelMode() === 'files');
   showBrowserPanel = computed(() => this.sidePanelMode() === 'browser');
   showChangesPanel = computed(() => {
     if (this.sidePanelMode() !== 'changes') return false;
@@ -399,12 +386,12 @@ export class SessionContainer implements OnInit, OnDestroy {
         if (
           prefs.sidePanelMode === 'github' ||
           prefs.sidePanelMode === 'changes' ||
-          prefs.sidePanelMode === 'conflicts'
+          prefs.sidePanelMode === 'conflicts' ||
+          prefs.sidePanelMode === 'files'
         ) {
           return 'none';
         }
         if (
-          prefs.sidePanelMode === 'files' ||
           prefs.sidePanelMode === 'browser' ||
           prefs.sidePanelMode === 'none'
         ) {
@@ -412,13 +399,13 @@ export class SessionContainer implements OnInit, OnDestroy {
         }
 
         if (typeof prefs.filesPanelVisible === 'boolean') {
-          return prefs.filesPanelVisible ? 'files' : 'none';
+          return 'none';
         }
       }
     } catch {
       // Ignore storage errors
     }
-    return 'files';
+    return 'none';
   }
 
   private saveSidePanelPreference(mode: SidePanelMode): void {
@@ -435,7 +422,7 @@ export class SessionContainer implements OnInit, OnDestroy {
         this.sidebarModeStorageKey,
         JSON.stringify({
           ...current,
-          filesPanelVisible: persistedMode === 'files',
+          filesPanelVisible: false,
           sidePanelMode: persistedMode,
         }),
       );
@@ -529,12 +516,6 @@ export class SessionContainer implements OnInit, OnDestroy {
         this.userTerminalState.setPanelOpen(wt, false);
       }
     }
-  }
-
-  toggleFilesPanel(): void {
-    const nextMode = this.showFilesPanel() ? 'none' : 'files';
-    this.sidePanelMode.set(nextMode);
-    this.saveSidePanelPreference(nextMode);
   }
 
   toggleBrowserPanel(): void {
@@ -670,28 +651,6 @@ export class SessionContainer implements OnInit, OnDestroy {
     this.workspaceForSession(sessionId)?.addDiffMentions(mentions);
   }
 
-  openDiffFileInEditor(path: string): void {
-    this.openFileInEditor({ path });
-  }
-
-  openFileInEditor(target: LocalFileTarget): void {
-    const wt = this.worktreePath();
-    const normalizedPath = target.path.replace(/^\/+/, '');
-    if (!wt || !normalizedPath) return;
-
-    const changesOpen = new Map(this.changesOpenByWorktree());
-    changesOpen.set(wt, false);
-    this.changesOpenByWorktree.set(changesOpen);
-    this.saveChangesPanelState(changesOpen);
-
-    this.sidePanelMode.set('files');
-    this.saveSidePanelPreference('files');
-
-    afterNextRender(() => {
-      this.vscodePanel()?.openFile({ ...target, path: normalizedPath }, false);
-    }, { injector: this.injector });
-  }
-
   onPlanReviewClosed(review: PlanReviewRequest): void {
     this.planAnnotatorState.clear(review.sessionId);
     if (this.sidePanelMode() === 'planAnnotator' && review.sessionId === this.activeSessionId()) {
@@ -799,33 +758,6 @@ export class SessionContainer implements OnInit, OnDestroy {
   }
 
   constructor() {
-    effect((onCleanup) => {
-      const sessionId = this.activeSessionId();
-      const workspace = this.claudeWorkspaces().find((item) => item.sessionId() === sessionId);
-      const ready = workspace?.runtime.hydrated() ??
-        (this.showClaudeTerminalFallback() && !this.showClaudeTerminalTranscriptMirror());
-      if (!sessionId || !ready) {
-        this.editorStartupSessionId.set(null);
-        return;
-      }
-      if (untracked(this.editorStartupSessionId) === sessionId) return;
-      // Give the chat a paint before starting a new VS Code workbench. The
-      // iframe otherwise competes for CPU and backend requests during loading.
-      let firstFrame: number | null = null;
-      let secondFrame: number | null = null;
-      const render = afterNextRender(() => {
-        firstFrame = requestAnimationFrame(() => {
-          secondFrame = requestAnimationFrame(() => {
-            if (this.activeSessionId() === sessionId) this.editorStartupSessionId.set(sessionId);
-          });
-        });
-      }, { injector: this.injector });
-      onCleanup(() => {
-        render.destroy();
-        if (firstFrame !== null) cancelAnimationFrame(firstFrame);
-        if (secondFrame !== null) cancelAnimationFrame(secondFrame);
-      });
-    });
 
     effect(() => {
       const activeId = this.activeSessionId();
@@ -1086,32 +1018,6 @@ export class SessionContainer implements OnInit, OnDestroy {
 
   private getProjectIdForSession(sessionId: number): number | null {
     return this.tabs().find((tab) => tab.sessionId === sessionId)?.projectId ?? null;
-  }
-
-  private getIframeKeyForSession(sessionId: number): string | null {
-    const tab = this.tabs().find((currentTab) => currentTab.sessionId === sessionId);
-    if (!tab) {
-      return null;
-    }
-
-    return buildVSCodeIframeKey(tab.projectId, tab.worktreePath);
-  }
-
-  private maybeDestroyWorktreeIframe(
-    iframeKey: string | null,
-    worktreePath: string | null,
-    projectId: number | null,
-  ): void {
-    if (!iframeKey || !worktreePath || projectId === null) {
-      return;
-    }
-
-    const hasRemainingTabs = this.tabs().some(
-      (tab) => tab.worktreePath === worktreePath && tab.projectId === projectId,
-    );
-    if (!hasRemainingTabs) {
-      this.vscodeWebState.destroyIframe(iframeKey);
-    }
   }
 
   private getBrowserKeyForSession(sessionId: number): string | null {
@@ -1480,12 +1386,10 @@ export class SessionContainer implements OnInit, OnDestroy {
         const error = result.reason;
         if (error?.status === 404) {
           const worktreePath = this.getWorktreePathForSession(sessionId);
-          const iframeKey = this.getIframeKeyForSession(sessionId);
           const browserKey = this.getBrowserKeyForSession(sessionId);
           const projectId = this.getProjectIdForSession(sessionId);
           this.tabService.closeTab(sessionId);
           this.clearClaudeSurfaceMode(sessionId);
-          this.maybeDestroyWorktreeIframe(iframeKey, worktreePath, projectId);
           this.maybeDestroyProjectBrowser(browserKey, projectId);
           toast.error(`Session ${sessionId} no longer exists`);
         }
@@ -1547,11 +1451,9 @@ export class SessionContainer implements OnInit, OnDestroy {
   onTabClose(sessionId: number): void {
     const isTemporary = this.tabs().find(tab => tab.sessionId === sessionId)?.isTemporary ?? false;
     const worktreePath = this.getWorktreePathForSession(sessionId);
-    const iframeKey = this.getIframeKeyForSession(sessionId);
     const browserKey = this.getBrowserKeyForSession(sessionId);
     const projectId = this.getProjectIdForSession(sessionId);
     const newActiveId = this.tabService.closeTab(sessionId);
-    this.maybeDestroyWorktreeIframe(iframeKey, worktreePath, projectId);
     this.maybeDestroyProjectBrowser(browserKey, projectId);
 
     // Terminal stays in cache but is hidden via CSS
@@ -1678,7 +1580,6 @@ export class SessionContainer implements OnInit, OnDestroy {
     const sessionId = this.deleteTargetSessionId();
     if (!sessionId) return;
     const worktreePath = this.getWorktreePathForSession(sessionId);
-    const iframeKey = this.getIframeKeyForSession(sessionId);
     const browserKey = this.getBrowserKeyForSession(sessionId);
     const projectId = this.getProjectIdForSession(sessionId);
 
@@ -1688,7 +1589,6 @@ export class SessionContainer implements OnInit, OnDestroy {
         this.deleteTargetSessionId.set(null);
         const newActiveId = this.tabService.closeTab(sessionId);
         this.clearClaudeSurfaceMode(sessionId);
-        this.maybeDestroyWorktreeIframe(iframeKey, worktreePath, projectId);
         this.maybeDestroyProjectBrowser(browserKey, projectId);
         if (!newActiveId) {
           this.router.navigate(['/projects']);
@@ -1843,10 +1743,8 @@ export class SessionContainer implements OnInit, OnDestroy {
   private handleBulkTabCloseResult(result: TabCloseResult, temporarySessionIds: number[] = []): void {
     for (const sessionId of result.closedSessionIds) {
       const worktreePath = this.getWorktreePathForSession(sessionId);
-      const iframeKey = this.getIframeKeyForSession(sessionId);
       const browserKey = this.getBrowserKeyForSession(sessionId);
       const projectId = this.getProjectIdForSession(sessionId);
-      this.maybeDestroyWorktreeIframe(iframeKey, worktreePath, projectId);
       this.maybeDestroyProjectBrowser(browserKey, projectId);
     }
 

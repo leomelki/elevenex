@@ -10,7 +10,7 @@ import {
   buildShellCommandArgs,
   buildTmuxInlineEnvPrefix,
   findBinary,
-  getDefaultUserShell,
+  getDefaultUserShellAsync,
   normalizeShellForPlatform,
 } from '../config/system-paths.js';
 import { execFileAsync, execFileQuiet } from '../terminal/async-process.js';
@@ -28,7 +28,7 @@ jest.mock('../config/system-paths.js', () => ({
   ]),
   buildTmuxInlineEnvPrefix: jest.fn(() => "PATH='/repo/bin'"),
   findBinary: jest.fn(),
-  getDefaultUserShell: jest.fn(() => '/bin/sh'),
+  getDefaultUserShellAsync: jest.fn().mockResolvedValue('/bin/sh'),
   normalizeShellForPlatform: jest.fn((shell: string) => shell),
 }));
 
@@ -80,7 +80,7 @@ describe('ActionPtyManager', () => {
   const mockBuildShellCommandArgs = jest.mocked(buildShellCommandArgs);
   const mockBuildTmuxInlineEnvPrefix = jest.mocked(buildTmuxInlineEnvPrefix);
   const mockFindBinary = jest.mocked(findBinary);
-  const mockGetDefaultUserShell = jest.mocked(getDefaultUserShell);
+  const mockGetDefaultUserShell = jest.mocked(getDefaultUserShellAsync);
   const mockNormalizeShellForPlatform = jest.mocked(normalizeShellForPlatform);
   const mockShouldUseTmux = jest.mocked(shouldUseTmux);
 
@@ -117,7 +117,7 @@ describe('ActionPtyManager', () => {
       '-lc',
       command,
     ]);
-    mockGetDefaultUserShell.mockReturnValue('/bin/sh');
+    mockGetDefaultUserShell.mockResolvedValue('/bin/sh');
     mockNormalizeShellForPlatform.mockImplementation((shell) => shell);
     mockShouldUseTmux.mockReturnValue(true);
     mockExecFileQuiet.mockResolvedValue(undefined);
@@ -380,7 +380,7 @@ describe('ActionPtyManager', () => {
       expect(manager!.isRunning(action.id)).toBe(false);
       await manager!.start(action);
       jest.advanceTimersByTime(2000);
-      expect(first.kill.mock.calls).toEqual([['SIGTERM']]);
+      expect(first.kill.mock.calls).toEqual(process.platform === 'win32' ? [[]] : [['SIGTERM']]);
       expect(second.kill).not.toHaveBeenCalled();
       expect(persistence.finalizeRun).toHaveBeenCalledTimes(1);
       expect(manager!.isRunning(action.id)).toBe(true);
@@ -389,20 +389,20 @@ describe('ActionPtyManager', () => {
     }
   });
 
-  it('escalates only the concrete action and shares concurrent strict stops', async () => {
+  it('terminates only the concrete action and shares concurrent strict stops', async () => {
     jest.useFakeTimers();
     try {
       const { action, persistence } = setup();
-      const process = createMockPty();
-      mockSpawn.mockReturnValue(process as never);
+      const pty = createMockPty();
+      mockSpawn.mockReturnValue(pty as never);
       await manager!.start(action);
       const stops = Promise.all([
         manager!.stop(action.id, true),
         manager!.stop(action.id, true),
       ]);
       jest.advanceTimersByTime(1500);
-      expect(process.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']]);
-      process.emit('exit', { exitCode: 137 });
+      expect(pty.kill.mock.calls).toEqual(process.platform === 'win32' ? [[]] : [['SIGTERM'], ['SIGKILL']]);
+      pty.emit('exit', { exitCode: 137 });
       await stops;
       expect(persistence.finalizeRun).toHaveBeenCalledTimes(1);
       expect(persistence.finalizeRun.mock.calls[0][1].status).toBe('stopped');

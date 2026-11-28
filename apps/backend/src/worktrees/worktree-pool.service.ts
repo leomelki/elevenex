@@ -18,6 +18,7 @@ import { SettingsService } from '../settings/settings.service.js';
 import { UNLIMITED_WORKTREES_PER_REPO } from '../settings/settings.types.js';
 import { WorktreeInfo, WorktreesService } from './worktrees.service.js';
 import { isMissingWorktreePath } from './worktree-path.js';
+import { MISSING_WORKTREE_ERROR } from '../workspaces/workspace-checkout-errors.js';
 import {
   mapWorktrees,
   WorktreeStatusSnapshot,
@@ -820,10 +821,7 @@ export class WorktreePoolService {
               poolWorktreeId: null,
               linkStatus: 'unlinked',
               taskState: 'failed',
-              taskError: JSON.stringify({
-                message:
-                  'The task worktree is missing. Reopen or choose another worktree.',
-              }),
+              taskError: JSON.stringify(MISSING_WORKTREE_ERROR),
             })
             // Setup may assign another checkout while filesystem checks run.
             .where(
@@ -831,6 +829,8 @@ export class WorktreePoolService {
                 eq(schema.workspaces.id, workspace.id),
                 eq(schema.workspaces.path, workspace.path),
                 eq(schema.workspaces.taskState, workspace.taskState),
+                eq(schema.workspaces.linkStatus, workspace.linkStatus),
+                eq(schema.workspaces.updatedAt, workspace.updatedAt),
               ),
             )
             .run();

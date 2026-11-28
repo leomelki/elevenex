@@ -556,7 +556,8 @@ describe('ChangeReviewService', () => {
   it('supports an unborn HEAD and compares merge commits to their first parent', async () => {
     const unborn = path.join(tmpDir, 'unborn');
     fs.mkdirSync(unborn);
-    git('init -b fresh', unborn);
+    git('init', unborn);
+    git('symbolic-ref HEAD refs/heads/fresh', unborn);
     fs.writeFileSync(path.join(unborn, 'first.txt'), 'first\n');
     git('add .', unborn);
     const initial = await service.getSummary(unborn, 'uncommitted');

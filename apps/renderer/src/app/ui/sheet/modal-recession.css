@@ -1,0 +1,13 @@
+/* Shared by sheets and confirmations. Layers portal outside this transformed surface. */
+.ex-recession-surface {
+  transform-origin: 50% 30%;
+  transition: transform var(--dur-slow) var(--ease-out), filter var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out);
+}
+.ex-recession-surface.is-receded {
+  transform: scale(.985);
+  filter: blur(3px) saturate(.85);
+  transition: transform 560ms cubic-bezier(.32, .72, 0, 1), filter var(--dur-glide) var(--ease-out), opacity var(--dur-glide) var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ex-recession-surface.is-receded { transform: none; filter: none; opacity: .6; }
+}

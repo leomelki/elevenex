@@ -1,0 +1,70 @@
+<ex-modal-layer [open]="open()" (closeRequested)="!busy() && cancelled.emit()">
+  <section
+    role="dialog"
+    aria-modal="true"
+    aria-label="Close task"
+  >
+    <h2>Close “{{ title() }}”?</h2>
+    <ul>
+      @if (terminals()) { <li><ex-icon name="terminal" [size]="14" />Stops {{ terminals() }} running {{ terminals() === 1 ? 'terminal' : 'terminals' }}</li> }
+      @if (apps()) { <li><ex-icon name="window" [size]="14" />Stops {{ apps() }} running {{ apps() === 1 ? 'app' : 'apps' }}</li> }
+      @if (actions()) { <li><ex-icon name="actions" [size]="14" />Stops {{ actions() }} running actions</li> }
+      @if (running()) {
+        <li>
+          <ex-status-glyph status="running" [size]="14" />Stops
+          {{ running() }} running {{ running() === 1 ? 'session' : 'sessions' }}
+        </li>
+      }
+      @if (sessions()) {
+        <li>
+          <ex-icon name="archive" [size]="14" />Archives
+          {{ sessions() }} {{ sessions() === 1 ? 'session' : 'sessions' }}. Reopen the task any time from Closed.
+        </li>
+      }
+      <li>
+        <ex-icon name="check" [size]="14" />{{ uncommitted() ? 'Keeps the task’s files on disk.' : 'Cleans up the task’s files on disk.' }}
+      </li>
+      @if (uncommitted()) { <li class="warning"><ex-status-glyph status="attention" [size]="14" />{{ uncommitted() }} files have uncommitted changes. Their workspace is kept.</li> }
+      @if (unpushed()) {
+        <li class="warning">
+          <ex-status-glyph status="attention" [size]="14" />{{ unpushed() }}
+          {{ unpushed() === 1 ? 'commit is' : 'commits are' }} not pushed yet.
+        </li>
+      }
+    </ul>
+    @if (error()) { <p role="alert">{{ error() }}</p> }
+    @if (ticket()) {
+      <label class="ticket"
+        ><input
+          #ticketCheck
+          type="checkbox"
+          [checked]="moveTicket()"
+          (change)="moveTicket.set(ticketCheck.checked)"
+        />Move
+        <ex-link-chip kind="ticket" [label]="ticket()!" [compact]="true" /> to
+        Done</label
+      >
+    }
+    <footer>
+      <button
+        exButton
+        variant="ghost"
+        cdkFocusInitial
+        [disabled]="busy()"
+        (click)="cancelled.emit()"
+      >
+        Cancel</button
+      ><span class="grow"></span>
+      @if (unpushed()) {
+        <button exButton variant="secondary" [disabled]="busy()" (click)="confirm(false)">
+          Close without pushing
+        </button>
+      }
+      <button exButton variant="primary" [disabled]="busy()" (click)="confirm(unpushed() > 0)">
+        <ex-icon [name]="unpushed() ? 'push' : 'close-task'" [size]="14" />{{
+          unpushed() ? 'Push and close' : 'Close task'
+        }}
+      </button>
+    </footer>
+  </section>
+</ex-modal-layer>

@@ -1,4 +1,10 @@
 const {
+  formatSize,
+  getDirectorySize,
+  removeGitArtifacts,
+  restoreDriverLicenses,
+} = require("./runtime-stage-utils");
+const {
   cpSync,
   existsSync,
   mkdirSync,
@@ -12,13 +18,6 @@ const {
 const https = require("https");
 const path = require("path");
 const { execSync, spawnSync } = require("child_process");
-const {
-  assembleRuntime,
-  formatSize,
-  getDirectorySize,
-  removeGitArtifacts,
-  stagedVSCodeRoot,
-} = require("./prepare-vscode-web-runtime");
 const {
   REMOTE_HOME_DIRNAME,
 } = require("../apps/electron/remote-server-utils.cjs");
@@ -51,6 +50,10 @@ const TARGETS = [
   },
 ];
 const NATIVE_RUNTIME_DEPENDENCIES = [
+  // Externalized browser driver, including its managed Chromium installer assets.
+  "patchright-core",
+  "patchright",
+  "ffmpeg-static",
   "better-sqlite3",
   "node-pty",
   "@openai/codex-sdk",
@@ -152,39 +155,14 @@ function removeSourceMaps(rootDir) {
   }
 }
 
-function stageExtensionRuntime(extensionDirName, destinationRoot) {
-  const sourceRoot = path.join(repoRoot, extensionDirName);
-  const extensionDestinationRoot = path.join(destinationRoot, extensionDirName);
-
-  ensureDir(extensionDestinationRoot);
-  copyRequiredPath(
-    path.join(sourceRoot, "dist"),
-    path.join(extensionDestinationRoot, "dist"),
-  );
-  copyRequiredPath(
-    path.join(sourceRoot, "package.json"),
-    path.join(extensionDestinationRoot, "package.json"),
-  );
-
-  const packageNlsPath = path.join(sourceRoot, "package.nls.json");
-  if (existsSync(packageNlsPath)) {
-    copyRequiredPath(
-      packageNlsPath,
-      path.join(extensionDestinationRoot, "package.nls.json"),
-    );
-  }
-
-  removeSourceMaps(extensionDestinationRoot);
-}
-
 function shouldBuildNativeDependenciesOnHost(target) {
   return target.platform === process.platform && target.arch === process.arch;
 }
 
 function buildRuntimePackageJson(target) {
   const onlyBuiltDependencies = shouldBuildNativeDependenciesOnHost(target)
-    ? ["better-sqlite3", "node-pty"]
-    : [];
+    ? ["better-sqlite3", "node-pty", "ffmpeg-static"]
+    : ["ffmpeg-static"];
 
   return {
     name: "elevenex-remote-runtime",
@@ -394,20 +372,12 @@ function prepareNodeGypShim() {
             Number.parseInt(left.slice("node-gyp@".length), 10),
         )[0]
     : null;
-  if (!nodeGypPackage) {
-    throw new Error(
-      "Could not locate node-gyp required to build remote native modules",
-    );
-  }
-
-  const entrypoint = path.join(
-    pnpmRoot,
-    nodeGypPackage,
-    "node_modules",
-    "node-gyp",
-    "bin",
-    "node-gyp.js",
-  );
+  // A backend-only CI install may not include electron-builder's node-gyp.
+  // The official Node distribution includes a compatible copy with npm.
+  const entrypoint = nodeGypPackage
+    ? path.join(pnpmRoot, nodeGypPackage, "node_modules", "node-gyp", "bin", "node-gyp.js")
+    : path.resolve(path.dirname(process.execPath), process.platform === "win32" ? "." : "../lib",
+      "node_modules", "npm", "node_modules", "node-gyp", "bin", "node-gyp.js");
   if (!existsSync(entrypoint)) {
     throw new Error(`node-gyp entrypoint is missing: ${entrypoint}`);
   }
@@ -432,7 +402,7 @@ function prepareNodeGypShim() {
   return shimRoot;
 }
 
-function installRuntimeDependencies(targetRoot, target) {
+function installRuntimeDependencies(targetRoot, target, nodeVersion) {
   writeFileSync(
     path.join(targetRoot, "package.json"),
     `${JSON.stringify(buildRuntimePackageJson(target), null, 2)}\n`,
@@ -444,6 +414,8 @@ function installRuntimeDependencies(targetRoot, target) {
     PATH: `${nodeGypShimRoot}${path.delimiter}${process.env.PATH || ""}`,
     npm_config_platform: target.platform,
     npm_config_arch: target.arch,
+    // prebuild-install and node-gyp must use the bundled Node ABI.
+    npm_config_target: nodeVersion.slice(1),
     npm_config_target_platform: target.platform,
     npm_config_target_arch: target.arch,
     npm_config_build_from_source: "false",
@@ -453,12 +425,14 @@ function installRuntimeDependencies(targetRoot, target) {
 
   runCommand(
     "pnpm",
-    ["install", "--prod", "--ignore-workspace", "--no-lockfile"],
+    // pnpm keys cached native build output by the host Node, not npm_config_target.
+    ["install", "--prod", "--ignore-workspace", "--no-lockfile", "--config.side-effects-cache=false"],
     {
       cwd: targetRoot,
       env,
     },
   );
+  restoreDriverLicenses(path.join(targetRoot, "node_modules"));
 }
 
 function validateRemoteNativeRuntime(targetRoot, target) {
@@ -810,18 +784,25 @@ async function stageTarget(target, commitSha, nodeVersion) {
     path.join(backendBundleRoot, "main.cjs"),
     path.join(targetRoot, "main.cjs"),
   );
+  copyRequiredPath(path.join(backendBundleRoot, "browser-setup.cjs"), path.join(targetRoot, "browser-setup.cjs"));
+  copyRequiredPath(path.join(backendBundleRoot, "terminal-screen-worker.cjs"), path.join(targetRoot, "terminal-screen-worker.cjs"));
+  copyRequiredPath(
+    path.join(backendBundleRoot, "shell-integration"),
+    path.join(targetRoot, "shell-integration"),
+  );
   copyRequiredPath(
     path.join(backendRoot, "drizzle"),
     path.join(targetRoot, "drizzle"),
   );
   copyRequiredPath(path.join(backendRoot, "bin"), path.join(targetRoot, "bin"));
+  if (target.platform === "darwin" && process.platform === "darwin") {
+    copyRequiredPath(path.join(backendBundleRoot, "bin", "Elevenex Agent.app"),
+      path.join(targetRoot, "bin", "Elevenex Agent.app"));
+  }
   copyRequiredPath(
     path.join(repoRoot, "apps", "frontend", "proxy.conf.json"),
     path.join(targetRoot, "proxy.conf.json"),
   );
-  copyRequiredPath(stagedVSCodeRoot, path.join(targetRoot, "vscode-web-dist"));
-  stageExtensionRuntime("vscode-filesystem-provider", targetRoot);
-  stageExtensionRuntime("vscode-scm-extension", targetRoot);
   writeFileSync(path.join(targetRoot, "version"), `${commitSha}\n`, "utf8");
   writeFileSync(
     path.join(targetRoot, "runtime-target"),
@@ -830,7 +811,7 @@ async function stageTarget(target, commitSha, nodeVersion) {
   );
 
   await stageBundledNodeRuntime(targetRoot, target, nodeVersion);
-  installRuntimeDependencies(targetRoot, target);
+  installRuntimeDependencies(targetRoot, target, nodeVersion);
   pruneOnnxRuntimeBinaries(targetRoot, target);
   removeEmbeddedAgentExecutables(targetRoot);
   validateRemoteNativeRuntime(targetRoot, target);
@@ -893,7 +874,6 @@ async function main() {
     ensureDir(remoteRuntimeRoot);
     ensureDir(tempRoot);
   }
-  await assembleRuntime();
 
   const commitSha = execSync("git rev-parse HEAD", { cwd: repoRoot })
     .toString()

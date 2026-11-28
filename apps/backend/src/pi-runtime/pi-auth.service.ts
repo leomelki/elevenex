@@ -10,7 +10,7 @@ import { promisify } from 'util';
 import {
   buildAugmentedEnvAsync,
   buildSpawnCommand,
-  findBinary,
+  findBinaryAsync,
 } from '../config/system-paths.js';
 import type {
   PiAuthStatus,
@@ -730,9 +730,12 @@ export class PiAuthService extends EventEmitter {
       // as a `pi.cmd` batch shim; spawning the bare 'pi' yields ENOENT because
       // the extensionless shim can't be executed and Node refuses to launch
       // .cmd files without shell:true (CVE-2024-27980 mitigation).
-      const { command, shell } = buildSpawnCommand(findBinary('pi') ?? 'pi');
+      const env = await buildAugmentedEnvAsync();
+      const { command, shell } = buildSpawnCommand(
+        (await findBinaryAsync('pi')) ?? 'pi',
+      );
       const { stdout } = await execFile(command, ['--version'], {
-        env: await buildAugmentedEnvAsync(),
+        env,
         timeout: 5000,
         shell,
       });

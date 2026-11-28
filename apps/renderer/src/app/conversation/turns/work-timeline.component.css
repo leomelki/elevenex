@@ -1,0 +1,193 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+ol {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+li {
+  position: relative;
+  min-width: 0;
+}
+.timeline-row {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+.row-clip {
+  min-height: 0;
+  min-width: 0;
+}
+.tool-row {
+  position: relative;
+  min-width: 0;
+}
+.tool-row::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--space-6));
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+}
+.media-output {
+  padding-block: var(--space-2);
+}
+.prose,
+.answer {
+  min-width: 0;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+}
+/* When a new fact wraps, resize on the same curve as the tool folding away. */
+.summary-size {
+  --auto-height-duration: var(--dur-slow);
+  --auto-height-easing: var(--ease-in-out);
+}
+.group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--row-height);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: var(--text-caption-size);
+  text-align: left;
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+}
+.summary-lead {
+  flex: none;
+  color: var(--ink);
+  font-weight: 500;
+}
+.summary-facts {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: var(--space-1) var(--space-3);
+}
+.summary-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.summary-fact.failure {
+  color: var(--danger);
+}
+.summary-fact ex-icon,
+.summary-fact ex-status-glyph,
+.disclosure {
+  flex: none;
+}
+.prose.has-text,
+.answer.has-text {
+  padding-block: var(--space-2);
+}
+.prose-content {
+  /* Markdown's last block can carry a margin (especially media). Contain it in
+     AutoHeight's observed wrapper so its measured and natural heights agree. */
+  display: flow-root;
+}
+.group:hover {
+  color: var(--ink);
+  background: var(--surface-sunken);
+}
+.group:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.disclosure {
+  /* Same travel as the turn's work chevron, so every disclosure turns alike. */
+  transition: transform var(--dur-glide) var(--ease-glide);
+}
+/*
+ * Fold normally closes faster than it opens. Match the curves when a tool
+ * folds away and its activity summary opens or grows above it.
+ */
+ex-fold.group-fold,
+ex-fold.step-fold {
+  transition-duration: var(--dur-slow);
+}
+.turned {
+  transform: rotate(90deg);
+}
+.recovered {
+  text-decoration: line-through;
+  text-decoration-color: var(--line-strong);
+}
+.step-enter {
+  animation: step-grow var(--dur-slow) var(--ease-in-out);
+}
+.activity-reveal {
+  animation: step-grow var(--dur-slow) var(--ease-in-out);
+}
+.activity-reveal > .row-clip {
+  overflow: clip;
+  mask-image: linear-gradient(to bottom, black calc(100% - var(--space-3)), transparent);
+  animation: activity-ink var(--dur-slow) var(--ease-out) both;
+}
+@keyframes activity-ink {
+  /* Ink follows the growing edge closely (as Fold's 40ms content delay does);
+     a longer blank hold reads as latency even when the rows were cached. */
+  0%, 15% {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--space-1)));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.step-enter > .row-clip {
+  overflow: clip;
+  animation: step-ink var(--dur-slow) var(--ease-out);
+}
+@keyframes step-grow {
+  from {
+    grid-template-rows: minmax(0, 0fr);
+  }
+  to {
+    grid-template-rows: minmax(0, 1fr);
+  }
+}
+@keyframes step-ink {
+  from {
+    opacity: 0;
+  }
+  25% {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .step-enter,
+  .step-enter > .row-clip,
+  .activity-reveal,
+  .activity-reveal > .row-clip {
+    animation: none;
+  }
+  .disclosure {
+    transition: none;
+  }
+  .activity-reveal > .row-clip {
+    overflow: visible;
+    mask-image: none;
+  }
+}
+
+.agent-step { margin-block: var(--space-1); }
+.agent-tool { display: flex; align-items: start; gap: var(--space-1); }
+.agent-tool ex-tool-step { flex: 1; min-width: 0; }
+.agent-tool-action { flex: none; }

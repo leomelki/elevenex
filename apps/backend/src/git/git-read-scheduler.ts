@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import * as path from 'node:path';
 import type { SimpleGit } from 'simple-git';
 import { buildAugmentedEnv } from '../config/system-paths.js';
+import { isolateGitEnvironment } from '../config/git-environment.js';
 
 interface Waiting {
   key: string;
@@ -186,7 +187,9 @@ export function scheduledGitRaw(
     () =>
       new Promise<string>((resolve, reject) => {
         const env = {
-          ...buildAugmentedEnv(process.env, worktreePath),
+          ...isolateGitEnvironment(
+            buildAugmentedEnv(process.env, worktreePath),
+          ),
           ...overrides,
         };
         delete env.GIT_PAGER;

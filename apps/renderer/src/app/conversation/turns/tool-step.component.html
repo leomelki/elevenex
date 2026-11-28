@@ -1,0 +1,113 @@
+<section
+  [class.running]="status() === 'running'"
+  [class.failed]="status() === 'failed'"
+>
+  <button
+    #head
+    type="button"
+    class="head"
+    [disabled]="!hasContent()"
+    [attr.aria-expanded]="hasContent() ? expanded() : null"
+    [attr.aria-controls]="hasContent() ? bodyId : null"
+    [attr.aria-busy]="waiting() || null"
+    [class.pending]="pending()"
+    (click)="toggle()"
+    (pointerdown)="press($event)"
+    (keydown)="press($event)"
+    (pointerenter)="hover($event, true)"
+    (pointerleave)="hover($event, false)"
+    (focus)="focusHead(true)"
+    (blur)="focusHead(false)"
+  >
+    <ex-icon [name]="icon()" [size]="14" /><span class="verb">{{ verb() }}</span
+    ><code [class.truncate-start]="detailTruncation() === 'start'" [title]="detail()"
+      ><bdi dir="ltr">{{ detail() }}</bdi></code
+    ><span class="grow"></span><span class="meta">{{ meta() }}</span>
+    @if (status() === "unknown") {
+      <span role="img" aria-label="Completion unknown"
+        ><ex-icon name="clock" [size]="14"
+      /></span>
+    } @else {
+      <ex-status-glyph
+        [status]="
+          status() === 'failed'
+            ? 'failed'
+            : status() === 'running'
+              ? 'running'
+              : 'done'
+        "
+        [size]="14"
+      />
+    }
+    @if (hasContent()) {
+      <ex-icon
+        class="disclosure"
+        name="chevron-right"
+        [class.turned]="expanded()"
+        [size]="12"
+      />
+    }
+  </button>
+  <ex-fold #fold [id]="bodyId" [open]="bodyOpen()">
+    @if (imagePanel() || (deferred() ? !!painted() : expanded() || contentMounted())) {
+      <div exAutoHeight>
+        <div class="body-content">
+          @if (imagePanel(); as panel) {
+            <div class="tool-images">
+              @for (image of panel.images; track image.itemId + ':' + image.mediaId) {
+                <ex-markdown-media
+                  [path]="image.path"
+                  [caption]="image.caption"
+                  [showCaption]="image.caption !== 'Image'"
+                  [compact]="true"
+                  [asset]="imageAssets()?.(image)"
+                  [active]="visible()"
+                  (openFile)="openFile.emit($event)"
+                />
+              }
+            </div>
+          }
+          @if (deferred()) {
+            @let panel = painted();
+            @switch (panel?.status) {
+              @case ('error') {
+                <div class="detail-notice">
+                  <span class="detail-status" role="status">
+                    <ex-icon name="clock" [size]="14" />
+                    {{ panel.reason === 'changed' ? 'Tool details have changed.' : 'Couldn’t load tool details.' }}
+                  </span>
+                  <button exButton variant="ghost" size="sm" type="button" (click)="retry()">
+                    {{ panel.reason === 'changed' ? 'Refresh conversation' : 'Retry' }}
+                  </button>
+                </div>
+              }
+              @case ('ready') {
+                <ex-tool-content
+                  [presentation]="panel.evidence.presentation"
+                  [status]="status()"
+                  [copiedCode]="copiedCode()"
+                  [original]="panel.evidence.output"
+                  [fullContent]="panel.evidence.fullContent"
+                  (copyCode)="copyCode.emit($event)"
+                  (contentRequested)="contentRequested.emit($event)"
+                />
+              }
+            }
+          } @else if (presentation(); as content) {
+            <ex-tool-content
+              [presentation]="content"
+              [status]="status()"
+              [copiedCode]="copiedCode()"
+              [original]="output()"
+              [fullContent]="fullContent()"
+              (copyCode)="copyCode.emit($event)"
+              (contentRequested)="contentRequested.emit($event)"
+            />
+          } @else if (output()) {
+            <pre tabindex="0" aria-label="Tool output">{{ output() }}</pre>
+          }
+        </div>
+      </div>
+    }
+  </ex-fold>
+</section>

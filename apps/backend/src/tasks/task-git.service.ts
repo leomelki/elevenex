@@ -11,6 +11,8 @@ import {
 } from '../config/system-paths.js';
 import { refreshCommitGraphAfterFetch } from '../git/commit-graph-refresh.js';
 import { execFileAsync } from '../terminal/async-process.js';
+import { copyCacheString } from '../git/git-cache.js';
+import { isolateGitEnvironment } from '../config/git-environment.js';
 
 export interface WorktreeStatus {
   dirty: boolean;
@@ -33,20 +35,39 @@ export function taskBranchSlug(name: string): string {
   );
 }
 
+export function taskRemoteRef(
+  ref: string,
+  remotes: readonly string[],
+): { remote: string; branch: string; ref: string } | null {
+  if (ref.startsWith('refs/heads/')) return null;
+  const value = ref.replace(/^refs\/remotes\//, '');
+  let remote: string | undefined;
+  for (const name of remotes) {
+    if (value.startsWith(`${name}/`) && (!remote || name.length > remote.length))
+      remote = name;
+  }
+  return remote
+    ? {
+        remote,
+        branch: value.slice(remote.length + 1),
+        ref: `refs/remotes/${value}`,
+      }
+    : null;
+}
+
 @Injectable()
 export class TaskGitService {
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly fetches = new Map<string, Promise<void>>();
 
   async repositoryKey(repoPath: string): Promise<string> {
-    const common = (
-      await worktreeSimpleGit(repoPath).raw([
-        'rev-parse',
-        '--path-format=absolute',
-        '--git-common-dir',
-      ])
-    ).trim();
-    return fs.realpath(path.resolve(repoPath, common));
+    const [common, physicalPath] = await Promise.all([
+      worktreeSimpleGit(repoPath).raw(['rev-parse', '--git-common-dir']),
+      fs.realpath(repoPath),
+    ]);
+    // Git before 2.31 echoes the unsupported --path-format option as output.
+    // Relative output uses the physical cwd, including through nested symlinks.
+    return fs.realpath(path.resolve(physicalPath, common.replace(/\r?\n$/, '')));
   }
 
   async exclusive<T>(key: string, operation: () => Promise<T>): Promise<T> {
@@ -106,19 +127,8 @@ export class TaskGitService {
     ref: string,
   ): Promise<{ remote: string; branch: string; ref: string } | null> {
     if (ref.startsWith('refs/heads/')) return null;
-    const value = ref.replace(/^refs\/remotes\//, '');
     const remotes = await worktreeSimpleGit(repoPath).getRemotes();
-    const remote = remotes
-      .map((entry) => entry.name)
-      .sort((a, b) => b.length - a.length)
-      .find((name) => value.startsWith(`${name}/`));
-    return remote
-      ? {
-          remote,
-          branch: value.slice(remote.length + 1),
-          ref: `refs/remotes/${value}`,
-        }
-      : null;
+    return taskRemoteRef(ref, remotes.map(({ name }) => name));
   }
 
   async refresh(
@@ -142,7 +152,7 @@ export class TaskGitService {
         {
           cwd: repoPath,
           env: {
-            ...buildAugmentedEnv(process.env, repoPath),
+            ...isolateGitEnvironment(buildAugmentedEnv(process.env, repoPath)),
             GIT_TERMINAL_PROMPT: '0',
             GCM_INTERACTIVE: 'never',
           },
@@ -175,38 +185,53 @@ export class TaskGitService {
   }
 
   async defaultBase(repoPath: string): Promise<string | null> {
+    return (await this.branchDefaults(repoPath)).baseRef;
+  }
+
+  async branchDefaults(
+    repoPath: string,
+  ): Promise<{ baseRef: string | null; remotes: readonly string[] }> {
     const git = worktreeSimpleGit(repoPath);
-    const remotes = (await git.getRemotes()).sort((a, b) =>
+    // Only inspect candidate defaults, without reading every branch's subject
+    // or launching a rev-parse process for each missing candidate.
+    const [configuredRemotes, output] = await Promise.all([
+      git.getRemotes(),
+      git.raw([
+        'for-each-ref',
+        '--format=%(refname)%00%(symref)%00%(objecttype)',
+        'refs/remotes/*/HEAD',
+        'refs/remotes/*/main',
+        'refs/remotes/*/master',
+        'refs/heads/main',
+        'refs/heads/master',
+      ]),
+    ]);
+    const candidates = new Map(
+      output.split('\n').flatMap((line) => {
+        const [ref, target, type] = line.split('\0');
+        return type === 'commit' ? [[ref, target] as const] : [];
+      }),
+    );
+    const remotes = configuredRemotes.sort((a, b) =>
       a.name === 'origin'
         ? -1
         : b.name === 'origin'
           ? 1
           : a.name.localeCompare(b.name),
     );
-    for (const { name } of remotes) {
-      try {
-        const ref = (
-          await git.raw(['symbolic-ref', '-q', `refs/remotes/${name}/HEAD`])
-        ).trim();
-        await this.resolve(repoPath, ref);
-        return ref;
-      } catch {
-        /* Some clones lack a remote HEAD symref. */
-      }
+    const remoteNames = remotes.map(({ name }) => name);
+    for (const name of remoteNames) {
+      const target = candidates.get(`refs/remotes/${name}/HEAD`);
+      if (target) return { baseRef: target, remotes: remoteNames };
       for (const branch of ['main', 'master']) {
         const ref = `refs/remotes/${name}/${branch}`;
-        try {
-          await this.resolve(repoPath, ref);
-          return ref;
-        } catch {
-          /* Try next default. */
-        }
+        if (candidates.has(ref)) return { baseRef: ref, remotes: remoteNames };
       }
     }
-    for (const branch of ['main', 'master'])
-      if (await this.hasLocalBranch(repoPath, branch))
-        return `refs/heads/${branch}`;
-    return null;
+    const local = ['refs/heads/main', 'refs/heads/master'].find((ref) =>
+      candidates.has(ref),
+    );
+    return { baseRef: local ?? null, remotes: remoteNames };
   }
 
   /** A clean index can still belong to a paused rebase, bisect, or sequencer. */
@@ -279,17 +304,46 @@ export class TaskGitService {
   ): Promise<WorktreeStatus> {
     const git = worktreeSimpleGit(worktreePath);
     if (options.persistIndex) git.env('GIT_OPTIONAL_LOCKS', '1');
-    const [status, branch, head] = await Promise.all([
-      git.raw(['status', '--porcelain=v1', '--untracked-files=normal']),
-      git.raw(['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''),
-      this.resolve(worktreePath, 'HEAD'),
+    const output = await git.raw([
+      'status',
+      '--porcelain=v2',
+      '--branch',
+      '--no-ahead-behind',
+      // Task ownership needs dirty/conflict flags, not rename identities.
+      '--no-renames',
+      '-z',
+      '--untracked-files=normal',
     ]);
+    let branch: string | null = null;
+    let head: string | undefined;
+    let offset = 0;
+    // Headers precede file records. Read only those small fields instead of
+    // allocating one string per changed path in a very dirty repository.
+    while (output.startsWith('# ', offset)) {
+      const end = output.indexOf('\0', offset);
+      if (end === -1) throw new Error('Incomplete task status headers.');
+      const record = output.slice(offset, end);
+      if (record.startsWith('# branch.head ')) {
+        const value = record.slice('# branch.head '.length);
+        branch = value === '(detached)' ? null : copyCacheString(value);
+      } else if (record.startsWith('# branch.oid ')) {
+        head = copyCacheString(record.slice('# branch.oid '.length));
+      }
+      offset = end + 1;
+    }
+    if (!head || !/^[a-f0-9]{40,64}$/.test(head))
+      throw new BadRequestException(
+        'Could not find “HEAD”. Choose another branch or revision.',
+      );
+    const firstRecord = output.slice(offset, offset + 2);
+    // With --no-renames every pathname stays inside its prefixed record, so
+    // looking for a NUL-delimited unmerged prefix cannot match filename text.
+    if (offset < output.length && !/^[1u?] $/.test(firstRecord))
+      throw new Error('Unknown task status record.');
     return {
-      dirty: status.trim().length > 0,
-      conflicts: status
-        .split('\n')
-        .some((line) => /^(DD|AU|UD|UA|DU|AA|UU)/.test(line)),
-      branch: branch.trim() || null,
+      dirty: offset < output.length,
+      conflicts: firstRecord === 'u ' || output.includes('\0u ', offset),
+      branch,
       head,
     };
   }

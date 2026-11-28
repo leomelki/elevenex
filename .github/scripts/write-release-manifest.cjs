@@ -1,7 +1,6 @@
-const { createHash } = require('node:crypto');
-const { createReadStream } = require('node:fs');
-const { readFile, writeFile } = require('node:fs/promises');
-const path = require('node:path');
+const { readFile, readdir, writeFile } = require('node:fs/promises');
+const { join } = require('node:path');
+const { sha256 } = require('./stage-release-assets.cjs');
 
 async function main() {
   const artifactsDir = process.argv[2];
@@ -18,30 +17,37 @@ async function main() {
     { key: 'darwin-arm64', archive: 'elevenex-remote-runtime-darwin-arm64.tar.gz' },
     { key: 'win32-x64', archive: 'elevenex-remote-runtime-win32-x64.zip' },
   ];
-  const desktopRuntime = [
-    { key: 'macos-arm64', archive: 'elevenex-runtime-macos-arm64.tar.gz' },
-    { key: 'linux-x64', archive: 'elevenex-runtime-linux-x64.tar.gz' },
-    { key: 'windows-x64', archive: 'elevenex-runtime-windows-x64.tar.gz' },
-  ];
   const desktop = [
-    { key: 'macos-arm64', archive: 'elevenex-desktop-macos-arm64.dmg' },
-    { key: 'linux-x64', archive: 'elevenex-desktop-linux-x64.AppImage' },
-    { key: 'linux-x64', archive: 'elevenex-desktop-linux-x64.deb' },
-    { key: 'windows-x64', archive: 'elevenex-desktop-windows-x64.exe' },
+    { key: 'macos-arm64', archive: 'elevenex-new-desktop-macos-arm64.dmg' },
+    { key: 'linux-x64', archive: 'elevenex-new-desktop-linux-x86_64.AppImage' },
+    { key: 'linux-x64', archive: 'elevenex-new-desktop-linux-amd64.deb' },
+    { key: 'linux-arm64', archive: 'elevenex-new-desktop-linux-arm64.AppImage' },
+    { key: 'linux-arm64', archive: 'elevenex-new-desktop-linux-arm64.deb' },
+    { key: 'windows-x64', archive: 'elevenex-new-desktop-windows-x64.exe' },
   ];
-  for (const asset of [...targets, ...desktopRuntime, ...desktop]) {
-    const checksum = (await readFile(path.join(artifactsDir, `${asset.archive}.sha256`), 'utf8')).trim();
-    const expected = /^([a-f0-9]{64})\s+/i.exec(checksum)?.[1].toLowerCase();
-    const hash = createHash('sha256');
-    for await (const chunk of createReadStream(path.join(artifactsDir, asset.archive))) hash.update(chunk);
-    asset.sha256 = hash.digest('hex');
-    if (asset.sha256 !== expected) throw new Error(`Invalid checksum for ${asset.archive}`);
+  const backend = [
+    { key: 'macos-arm64', archive: 'elevenex-backend-macos-arm64.tar.gz' },
+    { key: 'linux-x64', archive: 'elevenex-backend-linux-x64.tar.gz' },
+    { key: 'linux-arm64', archive: 'elevenex-backend-linux-arm64.tar.gz' },
+    { key: 'windows-x64', archive: 'elevenex-backend-windows-x64.tar.gz' },
+  ];
+  const assets = [...targets, ...desktop, ...backend];
+  const expectedFiles = new Set(assets.flatMap(({ archive }) => [archive, `${archive}.sha256`]));
+  for (const file of await readdir(artifactsDir)) {
+    if (!expectedFiles.has(file)) throw new Error(`Unexpected release asset: ${file}`);
   }
-  const sourceMaps = JSON.parse(await readFile(path.join(artifactsDir, 'source-maps-manifest.json'), 'utf8'));
-  if (sourceMaps.version !== version || sourceMaps.releaseTag !== releaseTag) throw new Error('Source maps refer to another release.');
+  for (const asset of assets) {
+    const file = join(artifactsDir, asset.archive);
+    const checksum = (await readFile(`${file}.sha256`, 'utf8')).trim();
+    const match = /^([a-f0-9]{64})[ \t]+\*?(\S+)$/i.exec(checksum);
+    if (match?.[2] !== asset.archive) throw new Error(`Invalid checksum filename for ${asset.archive}`);
+    asset.sha256 = await sha256(file);
+    if (asset.sha256 !== match[1].toLowerCase()) throw new Error(`Invalid checksum for ${asset.archive}`);
+  }
   const ref = pullRequest ? `refs/pull/${pullRequest}/head` : process.env.GITHUB_REF;
-  const manifest = { version, ref, releaseTag, pullRequest, targets, desktopRuntime, desktop, sourceMaps };
-  await writeFile(path.join(artifactsDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  // Keep the manifest shape and filename published by the desktop previews.
+  const manifest = { version, ref, releaseTag, pullRequest, targets, desktopRuntime: [], desktop, backend, sourceMaps: null };
+  await writeFile(join(artifactsDir, 'manifest-new-desktop.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
-main().catch((error) => { console.error(error); process.exitCode = 1; });
+main().catch(error => { console.error(error); process.exitCode = 1; });

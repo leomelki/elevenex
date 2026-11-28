@@ -1,0 +1,74 @@
+import { bootstrapApplication } from "@angular/platform-browser";
+import { provideRouter, withViewTransitions } from "@angular/router";
+import { provideZonelessChangeDetection } from "@angular/core";
+import { PreviewComponent } from "./preview.component";
+
+void bootstrapApplication(PreviewComponent, {
+  providers: [
+    provideZonelessChangeDetection(),
+    provideRouter(
+      [
+        { path: 'browser-agent', loadComponent: () => import('./browser-demo.component').then(module => module.BrowserDemoComponent) },
+        { path: 'element-mentions', loadComponent: () => import('./element-mentions-demo.component').then(module => module.ElementMentionsDemoComponent) },
+        { path: 'browser-window', loadComponent: () => import('./browser-window-demo.component').then(module => module.BrowserWindowDemoComponent) },
+        { path: 'remote-tabs', loadComponent: () => import('./task-browser-demo.component').then(module => module.RemoteTabsDemoComponent) },
+        { path: 'task-apps', loadComponent: () => import('./task-apps-demo.component').then(module => module.TaskAppsDemoComponent) },
+        { path: 'task-browser', loadComponent: () => import('./task-browser-demo.component').then(module => module.TaskBrowserDemoComponent) },
+        { path: 'browser-video', loadComponent: () => import('./browser-video-demo.component').then(module => module.BrowserVideoDemoComponent) },
+        { path: 'terminal-stream', loadComponent: () => import('./terminal-stream-demo.component').then(module => module.TerminalStreamDemoComponent) },
+        { path: 'terminal-rendering', loadComponent: () => import('./terminal-rendering-demo.component').then(module => module.TerminalRenderingDemoComponent) },
+        { path: "agent-picker", loadComponent: () => import("./agent-picker-demo.component").then(module => module.AgentPickerDemoComponent) },
+        { path: 'reconnect', loadComponent: () => import('./reconnect-demo.component').then(module => module.ReconnectDemoComponent) },
+        { path: 'connected-workspace', loadComponent: () => import('./connected-workspace-demo.component').then(module => module.ConnectedWorkspaceDemoComponent) },
+        { path: 'machine-startup', loadComponent: () => import('./machine-startup-demo.component').then(module => module.MachineStartupDemoComponent) },
+        { path: 'machine-flow', loadComponent: () => import('./machine-flow-demo.component').then(module => module.MachineFlowDemoComponent) },
+        { path: 'task-setup', loadComponent: () => import('./task-setup-demo.component').then(module => module.TaskSetupDemoComponent) },
+        { path: 'task-update',loadComponent: () => import('./task-update-demo.component').then(module => module.TaskUpdateDemoComponent) },
+        { path: 'project-settings', loadComponent: () => import('./settings-demo.component').then(module => module.SettingsDemoComponent) },
+        { path: 'projects', loadComponent: () => import('./project-creation-demo.component').then(module => module.ProjectCreationDemoComponent) },
+        { path: 'git-jobs', loadComponent: () => import('./git-jobs-demo.component').then(module => module.GitJobsDemoComponent) },
+        { path: 'sidebar-motion', loadComponent: () => import('./sidebar-motion-demo.component').then(module => module.SidebarMotionDemoComponent) },
+        { path: 'git-motion', loadComponent: () => import('./git-motion-demo.component').then(module => module.GitMotionDemoComponent) },
+        {
+          path: "",
+          loadComponent: () =>
+            import("./workspace-demo.component").then(
+              (module) => module.WorkspaceDemoComponent,
+            ),
+        },
+        {
+          path: "foundations",
+          loadComponent: () =>
+            import("./foundations-demo.component").then(
+              (module) => module.FoundationsDemoComponent,
+            ),
+        },
+        {
+          path: "tasks",
+          loadComponent: () =>
+            import("./tasks-demo.component").then(
+              (module) => module.TasksDemoComponent,
+            ),
+        },
+        {
+          path: "conversation",
+          loadComponent: () =>
+            import("./conversation-demo.component").then(
+              (module) => module.ConversationDemoComponent,
+            ),
+        },
+        {
+          path: "machines",
+          loadComponent: () =>
+            import("./machines-views-demo.component").then(
+              (module) => module.MachinesViewsDemoComponent,
+            ),
+        },
+      ],
+      withViewTransitions({
+        skipInitialTransition: true,
+        // Match production: reduced motion is handled by the global CSS.
+      }),
+    ),
+  ],
+}).catch(console.error);

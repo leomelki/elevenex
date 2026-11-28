@@ -1,0 +1,100 @@
+import {
+  afterNextRender,
+  DestroyRef,
+  ElementRef,
+  inject,
+  ChangeDetectionStrategy,
+  Component,
+  input,
+  output,
+} from "@angular/core";
+import { animateMessageSend } from "./message-send-animation";
+import type { MessageSendOrigin, TurnAction } from "../conversation.models";
+import { TurnActsComponent } from "../turns/turn-acts.component";
+import { ReplyMarkComponent } from "../turns/reply-mark.component";
+import { IconButtonComponent } from '../../ui';
+@Component({
+  selector: "ex-message",
+  imports: [ReplyMarkComponent, TurnActsComponent, IconButtonComponent],
+  templateUrl: "./message.component.html",
+  styleUrl: "./message.component.css",
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  host: {
+    "[class.user]": 'role() === "user"',
+    "[class.agent]": 'role() === "agent"',
+    "[class.fresh]": "isNew()",
+    "[attr.data-user-message]": 'role() === "user" ? messageId() : null',
+    "[attr.id]": "messageId() || null",
+    "[attr.aria-keyshortcuts]": "editable() && !editDisabledReason() ? 'E' : null",
+    tabindex: "0",
+    "(keydown)": "onKey($event)",
+  },
+})
+export class MessageComponent {
+  readonly element = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
+  private disposeSend?: () => void;
+  private arrived = false;
+  readonly sendOrigin = input<MessageSendOrigin>();
+  constructor() {
+    inject(DestroyRef).onDestroy(() => this.disposeSend?.());
+    afterNextRender(() => {
+      // ChatScroll sequences the scroll and arrival together. Standalone bubbles
+      // still support the same rise/fade, without a conversation to reveal.
+      if (!this.element.closest('ex-chat-scroll')) this.playArrival();
+    });
+  }
+  /** Internal conversation boundary: called by ChatScroll after revealing us. */
+  playArrival(): void {
+    if (this.arrived) return;
+    this.arrived = true;
+    if (this.isNew() && this.role() === 'user')
+      this.disposeSend = animateMessageSend(this.element, this.sendOrigin());
+  }
+  /** Internal scroll handoff: release a flight immediately when the reader takes over. */
+  finishArrival(): void {
+    this.disposeSend?.();
+    this.disposeSend = undefined;
+  }
+  readonly role = input<"user" | "agent">("user");
+  readonly messageId = input("");
+  readonly time = input("");
+  readonly author = input("Agent");
+  readonly mark = input("EX");
+  readonly harness = input<string>();
+  readonly sideChats = input(0);
+  readonly pinned = input(false);
+  readonly isNew = input(false);
+  readonly revealOnArrival = input(true);
+  readonly editable = input(false);
+  readonly editDisabledReason = input('');
+  readonly editRequested = output<void>();
+  readonly action = output<TurnAction>();
+  onKey(event: KeyboardEvent): void {
+    if (
+      event.target !== event.currentTarget ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey
+    )
+      return;
+    if (this.role() === 'user') {
+      if (this.editable() && !this.editDisabledReason() && event.key.toLowerCase() === 'e') {
+        event.preventDefault();
+        this.editRequested.emit();
+      }
+      return;
+    }
+    const action: TurnAction | undefined =
+      event.key.toLowerCase() === "s"
+        ? "side-chat"
+        : event.key.toLowerCase() === "f"
+          ? "fork"
+          : event.key.toLowerCase() === "c"
+            ? "copy"
+            : undefined;
+    if (action) {
+      event.preventDefault();
+      this.action.emit(action);
+    }
+  }
+}

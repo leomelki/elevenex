@@ -1,0 +1,57 @@
+:host {
+  display: block;
+  /* Reference: 320px content plus 10px padding on each side. */
+  width: min(340px, calc(100cqw - var(--space-8)));
+  color: var(--ink-inverse);
+  font-size: var(--text-caption-size);
+  font-weight: 400;
+  line-height: var(--text-ui-line);
+}
+.panel { display: flex; flex-direction: column; gap: var(--space-2); padding: 10px; white-space: normal; }
+.panel:focus-visible { outline: 2px solid color-mix(in oklab, var(--accent) 60%, var(--ink-inverse)); outline-offset: -4px; border-radius: 18px; }
+header, .row { display: flex; align-items: center; }
+header { gap: 10px; padding: 2px 2px 0; }
+.machine-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--ink-inverse) 14%, transparent);
+}
+.dot { position: absolute; right: -2px; bottom: -2px; width: 7px; height: 7px; border-radius: 2px; box-shadow: 0 0 0 2px var(--ink); }
+.identity { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 1px; overflow-wrap: anywhere; }
+b { font-size: var(--text-code-size); font-weight: 600; }
+.name { font-size: var(--text-body-size); }
+small { font-size: var(--text-mono-meta-size); opacity: .68; }
+.section { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2); border-radius: 12px; background: color-mix(in oklab, var(--ink-inverse) 8%, transparent); }
+h3 { margin: 0; padding: 0 2px; font-size: 10.5px; line-height: inherit; letter-spacing: var(--text-overline-tracking); font-weight: 600; text-transform: uppercase; opacity: .6; }
+.row { gap: 9px; }
+.avatar { display: grid; place-items: center; flex: none; width: 26px; height: 26px; border-radius: 13px; background: color-mix(in oklab, var(--ink-inverse) 16%, transparent); }
+.avatar.guest { background: color-mix(in oklab, var(--review) 32%, var(--ink)); }
+.new-window {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: var(--space-2);
+  height: 34px;
+  padding: 0 var(--space-2) 0 10px;
+  border: 0;
+  border-radius: 10px;
+  font: inherit;
+  font-size: var(--text-code-size);
+  color: inherit;
+  cursor: pointer;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ink-inverse) 22%, transparent);
+  transition: background-color var(--dur-base) var(--ease-out);
+}
+.new-window:hover:not(:disabled), .new-window.highlighted { background: color-mix(in oklab, var(--ink-inverse) 14%, transparent); }
+ex-kbd {
+  margin-left: auto;
+  --kbd-background: color-mix(in oklab, var(--ink-inverse) 14%, transparent);
+  --kbd-color: var(--ink-inverse);
+  --kbd-padding: 5px;
+}

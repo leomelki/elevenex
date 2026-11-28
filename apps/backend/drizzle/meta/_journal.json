@@ -344,6 +344,118 @@
       "when": 1792754344528,
       "tag": "0048_confused_tarantula",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "6",
+      "when": 1793010974305,
+      "tag": "0049_left_leo",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1793448109147,
+      "tag": "0050_striped_star_brand",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "6",
+      "when": 1793699503024,
+      "tag": "0051_nifty_nocturne",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "6",
+      "when": 1794741622942,
+      "tag": "0052_session_hierarchy",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "6",
+      "when": 1794786500000,
+      "tag": "0053_session_nesting_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "6",
+      "when": 1795375371436,
+      "tag": "0054_claude_model_selection",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "6",
+      "when": 1795466243083,
+      "tag": "0055_turn_change_summary",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "6",
+      "when": 1795477315321,
+      "tag": "0056_session_delegation",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "6",
+      "when": 1795486080051,
+      "tag": "0057_session_reply_returns",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "6",
+      "when": 1795515506657,
+      "tag": "0058_session_completion_notices",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "6",
+      "when": 1795516839723,
+      "tag": "0059_session-delegation-actions",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "6",
+      "when": 1795529891524,
+      "tag": "0060_temporary_agent_tasks",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "6",
+      "when": 1795535000000,
+      "tag": "0061_sidebar_session_priority",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "6",
+      "when": 1795539899320,
+      "tag": "0062_antigravity",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "6",
+      "when": 1795567035965,
+      "tag": "0063_task_app_journal",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "6",
+      "when": 1795713664585,
+      "tag": "0064_session_assignment_messages",
+      "breakpoints": true
     }
   ]
 }

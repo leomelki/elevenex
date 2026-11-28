@@ -1,0 +1,97 @@
+<header>
+  <h1>Git helpers and sub-tasks</h1>
+  <p>Supplied job progress, helper-session context, and merge intents.</p>
+</header>
+<section class="samples" aria-label="Git action states">
+  <div>
+    <span>Uncommitted changes</span
+    ><ex-git-bar [files]="7" [add]="214" [del]="38" />
+  </div>
+  <div><span>Committed, not pushed</span><ex-git-bar [ahead]="2" /></div>
+  <div>
+    <span>Sub-task, changes</span
+    ><ex-git-bar
+      [files]="2"
+      [add]="12"
+      [del]="3"
+      mergeInto="leo/flaky-checkout"
+      (action)="lastIntent.set($event)"
+    />
+  </div>
+  <div>
+    <span>Sub-task, committed</span
+    ><ex-git-bar
+      [ahead]="2"
+      mergeInto="leo/flaky-checkout"
+      (action)="lastIntent.set($event)"
+    />
+  </div>
+  <div>
+    <span>Sub-task, merging</span
+    ><ex-git-bar [ahead]="2" mergeInto="leo/flaky-checkout" busy="merge" />
+  </div>
+  <div>
+    <span>Job: resolving in a session</span
+    ><ex-git-bar
+      data-job="resolving"
+      [ahead]="2"
+      [job]="job"
+      (jobSessionRequested)="lastIntent.set('Open ' + $event)"
+      (jobCancelled)="lastIntent.set('Cancel ' + $event)"
+    />
+  </div>
+  <div>
+    <span>Job: waiting on you</span
+    ><ex-git-bar
+      data-job="waiting"
+      [job]="{ ...job, waiting: true }"
+      (jobSessionRequested)="lastIntent.set('Open ' + $event)"
+    />
+  </div>
+</section>
+<section class="context" aria-label="Sub-task session">
+  <ex-task-header
+    title="Fix null cart total"
+    branch="fix/null-cart-total"
+    [repo]="{ name: 'payments-api', short: 'payments' }"
+    [parent]="{
+      id: 'checkout',
+      title: 'Make checkout reliable',
+      branch: 'leo/flaky-checkout',
+    }"
+    [git]="{
+      ahead: 2,
+      mergeInto: 'leo/flaky-checkout',
+      job: running() ? { ...job, waiting: waiting() } : undefined,
+    }"
+    (gitJobSessionRequested)="lastIntent.set('Open ' + $event)"
+    (gitJobCancelled)="
+      running.set(false); lastIntent.set('Cancelled ' + $event)
+    "
+  />
+  <div class="briefs">
+    <ex-job-brief
+      title="started this session for the merge into flaky-checkout"
+      time="1m"
+      id="merge-brief"
+    >
+      Merging <code>fix/null-cart-total</code> into
+      <code>leo/flaky-checkout</code> hit 3 conflicts in
+      <code>payments/client.ts</code> and <code>test/checkout.spec.ts</code>. I
+      regenerated <code>pnpm-lock.yaml</code> myself. Resolve the rest keeping
+      what both sides meant, run the cart and checkout tests, then stop: the
+      merge finishes on its own.
+    </ex-job-brief>
+    <ex-job-brief title="started this session for Sync with main" time="now">
+      Syncing <code>leo/flaky-checkout</code> with <code>main</code> went
+      through, but <code>pnpm test --filter checkout</code> fails since (2 of
+      64). Find what main changed that breaks it and fix it on this branch, then
+      stop.
+    </ex-job-brief>
+  </div>
+  <div class="controls">
+    <button exButton (click)="waiting.set(!waiting())">Toggle waiting</button
+    ><button exButton (click)="running.set(!running())">Toggle job</button>
+  </div>
+</section>
+<p class="intent" role="status">{{ lastIntent() || "No action requested" }}</p>

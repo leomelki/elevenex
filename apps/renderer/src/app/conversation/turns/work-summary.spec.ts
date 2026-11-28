@@ -1,0 +1,111 @@
+import { describe, expect, it } from "vitest";
+import { formatDuration, groupWorkSteps, summarizeWork } from "./work-summary";
+
+describe("work timeline grouping", () => {
+  it('uses the same file totals, ordering and fact limit for loaded and compact turns', () => {
+    const steps = [
+      { id: 'run', kind: 'run', status: 'failed' },
+      { id: 'read', kind: 'read', status: 'done' },
+      { id: 'edit', kind: 'edit', status: 'done' },
+      { id: 'search', kind: 'search', status: 'done' },
+    ] as const;
+    const files = Array.from({ length: 5 }, (_, i) => ({ path: `file-${i}.ts`, add: i, del: 1 }));
+    const full = summarizeWork(steps, files);
+    expect(full.map(fact => fact.label)).toEqual(['1 failed', 'Edited 5 files', '1 command', '1 read']);
+    expect(full[1]?.diff).toEqual({ add: 10, del: 5 });
+    expect(summarizeWork([], files.slice(0, 3), 5, {
+      counts: { run: 1, read: 1, edit: 1, search: 1 }, failures: 1,
+    }, false, { add: 10, del: 5 })).toEqual(full);
+  });
+
+  it('counts observed calls even when completion is unknown and leaves them outside discovery groups', () => {
+    const steps = [
+      { id: 'a', kind: 'read', status: 'done' },
+      { id: 'b', kind: 'read', status: 'unknown' },
+      { id: 'c', kind: 'read', status: 'done' },
+    ] as const;
+    expect(groupWorkSteps(steps).map(step => step.id)).toEqual(['a', 'b', 'c']);
+    const facts = [{ kind: 'reads', icon: 'file', label: '3 reads' }];
+    expect(summarizeWork(steps, [])).toEqual(facts);
+    expect(summarizeWork([], [], 0, { counts: { read: 3 }, failures: 0 })).toEqual(facts);
+  });
+  it("groups adjacent discoveries while preserving failure evidence and stable keys", () => {
+    const groups = groupWorkSteps([
+      { id: "a", kind: "read", status: "done" },
+      { id: "b", kind: "search", status: "done" },
+      { id: "c", kind: "list", status: "done" },
+      { id: "d", kind: "run", status: "failed" },
+      { id: "e", kind: "read", status: "done" },
+    ]);
+    expect(groups.map((group) => group.id)).toEqual(["a", "d", "e"]);
+    expect(groups[0]?.kind).toBe("group");
+    expect(groups[1]?.kind === "run" && groups[1].status).toBe("failed");
+  });
+  it("formats durations without negative or nonfinite values", () => {
+    expect(formatDuration(252.8)).toBe("4m 12s");
+    expect(formatDuration(3_900)).toBe("1h 5m");
+    expect(formatDuration(-5)).toBe("0s");
+    expect(formatDuration(Number.NaN)).toBe("0s");
+  });
+  it("keeps at most four facts, prioritizes failures and reports the latest tests", () => {
+    expect(
+      summarizeWork(
+        [
+          { id: "read", kind: "read" },
+          { id: "old", kind: "test", result: "10/10 passed" },
+          { id: "fixed", kind: "run", status: "failed", recovered: true },
+          {
+            id: "repro",
+            kind: "test",
+            status: "failed",
+            expected: true,
+            result: "Expected failure",
+          },
+          { id: "latest", kind: "test", result: "200/200 passed" },
+          { id: "error", kind: "run", status: "failed" },
+        ],
+        [{ path: "retry.ts", add: 92, del: 12 }],
+      ),
+    ).toEqual([
+      { kind: "failure", label: "1 failed", icon: "x", tone: "danger" },
+      {
+        kind: "files",
+        label: "Edited 1 file",
+        icon: "changes",
+        diff: { add: 92, del: 12 },
+      },
+      { kind: "tests", label: "200/200 passed", icon: "check", tone: "ok" },
+      { kind: "commands", label: "2 commands", icon: "terminal" },
+    ]);
+  });
+  it("marks a failed test result as persistent danger evidence", () => {
+    const facts = summarizeWork(
+      [{ id: "tests", kind: "test", status: "failed", result: "1/64 failed" }],
+      [],
+    );
+    expect(facts.find((fact) => fact.kind === "tests")).toEqual({
+      kind: "tests",
+      label: "1/64 failed",
+      icon: "x",
+      tone: "danger",
+    });
+  });
+  it("describes grouped discovery in verbs and omits empty categories", () => {
+    const entries = groupWorkSteps([
+      { id: "a", kind: "read" },
+      { id: "b", kind: "read" },
+      { id: "c", kind: "search" },
+    ]);
+    expect(entries[0]?.kind === "group" && entries[0].label).toBe(
+      "Read 2 files · Searched 1 time",
+    );
+  });
+  it("provides hover facts for edits, searches, listings, web and unknown tools", () => {
+    for (const [kind, label] of [
+      ["edit", "1 edit"], ["create", "1 edit"], ["search", "1 search"],
+      ["list", "1 listing"], ["web", "1 web request"], ["tool", "1 tool call"],
+    ] as const) {
+      expect(summarizeWork([{ id: kind, kind }], [])[0]?.label).toBe(label);
+    }
+  });
+});

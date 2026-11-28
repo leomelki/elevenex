@@ -1,0 +1,12 @@
+<div class="code-window" data-modal-window>
+  <div class="window-content" data-modal-background>
+    <ex-title-bar><ex-title-island [label]="machineName() + ' connection'" [contentKey]="connected() ? 'connected' : 'disconnected'" [tone]="connected() ? 'rest' : 'warn'" [panel]="machinePanel" [open]="panelOpen()" controls="code-machine-panel" (pressed)="panelOpen.set(!panelOpen())" (dismissed)="panelOpen.set(false)"><ex-icon [name]="context()?.selection?.kind === 'remote' ? 'server' : 'laptop'" [size]="13" />{{ machineName() }}</ex-title-island></ex-title-bar>
+    <ng-template #machinePanel><section id="code-machine-panel" class="connection-panel" aria-label="Machine connection"><strong>{{ machineName() }}</strong><p>{{ connected() ? 'Connected · files stay on this machine' : 'Disconnected · your unsaved edits are retained' }}</p><div>@if (!connected()) { <button exButton size="sm" variant="ghost" (click)="retry()">Try now</button> }<button exButton size="sm" variant="ghost" (click)="openWorkspace()">Open workspace</button></div></section></ng-template>
+    @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
+    @if (context(); as context) { <ex-code-panel [target]="target()" [initialState]="context.state" [standalone]="true" [wide]="true" [connected]="connected()" [active]="!challenge()" /> }
+    @else if (!error()) { <p class="loading" role="status">Opening task editor…</p> }
+  </div>
+</div>
+<ex-modal-layer [open]="!!challenge()" (closeRequested)="cancelChallenge()" (closed)="!challenge() && retainedChallenge.set(null)">
+  @for (prompt of retainedChallenge() ? [retainedChallenge()!] : []; track prompt.id) { <ex-remote-challenge-dialog [challenge]="prompt" [machineName]="machineName()" [active]="!!challenge()" [busy]="challengeBusy()" [error]="challengeError()" (answered)="answer($event)" /> }
+</ex-modal-layer>

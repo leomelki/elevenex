@@ -1,0 +1,212 @@
+import { AriaDescriber } from "@angular/cdk/a11y";
+import { DOCUMENT } from "@angular/common";
+import { Overlay, OverlayRef } from "@angular/cdk/overlay";
+import { ComponentPortal } from "@angular/cdk/portal";
+import {
+  DestroyRef,
+  Directive,
+  ElementRef,
+  Injectable,
+  inject,
+  input,
+  type ComponentRef,
+  type OnChanges,
+} from "@angular/core";
+import type { Subscription } from "rxjs";
+import { TooltipComponent } from "./tooltip.component";
+
+/** Shared hover grace belongs to this renderer, rather than module mutable state. */
+@Injectable({ providedIn: "root" })
+export class TooltipTiming {
+  lastClosed = 0;
+  dragging = false;
+  private active?: () => void;
+
+  constructor() {
+    const document = inject(DOCUMENT);
+    const end = () => { this.dragging = false; };
+    const start = (event: Event) => {
+      this.dragging = true;
+      this.active?.();
+      // A cancelled dragstart has no matching native dragend.
+      if (event.type === "dragstart") queueMicrotask(() => { if (event.defaultPrevented) end(); });
+    };
+    const starts = ["dragstart", "dragover"] as const;
+    const ends = ["dragend", "drop", "pointerdown"] as const;
+    // One set of listeners per renderer, including drops after the source row unmounts.
+    for (const type of starts) document.addEventListener(type, start, true);
+    for (const type of ends) document.addEventListener(type, end, true);
+    document.defaultView?.addEventListener("blur", end);
+    inject(DestroyRef).onDestroy(() => {
+      for (const type of starts) document.removeEventListener(type, start, true);
+      for (const type of ends) document.removeEventListener(type, end, true);
+      document.defaultView?.removeEventListener("blur", end);
+      this.active?.();
+    });
+  }
+
+  activate(close: () => void): void {
+    this.active?.();
+    this.active = close;
+  }
+
+  release(close: () => void): void {
+    if (this.active === close) this.active = undefined;
+  }
+}
+
+@Directive({
+  selector: "[exTooltip]",
+  host: {
+    "(mouseenter)": "schedule(false)",
+    "(mouseleave)": "hide()",
+    "(focusin)": "schedule(true)",
+    "(focusout)": "hide()",
+    "(keydown.escape)": "hide()",
+    "(click)": "hide()",
+  },
+})
+export class TooltipDirective implements OnChanges {
+  readonly exTooltip = input.required<string>();
+  readonly tooltipShortcut = input("");
+  /** `end` suits vertical stacks such as a rail, where above would cover a neighbour. */
+  readonly tooltipSide = input<"top" | "bottom" | "end">("top");
+  private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly overlay = inject(Overlay);
+  private readonly describer = inject(AriaDescriber);
+  private readonly timing = inject(TooltipTiming);
+  private popup?: OverlayRef;
+  private content?: ComponentRef<TooltipComponent>;
+  private detachment?: Subscription;
+  private timer?: ReturnType<typeof setTimeout>;
+  private frame = 0;
+  private described = "";
+  private readonly closeActive = () => this.hide();
+
+  constructor() {
+    inject(DestroyRef).onDestroy(() => this.hide());
+  }
+
+  ngOnChanges(): void {
+    if (!this.content) return;
+    if (this.exTooltip()) this.updateContent();
+    else this.hide();
+  }
+
+  protected schedule(focused: boolean): void {
+    this.hide();
+    if (!this.exTooltip() || this.timing.dragging) return;
+    this.timing.activate(this.closeActive);
+    const delay =
+      focused || Date.now() - this.timing.lastClosed < 600 ? 0 : 400;
+    this.timer = setTimeout(() => this.show(), delay);
+  }
+
+  private show(): void {
+    if (!this.exTooltip() || this.timing.dragging) return;
+    // Hovering another control replaces a tooltip retained by keyboard focus.
+    this.timing.activate(this.closeActive);
+    const top = this.tooltipSide() === "top";
+    const position = this.overlay
+      .position()
+      .flexibleConnectedTo(this.element)
+      .withPositions(
+        this.tooltipSide() === "end"
+          ? [
+              {
+                originX: "end",
+                originY: "center",
+                overlayX: "start",
+                overlayY: "center",
+                offsetX: 8,
+              },
+              {
+                originX: "start",
+                originY: "center",
+                overlayX: "end",
+                overlayY: "center",
+                offsetX: -8,
+              },
+            ]
+          : [
+              {
+                originX: "center",
+                originY: top ? "top" : "bottom",
+                overlayX: "center",
+                overlayY: top ? "bottom" : "top",
+                offsetY: top ? -8 : 8,
+              },
+              {
+                originX: "center",
+                originY: top ? "bottom" : "top",
+                overlayX: "center",
+                overlayY: top ? "top" : "bottom",
+                offsetY: top ? 8 : -8,
+              },
+            ],
+      );
+    this.popup = this.overlay.create({
+      positionStrategy: position,
+      scrollStrategy: this.overlay.scrollStrategies.close(),
+    });
+    this.detachment = this.popup.detachments().subscribe(() => this.hide());
+    this.content = this.popup.attach(new ComponentPortal(TooltipComponent));
+    // Attach resets the pane's pointer events; the entire overlay must pass input through.
+    this.popup.overlayElement.style.pointerEvents = "none";
+    this.updateContent();
+    this.follow();
+  }
+
+  private updateContent(): void {
+    const label = this.exTooltip();
+    this.content?.setInput('label', label);
+    this.content?.setInput('kbd', this.tooltipShortcut());
+    if (label === this.described) return;
+    if (this.described) this.describer.removeDescription(this.element.nativeElement, this.described);
+    this.described = label;
+    this.describer.describe(this.element.nativeElement, label);
+  }
+
+  /**
+   * CDK repositions only on scroll and resize. An anchor inside a surface that
+   * eases its size (a menu growing upward) moves on its own: keep the tooltip on
+   * it while shown, with one rect read per frame.
+   */
+  private follow(): void {
+    const anchor = this.element.nativeElement;
+    let last = anchor.getBoundingClientRect();
+    const tick = () => {
+      if (!this.popup?.hasAttached()) return;
+      const rect = anchor.getBoundingClientRect();
+      if (rect.top !== last.top || rect.left !== last.left) {
+        last = rect;
+        this.popup?.updatePosition();
+      }
+      this.frame = requestAnimationFrame(tick);
+    };
+    this.frame = requestAnimationFrame(tick);
+  }
+
+  protected hide(): void {
+    clearTimeout(this.timer);
+    cancelAnimationFrame(this.frame);
+    this.frame = 0;
+    this.detachment?.unsubscribe();
+    this.detachment = undefined;
+    this.timing.release(this.closeActive);
+    const popup = this.popup;
+    this.popup = undefined;
+    this.content = undefined;
+    if (popup) {
+      popup.dispose();
+      this.timing.lastClosed = Date.now();
+    }
+    if (this.described) {
+      this.describer.removeDescription(
+        this.element.nativeElement,
+        this.described,
+      );
+      this.described = "";
+    }
+  }
+}

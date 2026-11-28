@@ -1,0 +1,31 @@
+main {
+  padding: var(--space-6);
+}
+h1 {
+  font-size: var(--text-title-size);
+  font-weight: var(--text-title-weight);
+  margin: 0 0 var(--space-2);
+}
+header p,
+.notice {
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+.cases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+}
+.stage {
+  display: flex;
+  align-items: flex-end;
+  min-height: 480px;
+  padding: var(--space-4);
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  margin-top: var(--space-4);
+}
+.notice {
+  min-height: var(--text-caption-line);
+}

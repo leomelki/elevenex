@@ -1,0 +1,328 @@
+import { randomBytes } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import type { RemoteConnectionStatus, RemoteHost, RemoteStage } from '@elevenex/shared';
+import type { BackendRelease } from '../backend/release';
+import { backendRelease } from '../backend/release';
+import type { DownloadProgress } from '../backend/download';
+import { RemoteError, failure, sshFailure } from './failure';
+import { spawnSsh } from './ssh';
+import type { SshAuthentication } from './ssh-authentication';
+import { bootstrapWindowsScript } from './runtime-install-windows';
+import { bootstrapScript } from './runtime-install';
+import { archiveFor, type PrepareRemoteArchive } from './archives';
+import type { Ask } from './askpass';
+import { Wire, SocketChannels, type WireMessage } from './wire';
+import { createServer, type Server } from 'node:net';
+import { browserSocks, browserLoopbackHost } from '@elevenex/browser-network';
+
+export interface RemoteTransport {
+  readonly instance: string;
+  readonly remoteShell?: 'posix' | 'windows';
+  readonly exited: Promise<void>;
+  /** A reserved port value of zero addresses the private backend socket. */
+  forward(port: number, localPort: number, onServiceChanged?: (available: boolean) => void, targetHost?: string): Promise<{ port: number; reachable: boolean; authorization: string | null; close(): Promise<void> }>;
+  /** Optional for injected/older transports. Never falls back to device egress. */
+  browserProxy?(authorize: (host: string, port: number) => void): Promise<{ readonly port: number; disconnect(): void; close(): Promise<void> }>;
+  health(signal: AbortSignal): Promise<{ ready: boolean; instance: string }>;
+  /** Time of the latest bytes received from the bridge. Optional for injected/older transports. */
+  receivedAt?(): number;
+  /** Windows hosts only; absent on older bridges, which always run in the desktop session. */
+  readonly windowsSession?: 'desktop' | 'background';
+  /** Stop a background Windows runtime so the next connection starts it in the signed-in desktop. */
+  useDesktopSession?(signal: AbortSignal): Promise<'switching' | 'signed-out'>;
+  close(): Promise<void>;
+}
+export interface ConnectOptions {
+  readonly remoteShell?: 'posix' | 'windows';
+  readonly host: RemoteHost;
+  readonly root: string;
+  readonly release: BackendRelease;
+  readonly helper: string;
+  readonly signal: AbortSignal;
+  readonly interactive: boolean;
+  readonly ask: Ask;
+  readonly progress: (stage: RemoteStage, progress?: DownloadProgress) => void;
+  /** OpenSSH login progress before the remote shell reports its platform. */
+  readonly authentication?: (state: SshAuthentication) => void;
+  readonly waitingForUpdate?: (update: NonNullable<RemoteConnectionStatus['updateWaiting']>, force: () => void) => void;
+  readonly updateStarting?: (instance: string) => void;
+  readonly prepareArchive?: PrepareRemoteArchive;
+  /** Unpackaged launcher only; isolates custom runtimes and their mutable data. */
+  readonly developmentNamespace?: string;
+  /** Windows: start a runtime without a desktop session (apps unavailable) when nobody is signed in. */
+  readonly allowBackgroundSession?: boolean;
+  /** The local environment for OpenSSH and the config commands it runs; defaults to process.env. */
+  readonly environment?: (signal: AbortSignal) => Promise<NodeJS.ProcessEnv>;
+  /** Process boundary injection for native failure-path tests; never exposed over IPC. */
+  readonly spawn?: typeof spawnSsh;
+}
+
+class RemoteShellUnavailable extends Error {}
+
+/** OpenSSH reserves 255 for transport/authentication failures. Remote shell
+ * diagnostics may be localized, so use command-not-found status or the failed
+ * command itself, and never fall back after an installer progress marker. */
+function missingShell(shell: 'posix' | 'windows', code: number | null, diagnostics: string): boolean {
+  if (code === 255 || code === null) return false;
+  if (shell === 'posix' && /EX11_COMPATIBILITY: Windows host needs PowerShell/.test(diagnostics)) return true;
+  if (/EX11_[A-Z]+:/.test(diagnostics)) return false;
+  if (code === 127 || code === 9009 || code === 49) return true;
+  if (code !== 1) return false;
+  return shell === 'posix'
+    ? /(?:^|\n)\s*(?:['"‘’“”«]\s*sh\s*['"‘’“”»]|sh\s*:)/i.test(diagnostics)
+    : /(?:^|\n)\s*(?:['"‘’“”«]\s*powershell\.exe\s*['"‘’“”»]|powershell\.exe\s*:)/i.test(diagnostics);
+}
+
+export async function connectRemote(options: ConnectOptions): Promise<RemoteTransport> {
+  const first = options.remoteShell ?? 'posix';
+  try { return await connectShell(options, first); }
+  catch (error) {
+    if (!(error instanceof RemoteShellUnavailable)) throw error;
+    options.signal.throwIfAborted();
+    try { return await connectShell(options, first === 'posix' ? 'windows' : 'posix'); }
+    catch (fallback) {
+      if (!(fallback instanceof RemoteShellUnavailable)) throw fallback;
+      throw failure('discovery', 'compatibility', 'The SSH account needs a POSIX shell on Linux or macOS, or Windows PowerShell 5.1 on Windows.', 'install-prerequisites');
+    }
+  }
+}
+
+async function connectShell(options: ConnectOptions, remoteShell: 'posix' | 'windows'): Promise<RemoteTransport> {
+  const cancellation = new AbortController();
+  const signal = AbortSignal.any([options.signal, cancellation.signal]);
+  const { progress } = options;
+  const nonce = randomBytes(16).toString('hex');
+  const { command, payload } = remoteShell === 'windows'
+    ? await bootstrapWindowsScript(options.release, nonce, options.developmentNamespace, options.interactive, options.allowBackgroundSession)
+    : await bootstrapScript(options.release, nonce, !options.developmentNamespace, options.developmentNamespace, options.interactive);
+  const ssh = await Promise.resolve(options.environment?.(signal)).then(environment =>
+    (options.spawn ?? spawnSsh)(options.host, command, options.ask, options.interactive, signal, options.helper, options.authentication, environment)).catch((error: unknown) => {
+    if (error instanceof RemoteError) throw error;
+    throw sshFailure(error instanceof Error ? error.message : '', 'authentication');
+  });
+  let stage: RemoteStage = 'authentication';
+  ssh.child.stdin.on('error', () => undefined);
+  ssh.child.stdin.write(payload);
+  const transportEnded = ssh.exited.then(() => {
+    const stderr = ssh.diagnostics();
+    if (stage === 'authentication' && missingShell(remoteShell, ssh.child.exitCode, stderr)) throw new RemoteShellUnavailable();
+    if (/EX11_SIGNIN/.test(stderr)) throw failure('runtime', 'compatibility', 'Nobody is signed in to Windows on this server. Sign in there to use apps, or start without apps.', 'choose-session');
+    if (/Windows interactive runtime unavailable|EX11_WINDOWS_LOGIN/.test(stderr)) throw failure('runtime', 'compatibility', 'Sign in to Windows with the SSH account so that its interactive app host can start, then retry.', 'retry');
+    if (/EX11_UPDATE: legacy daemon/.test(stderr)) throw failure('runtime', 'compatibility', 'The running remote daemon predates automatic updates. Stop that verified daemon once using the remote development guide, then Retry. Later updates stop and replace it automatically.', 'retry');
+    if (/EX11_UPDATE: explicit connection required/.test(stderr)) throw failure('runtime', 'compatibility', 'Another backend revision is running on this server. Choose Retry to replace it with this desktop’s version. Updating interrupts remote agents, terminals and apps.', 'retry');
+    if (/EX11_UPDATE: competing revision/.test(stderr)) throw failure('runtime', 'compatibility', 'Another desktop is updating this server to a different revision. Use matching desktop versions, then Retry.', 'retry');
+    if (/EX11_UPDATE: task apps are running/.test(stderr)) throw failure('runtime', 'compatibility', 'Apps on this machine did not stop for the engine update. The previous engine is still running. Retry; if an app keeps running, stop it on the server, then Retry.', 'retry');
+    if (/EX11_UPDATE: handoff rejected/.test(stderr)) throw failure('runtime', 'configuration', 'The remote daemon could not accept the prepared runtime. Check its installation and permissions on the server, then Retry. The previous backend was left running.', 'retry');
+    if (/EX11_UPDATE: handoff timed out/.test(stderr)) throw failure('runtime', 'configuration', 'The remote update did not become ready at the requested revision. Check the daemon on the server, then Retry. The desktop has not fallen back to an older revision.', 'retry');
+    if (/EX11_COMPATIBILITY/.test(stderr)) throw failure(stage, 'compatibility', remoteShell === 'windows'
+      ? 'Verify Windows PowerShell 5.1, Git, Windows tar.exe, and a matching x64 or ARM64 backend archive.'
+      : 'Remote prerequisites or runtime compatibility need attention. Verify Git, tar, head, sha256sum/shasum, and a supported Linux glibc or macOS host.', 'install-prerequisites');
+    if (/EX11_CONFIGURATION/.test(stderr)) throw failure(stage, 'configuration', 'Remote setup could not safely continue. Check disk space, permissions, runtime cache integrity, and the daemon control-port conflict described in the remote development guide.', 'edit');
+    if (/EX11_RUNTIME/.test(stderr)) throw failure('runtime', 'compatibility', 'The remote backend did not become ready. Check OS/libc compatibility and the backend prerequisites.', 'install-prerequisites');
+    throw sshFailure(stderr, stage);
+  });
+  // The rejection also participates in every setup wait below.
+  void transportEnded.catch(() => undefined);
+  let wire: Wire | undefined;
+  const setup = (async () => {
+    let remoteRelease: BackendRelease | undefined;
+    let buffer = '';
+    let work: Promise<void> = Promise.resolve();
+    let receive: (bytes: Buffer) => void;
+    await new Promise<void>((resolve, reject) => {
+      receive = (bytes: Buffer) => {
+        try {
+        buffer += bytes.toString('utf8');
+        if (buffer.length > 64 * 1024) { reject(failure(stage, 'configuration', 'Remote startup output exceeds its limit. Remove output from noninteractive shell startup files.', 'edit')); return; }
+        while (true) {
+          const end = buffer.indexOf('\n'); if (end < 0) break;
+          const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
+          const fields = line.split(':');
+          if (fields[0] !== 'EX11' || fields[1] !== nonce) continue;
+          if (fields[2] === 'platform') {
+            stage = 'discovery'; progress(stage);
+            try { remoteRelease = backendRelease(options.release, fields[3] ?? '', fields[4] ?? ''); }
+            catch { reject(failure('discovery', 'compatibility', 'The SSH host reported an unsupported runtime target.', 'install-prerequisites')); return; }
+          } else if (fields[2] === 'download') {
+            stage = 'download'; progress(stage);
+          } else if (fields[2] === 'download-progress') {
+            const receivedBytes = Number(fields[3]);
+            const totalBytes = fields[4] ? Number(fields[4]) : null;
+            if (Number.isSafeInteger(receivedBytes) && receivedBytes >= 0 && receivedBytes <= 1073741824
+              && (totalBytes === null || (Number.isSafeInteger(totalBytes) && totalBytes >= receivedBytes && totalBytes <= 1073741824))) {
+              progress('download', { receivedBytes, totalBytes });
+            }
+          } else if (fields[2] === 'installation') {
+            stage = 'installation'; progress(stage);
+          } else if (fields[2] === 'cache' && fields[3] === 'no') {
+            if (!remoteRelease) { reject(new Error('Missing remote platform')); return; }
+            const release = remoteRelease;
+            work = (async () => {
+              const preparationStage = options.developmentNamespace ? 'installation' : 'download';
+              stage = preparationStage; progress(stage);
+              const downloadProgress = (value: DownloadProgress) => progress(preparationStage, value);
+              const archive = options.prepareArchive ? await options.prepareArchive(release, signal, downloadProgress) : await archiveFor(options.root, release, signal, downloadProgress);
+              signal.throwIfAborted(); stage = 'installation'; progress(stage);
+              ssh.child.stdin.write(`${archive.bytes} ${archive.digest}\n`);
+              const input = createReadStream(archive.path, { signal });
+              // Do not end stdin: it becomes the persistent bridge channel.
+              await new Promise<void>((done, failed) => { input.once('error', failed); input.once('end', done); input.pipe(ssh.child.stdin, { end: false }); });
+            })();
+            void work.catch(reject);
+          } else if (fields[2] === 'runtime') {
+            stage = 'runtime'; progress(stage);
+            ssh.child.stdout.pause();
+            ssh.child.stdout.removeListener('data', receive);
+            wire = new Wire(ssh.child.stdout, ssh.child.stdin);
+            // Runtime hello cannot precede this marker (the shell writes it
+            // before exec); preserve any frames coalesced into this chunk.
+            if (buffer) ssh.child.stdout.unshift(Buffer.from(buffer));
+            resolve(); return;
+          }
+        }
+        } catch (error) { reject(error); }
+      };
+      ssh.child.stdout.on('data', receive);
+    });
+    await work;
+    if (!wire) throw new Error('Bridge did not start');
+    const channel = wire;
+    const greeting = new Promise<Extract<WireMessage, { type: 'hello' }>>((resolve, reject) => {
+      const receive = (message: WireMessage) => {
+        if (message.type === 'update-waiting') {
+          options.waitingForUpdate?.({ instance: message.instance, connections: message.connections }, () => channel.send({ type: 'force-update', instance: message.instance }));
+          return;
+        }
+        if (message.type === 'update-starting') { options.updateStarting?.(message.instance); return; }
+        if (message.type !== 'hello') return;
+        channel.removeListener('message', receive); channel.removeListener('closed', closed);
+        if (message.version !== options.release.version || !message.ready) reject(failure('application', 'compatibility', 'The remote backend is not ready at the expected revision.', 'edit'));
+        else resolve(message);
+      };
+      const closed = () => { void transportEnded.catch(reject); };
+      channel.on('message', receive); channel.once('closed', closed);
+    });
+    ssh.child.stdout.resume();
+    const hello = await greeting;
+    const channels = new SocketChannels(channel);
+    const servers = new Map<Server, Set<import('node:net').Socket>>();
+    const browserProxies = new Set<Awaited<ReturnType<typeof browserSocks>>>();
+    let closing = false;
+    let sequence = 0;
+    const health = (healthSignal: AbortSignal) => new Promise<{ ready: boolean; instance: string }>((resolve, reject) => {
+      const id = ++sequence;
+      const cleanup = () => { channel.removeListener('message', receive); channel.removeListener('closed', closed); healthSignal.removeEventListener('abort', aborted); };
+      const receive = (message: WireMessage) => {
+        if (message.type === 'pong' && message.id === id) { cleanup(); resolve({ ready: message.ready === true, instance: message.instance ?? '' }); }
+      };
+      const closed = () => { cleanup(); reject(new Error('Bridge closed')); };
+      const aborted = () => { cleanup(); reject(healthSignal.reason); };
+      channel.on('message', receive); channel.once('closed', closed); healthSignal.addEventListener('abort', aborted, { once: true });
+      if (healthSignal.aborted) { aborted(); return; }
+      try { channel.send({ type: 'ping', id }); } catch { closed(); }
+    });
+    const forward: RemoteTransport['forward'] = async (remotePort, localPort, onServiceChanged, targetHost) => {
+      if (closing) throw new Error('Remote transport is closing');
+      const sockets = new Set<import('node:net').Socket>();
+      const authorization = remotePort === 0 ? `Bearer ${randomBytes(32).toString('hex')}` : null;
+      const server = createServer({ highWaterMark: 16 * 1024, allowHalfOpen: true }, socket => {
+        sockets.add(socket); socket.once('close', () => sockets.delete(socket));
+        if (authorization === null) { channels.open(socket, remotePort, onServiceChanged, targetHost); return; }
+        // The backend is a privileged API, unlike an explicitly forwarded dev
+        // service. A website probing loopback must not acquire SSH authority.
+        let header = Buffer.alloc(0);
+        socket.setTimeout(5000, () => socket.destroy()); socket.on('error', () => socket.destroy());
+        const authenticate = (chunk: Buffer) => {
+          header = Buffer.concat([header, chunk]);
+          const end = header.indexOf('\r\n\r\n');
+          if (end < 0 && header.length <= 16384) return;
+          socket.removeListener('data', authenticate); socket.pause();
+          const lines = end < 0 ? [] : header.subarray(0, end).toString('latin1').split('\r\n');
+          const auth = lines.filter(line => /^authorization:/i.test(line));
+          if (end < 0 || end > 16384 || auth.length !== 1 || auth[0]?.slice(auth[0].indexOf(':') + 1).trim() !== authorization) {
+            socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); return;
+          }
+          socket.setTimeout(0);
+          const upgrade = lines.some(line => /^upgrade:/i.test(line));
+          const forwarded = lines.filter(line => !/^(?:authorization|x-elevenex-app-access):/i.test(line) && (upgrade || !/^connection:/i.test(line)));
+          // Only managed app endpoints receive the instance-scoped secret.
+          // In particular, never forward it to a proxied development service.
+          if (hello.appViewerAccess && /^(?:GET|POST) \/api\/(?:task-apps\/[1-9]\d*(?:\/[a-f0-9-]{36}\/(?:approve|stop|output|stream|watch|setup-settings|setup-helper))?|desktop-workspace\/revision(?:\?after=\d+)?) HTTP\/1\.[01]$/i.test(lines[0] ?? ''))
+            forwarded.push('X-Elevenex-App-Access: ' + hello.appViewerAccess);
+          if (!upgrade) forwarded.push('Connection: close');
+          const request = Buffer.concat([Buffer.from(forwarded.join('\r\n') + '\r\n\r\n', 'latin1'), header.subarray(end + 4)]);
+          const mediaStream = upgrade && hello.appBinary === true &&
+            /^GET \/api\/(?:task-apps\/[1-9]\d*\/[a-f0-9-]{36}|desktop-browser\/runtime\/tasks\/[1-9]\d*)\/stream HTTP\/1\.[01]$/.test(lines[0] ?? '');
+          socket.unshift(request); channels.open(socket, remotePort, undefined, undefined, mediaStream);
+        };
+        socket.on('data', authenticate);
+      });
+      servers.set(server, sockets);
+      try { await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(localPort, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); }); }); }
+      catch (error) { servers.delete(server); throw error; }
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Forward is unavailable');
+      const close = async () => { servers.delete(server); for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); };
+      if (closing) { await close(); throw new Error('Remote transport is closing'); }
+      server.on('error', () => channel.close());
+      const probe = new Promise<boolean>(resolve => {
+        const id = ++sequence;
+        const finish = (available: boolean) => { clearTimeout(timer); channel.removeListener('message', receive); channel.removeListener('closed', closed); resolve(available); };
+        const receive = (frame: WireMessage) => { if (frame.type === 'probed' && frame.id === id) finish(frame.available); };
+        const closed = () => finish(false);
+        const timer = setTimeout(() => finish(false), 4000);
+        channel.on('message', receive); channel.once('closed', closed);
+        try { channel.send({ type: 'probe', id, port: remotePort, ...(targetHost === undefined ? {} : { host: targetHost }) }); } catch { finish(false); }
+      });
+      const reachable = await probe;
+      if (closing) { await close(); throw new Error('Remote transport is closing'); }
+      return { port: address.port, authorization, reachable, close };
+    };
+    const useDesktopSession = (requestSignal: AbortSignal) => new Promise<'switching' | 'signed-out'>((resolve, reject) => {
+      const id = ++sequence;
+      const cleanup = () => { channel.removeListener('message', receive); channel.removeListener('closed', closed); requestSignal.removeEventListener('abort', aborted); };
+      const receive = (message: WireMessage) => {
+        if (message.type === 'desktop-session-result' && message.id === id) { cleanup(); resolve(message.outcome); }
+      };
+      const closed = () => { cleanup(); reject(new Error('The connection closed before the engine replied. Reconnect and check whether apps are available.')); };
+      const aborted = () => { cleanup(); reject(requestSignal.reason); };
+      channel.on('message', receive); channel.once('closed', closed); requestSignal.addEventListener('abort', aborted, { once: true });
+      if (requestSignal.aborted) { aborted(); return; }
+      try { channel.send({ type: 'desktop-session', id }); } catch { closed(); }
+    });
+    return { instance: hello.instance, remoteShell, exited: ssh.exited, health, forward, receivedAt: () => channel.receivedAt,
+      ...(hello.session ? { windowsSession: hello.session } : {}),
+      ...(hello.session === 'background' ? { useDesktopSession } : {}),
+      browserProxy: async (authorize: (host: string, port: number) => void) => {
+        if (closing || !hello.browserProxy) throw new Error('Reconnect this server to enable local browser tabs.');
+        const proxy = await browserSocks(async (host, port) => {
+          if (closing) throw new Error('Remote transport closed');
+          authorize(host, port);
+          return { host, port };
+        }, (socket, target, opened) => {
+          if (closing) { socket.destroy(); return; }
+          if (browserLoopbackHost(target.host)) {
+            const host = target.host === '::' || target.host === '::1' ? '::1' : '127.0.0.1';
+            channels.open(socket, target.port, opened, host);
+          } else channels.openBrowser(socket, target.host, target.port, opened);
+        });
+        if (closing) { await proxy.close(); throw new Error('Remote transport closed'); }
+        browserProxies.add(proxy);
+        return { port: proxy.port, disconnect: () => proxy.disconnect(), close: async () => { browserProxies.delete(proxy); await proxy.close(); } };
+      },
+      close: async () => {
+        closing = true; cancellation.abort(); channels.dispose(); channel.close();
+        for (const sockets of servers.values()) for (const socket of sockets) socket.destroy();
+        await ssh.stop();
+        await Promise.all([...browserProxies].map(proxy => proxy.close())); browserProxies.clear();
+        await Promise.all([...servers.keys()].map(server => new Promise<void>(resolve => server.close(() => resolve())))); servers.clear();
+      },
+    };
+  })();
+  const aborted = new Promise<never>((_resolve, reject) => {
+    if (signal.aborted) reject(signal.reason);
+    else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+  });
+  try { return await Promise.race([setup, transportEnded, aborted]); }
+  catch (error) { cancellation.abort(); wire?.close(); await ssh.stop(); throw error; }
+}

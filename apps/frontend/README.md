@@ -1,4 +1,7 @@
-# Frontend
+# Legacy frontend
+
+This frontend is slated for removal. UI development targets `apps/renderer`.
+Use the [desktop setup commands](../desktop/README.md) and the [renderer component guide](../renderer/README.md).
 
 This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 21.2.3.
 

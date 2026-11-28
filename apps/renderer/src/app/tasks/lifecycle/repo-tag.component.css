@@ -1,0 +1,39 @@
+
+    :host {
+      /* The reference's max/min widths describe the text area; padding is extra. */
+      box-sizing: content-box;
+      flex: 0 1 auto;
+      min-width: 0;
+      max-width: 96px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      height: 18px;
+      padding: 0 6px;
+      border-radius: 6px;
+      background: var(--surface-sunken);
+      color: var(--ink-muted);
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 18px;
+      white-space: nowrap;
+    }
+    :host(.medium) {
+      max-width: 180px;
+      height: 22px;
+      line-height: 22px;
+      padding: 0 8px 0 7px;
+      font-size: 12px;
+      font-weight: 500;
+      border-radius: var(--radius-sm);
+      color: var(--ink);
+    }
+    ex-icon {
+      color: var(--ink-muted);
+      flex: none;
+    }
+    span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }

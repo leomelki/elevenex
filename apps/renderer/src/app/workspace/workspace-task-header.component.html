@@ -1,0 +1,85 @@
+@let selectedTask = store.selectedTask();
+@for (task of selectedTask ? [selectedTask] : []; track task.id) {
+  <ex-task-header
+    [unreachable]="store.offline() ? store.machine()?.name : undefined"
+    [title]="task.name"
+    [repo]="repo()"
+    [project]="project()"
+    [branch]="git.summary()?.branch ?? task.branchName"
+    [meta]="task.state === 'ready' ? (task.temporary ? 'Temporary task' : undefined) : task.state === 'failed' ? undefined : 'Workspace ' + task.state"
+    [panelOpen]="panelOpen()"
+    [branchCopied]="copied()"
+    [closed]="store.selectedTaskStage() === 'closed'"
+    [closeSuggested]="closeSuggested()"
+    [disabled]="controlsDisabled()"
+    [canRenameBranch]="git.summary()?.taskId === task.id && !git.uncertain()"
+    [canKeepOpen]="!!task.temporary && task.state !== 'finishing'"
+    [canLink]="false"
+    [git]="!commitOpen() && git.error() ? undefined : git.state()"
+    [gitAllowedActions]="['commit','commit-push','push']"
+    [gitActionsDisabled]="git.busy() === 'sync' || git.uncertain()"
+    [gitQuietLabel]="gitQuietLabel()"
+    (panelToggle)="panelToggle.emit()"
+    (closeRequested)="close()"
+    (keepOpenRequested)="store.keepTaskOpen()"
+    (branchCopy)="copy($event)"
+    (branchRename)="openGitDialog()"
+    (gitAction)="gitAction($event)"
+    (changesRequested)="panelToggle.emit()">
+    <ng-container gitStatus>
+      @if (git.pullError(); as error) {
+        <div class="git-status pull-failure">
+          <span role="alert" class="pull-failure-label">
+            <ex-status-glyph status="failed" [size]="14" aria-hidden="true" />
+            <span class="pull-copy" aria-hidden="true">{{ git.uncertain() ? 'Check pull status' : 'Pull failed' }}</span>
+            <span class="visually-hidden">{{ error }}</span>
+          </span>
+          <button exButton size="sm" variant="ghost" aria-label="Refresh Git status" tooltipSide="bottom"
+            [exTooltip]="error + '\nRefresh Git status.'"
+            [attr.aria-disabled]="store.offline() || git.loading() || !!git.busy()"
+            (click)="refreshPullStatus()">
+            <ex-icon name="refresh" [size]="14" /><span class="pull-copy">Refresh</span>
+          </button>
+        </div>
+      } @else if (!commitOpen() && git.error(); as error) {
+        <div class="git-status error" role="alert">
+          <span [title]="error">{{ error }}</span>
+          <button exButton variant="ghost" aria-label="Refresh Git status" tooltipSide="bottom"
+            [exTooltip]="error + '\nRefresh Git status.'" [disabled]="git.loading() || !!git.busy()" (click)="git.refresh()">
+            <ex-icon name="refresh" [size]="14" />
+          </button>
+        </div>
+      } @else if (pull(); as update) {
+        <button class="pull" exButton size="sm" variant="secondary" tooltipSide="bottom"
+          [class.warning]="update.warning" [attr.aria-disabled]="update.disabled"
+          [attr.aria-busy]="update.pulling" [attr.aria-label]="update.accessibleLabel"
+          [attr.aria-description]="update.detail + ' From ' + update.upstream + ' into ' + update.branch + '.'"
+          [exTooltip]="update.detail + '\n' + update.upstream + ' → ' + update.branch" (click)="pullBranch()">
+          @if (update.pulling) {
+            <ex-status-glyph status="running" [size]="14" aria-hidden="true" />
+          } @else if (update.warning) {
+            <ex-status-glyph status="attention" [size]="14" aria-hidden="true" />
+          } @else {
+            <ex-icon name="arrow-down" [size]="14" />
+          }
+          <span class="pull-copy" aria-hidden="true">{{ update.label }}</span>
+          <span class="pull-count" aria-hidden="true">{{ update.behind }}</span>
+        </button>
+      } @else if (!git.summary() && git.loading()) {
+        <span class="git-loading" role="status">Checking Git status…</span>
+      }
+    </ng-container>
+    <ex-commit-panel gitPanel [open]="commitOpen()" [fileProvider]="commitProvider()" [initialWindow]="git.commitPreview()" [push]="pushAfter()" [busy]="git.busy() === 'commit'" [busyLabel]="git.state()?.busyLabel ?? (git.state()?.busy === 'push' ? 'Pushing…' : 'Committing…')" [submissionError]="git.error()" [blocked]="git.uncertain()" (errorDismissed)="git.error.set(null)" (statusRequested)="git.refresh()" (pushChange)="pushAfter.set($event)" (closeRequested)="commitOpen.set(false)" (commitRequested)="commit($event)" /></ex-task-header>
+}
+<span class="visually-hidden" role="status">{{ git.busy() === 'sync' ? 'Pulling from upstream…' : '' }}</span>
+<ex-modal-layer [open]="gitDialogOpen()" (closeRequested)="!git.busy() && gitDialogOpen.set(false)">
+  <form class="git-dialog" role="dialog" aria-modal="true" aria-label="Rename branch" [attr.inert]="!gitDialogOpen() ? '' : null" (submit)="$event.preventDefault(); submitGit()">
+    <h2>Rename branch</h2>
+    <ex-set-field label="Branch name" [value]="gitDraft()" [wide]="true" [disabled]="!!git.busy()" (valueChanged)="gitDraft.set($event)" />
+    @if (git.error(); as error) { <p class="error" role="alert">{{ error }}</p> }
+    <footer><button exButton type="button" variant="ghost" [disabled]="!!git.busy()" (click)="gitDialogOpen.set(false)">Cancel</button><button exButton type="submit" variant="primary" [disabled]="!gitDraft().trim() || !!git.busy()">{{ git.busy() ? 'Saving…' : 'Rename branch' }}</button></footer>
+  </form>
+</ex-modal-layer>
+@if (confirmingTask(); as task) {
+  <ex-close-task [open]="closing()" [title]="task.title" [sessions]="task.sessions" [running]="task.running" [unpushed]="task.unpushed" [uncommitted]="task.uncommitted ?? 0" [terminals]="task.terminals" [actions]="task.actions" [apps]="task.apps ?? 0" [busy]="closeBusy()" [error]="closeError()" (confirmed)="confirmClose($event)" (cancelled)="closing.set(false)" />
+}

@@ -1,3 +1,5 @@
+import { codexImageResult } from './codex-image-result.js';
+import { stripCodexWorktreeContext } from './codex-user-message.js';
 import {
   BadRequestException,
   Inject,
@@ -9,7 +11,9 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { codexWebSearchInput } from './codex-web-search.js';
-import { codexAgentMessage } from './codex-agent-message.js';
+import { codexHistoryTools } from './codex-history-tools.js';
+import { orderCodexHistory } from './codex-history-order.js';
+import { codexAgentMessage, codexAssistantPhase } from './codex-agent-message.js';
 import { promises as fs } from 'fs';
 import { createReadStream } from 'fs';
 import { homedir } from 'os';
@@ -17,6 +21,7 @@ import { basename, join } from 'path';
 import { createInterface } from 'readline';
 import { setTimeout as delay } from 'timers/promises';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
+import { savedPromptImageUrl } from '../agent-runtime/prompt-image.js';
 import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.types.js';
 import type { CodexHistorySessionSummary } from './codex-runtime.types.js';
 import type { AgentForkConversationRequest } from '../agent-runtime/agent-runtime.types.js';
@@ -48,6 +53,7 @@ export interface CodexHistoryTurn {
 export interface CodexRewindTarget {
   threadId: string;
   beforeTurnId: string;
+  promptTimestamp?: string;
 }
 
 export interface CodexForkTarget {
@@ -513,14 +519,15 @@ export class CodexHistoryService {
       throw new BadRequestException('Only user messages can be edited.');
     }
 
-    const beforeTurnId = this.findOwningTurnId(records, targetIndex);
+    const beforeTurnId = this.editablePromptBoundaries(records).get(targetIndex);
     if (!beforeTurnId) {
       throw new BadRequestException(
-        'Could not identify the Codex turn for this message.',
+        'Only the first prompt of a Codex turn can be edited.',
       );
     }
 
-    return { threadId: codexSessionId, beforeTurnId };
+    const promptTimestamp = stringValue(records[targetIndex].timestamp);
+    return { threadId: codexSessionId, beforeTurnId, ...(promptTimestamp ? { promptTimestamp } : {}) };
   }
 
   async listSessions(): Promise<CodexHistorySessionSummary[]> {
@@ -591,15 +598,16 @@ export class CodexHistoryService {
 
   private normalizeRecords(records: JsonRecord[]): ClaudeTranscriptItem[] {
     const items: ClaudeTranscriptItem[] = [];
+    const editable = this.editablePromptBoundaries(records);
+    const { native, nativeToolIds, wrappers } = codexHistoryTools(records);
     const asyncQuestions = new Map<string, ClaudeTranscriptItem>();
     const answeredQuestions = new Map<string, ClaudeTranscriptItem>();
-    const responseMessageIds = new Set(
+    const responseMessages = new Set(
       records.flatMap((entry) => {
-        const payload = record(entry.payload);
-        return entry.type === 'response_item' &&
-          payload.type === 'message' &&
-          payload.role === 'assistant' &&
-          readableText(this.contentToText(payload.content))
+        if (entry.type !== 'response_item') return [];
+        const payload = this.responsePayloadItem(entry) ?? {};
+        return (payload.type === 'message' && payload.role === 'assistant' && this.contentToText(payload.content).trim()) ||
+          (payload.type === 'reasoning' && (this.contentToText(payload.summary) || this.contentToText(payload.content)))
           ? [payload.id]
           : [];
       }),
@@ -607,6 +615,11 @@ export class CodexHistoryService {
     for (const [index, record] of records.entries()) {
       const timestamp =
         stringValue(record.timestamp) ?? new Date().toISOString();
+      const nativeTools = native.get(index);
+      if (nativeTools) {
+        items.push(...nativeTools);
+        continue;
+      }
       if (this.isVisibleUserMessage(record)) {
         const content = this.extractUserMessageText(record);
         if (content) {
@@ -627,10 +640,27 @@ export class CodexHistoryService {
             items.push(response);
             continue;
           }
+          const promptPayload = asRecord(record.payload);
+          const completed = asRecord(promptPayload?.item);
+          const input = arrayValue(completed?.content)?.map(asRecord) ?? [];
+          const sources = [
+            ...(arrayValue(promptPayload?.images) ?? []),
+            ...input.filter(part => part?.type === 'image').map(part => part?.url),
+          ];
+          const images = sources.flatMap(source => {
+            const image = savedPromptImageUrl(source);
+            return image ? [image] : [];
+          });
+          const unsupported = images.length !== sources.length || !!arrayValue(promptPayload?.local_images)?.length ||
+            input.some(part => part?.type === 'localImage');
           items.push({
-            id: `codex-history:${index}:user`,
+            // Native receipts and saved items must share identity when merged.
+            // Keep record anchors for rewind/fork and old-format fallbacks.
+            id: textValue(asRecord(asRecord(record.payload)?.item)?.id) ?? `codex-history:${index}:user`,
             kind: 'user',
             content,
+            ...(images.length ? { images } : {}),
+            ...(!editable.has(index) || unsupported ? { editUnsupported: true as const } : {}),
             sourceMessageId: this.recordAnchorId(index),
             transcriptMessageId: this.recordAnchorId(index),
             timestamp,
@@ -672,15 +702,19 @@ export class CodexHistoryService {
         }
         if (
           payload?.type === 'item_completed' &&
-          completed?.type === 'AgentMessage' &&
-          !responseMessageIds.has(completed.id)
+          (completed?.type === 'AgentMessage' || completed?.type === 'Reasoning') &&
+          !responseMessages.has(completed.id)
         ) {
-          const content = readableText(this.contentToText(completed.content));
+          const thinking = completed.type === 'Reasoning';
+          const content = thinking
+            ? this.contentToText(completed.summary_text) || this.contentToText(completed.raw_content)
+            : this.contentToText(completed.content);
           if (content)
             items.push({
               id:
-                stringValue(completed.id) ?? `codex-history:${index}:assistant`,
-              kind: 'assistant',
+                stringValue(completed.id) ?? `codex-history:${index}:${thinking ? 'reasoning' : 'assistant'}`,
+              kind: thinking ? 'thinking' : 'assistant',
+              ...(!thinking ? { assistantPhase: codexAssistantPhase(completed.phase) } : {}),
               content,
               timestamp,
               receivedAt: timestamp,
@@ -701,6 +735,12 @@ export class CodexHistoryService {
       if (!payloadItem) {
         continue;
       }
+      // Native receipts use the live stream's IDs, arguments, output and exit
+      // status. Do not duplicate them with raw calls or their exec envelopes.
+      const toolId =
+        stringValue(payloadItem.call_id) ?? stringValue(payloadItem.id);
+      if (toolId && (nativeToolIds.has(toolId) || wrappers.has(toolId)))
+        continue;
       if (payloadItem.type === 'web_search_call') {
         const id =
           stringValue(payloadItem.id) ??
@@ -759,13 +799,13 @@ export class CodexHistoryService {
       }
     }
     // Replace the delivery acknowledgement with the actual answer receipt.
-    return items.filter(
+    return orderCodexHistory(records, items.filter(
       (item) =>
         item.kind !== 'tool_result' ||
         !item.toolUseId ||
         !answeredQuestions.has(item.toolUseId) ||
         answeredQuestions.get(item.toolUseId) === item,
-    );
+    ));
   }
 
   private normalizeResponseItem(
@@ -787,18 +827,25 @@ export class CodexHistoryService {
             kind: 'system',
             ...message,
             content,
+            transcriptMessageId,
             timestamp,
             receivedAt: timestamp,
           }
         : null;
     }
+    if (type === 'image_generation_call') {
+      return { id: `${id}:tool_result`, kind: 'tool_result', toolUseId: id,
+        providerToolResult: codexImageResult(item), isError: item.status === 'failed', timestamp };
+    }
     if (type === 'message' && item.role === 'assistant') {
       const content = this.contentToText(item.content);
-      return content
+      return content.trim()
         ? {
             id,
             kind: 'assistant',
+            assistantPhase: codexAssistantPhase(item.phase),
             content,
+            providerToolResult: item.content,
             sourceMessageId: id,
             transcriptMessageId,
             timestamp,
@@ -842,10 +889,12 @@ export class CodexHistoryService {
         stringValue(item.name) ?? stringValue(item.call_id) ?? type;
       const toolName = this.normalizeToolName(rawToolName);
       const toolUseId = stringValue(item.call_id) ?? id;
-      const providerToolInput = this.normalizeToolInput(
+      const args = this.normalizeToolInput(
         rawToolName,
         item.arguments ?? item.input,
       );
+      const providerToolInput = item.namespace === 'elevenex'
+        ? { server: 'elevenex', arguments: args } : args;
       const canonicalTool = canonicalizeAgentTool(
         collaborationTool(rawToolName) ? rawToolName : toolName,
         providerToolInput,
@@ -875,6 +924,7 @@ export class CodexHistoryService {
         toolUseId: stringValue(item.call_id) ?? id,
         content:
           this.contentToText(item.output) || JSON.stringify(item.output ?? ''),
+        providerToolResult: item.output,
         isError: Boolean(item.error),
         sourceMessageId: id,
         transcriptMessageId,
@@ -938,7 +988,7 @@ export class CodexHistoryService {
       payload?.type === 'user_message' &&
       (!payload.kind || payload.kind === 'plain')
     ) {
-      return this.stripInjectedWorktreeContext(
+      return stripCodexWorktreeContext(
         stringValue(payload.message) ?? '',
       );
     }
@@ -950,7 +1000,7 @@ export class CodexHistoryService {
     ) {
       return '';
     }
-    return this.stripInjectedWorktreeContext(
+    return stripCodexWorktreeContext(
       this.contentToText(completedItem.content),
     );
   }
@@ -967,6 +1017,24 @@ export class CodexHistoryService {
 
   private recordAnchorId(index: number): string {
     return `codex-record:${index}`;
+  }
+
+  private editablePromptBoundaries(records: readonly JsonRecord[]): ReadonlyMap<number, string> {
+    const boundaries = new Map<number, string>();
+    const prompted = new Set<string>();
+    let active: string | undefined;
+    for (const [index, entry] of records.entries()) {
+      const payload = asRecord(entry.payload);
+      const turnId = stringValue(payload?.turn_id ?? payload?.turnId);
+      if (turnId && (entry.type === 'turn_context' || (entry.type === 'event_msg' && payload?.type === 'task_started')))
+        active = turnId;
+      if (!this.isVisibleUserMessage(entry)) continue;
+      const owner = turnId ?? active;
+      if (!owner || prompted.has(owner)) continue;
+      boundaries.set(index, owner);
+      prompted.add(owner);
+    }
+    return boundaries;
   }
 
   private findOwningTurnId(
@@ -1029,6 +1097,8 @@ export class CodexHistoryService {
       const commandActions =
         arrayValue(args?.commandActions) ?? arrayValue(args?.command_actions);
       return {
+        ...(typeof args?.cwd === 'string' ? { cwd: args.cwd } : {}),
+        ...(typeof args?.workdir === 'string' ? { workdir: args.workdir } : {}),
         command:
           stringValue(args?.command) ??
           stringValue(args?.cmd) ??
@@ -1078,21 +1148,6 @@ export class CodexHistoryService {
       return '';
     }
     return typeof value === 'object' ? JSON.stringify(value) : String(value);
-  }
-
-  private stripInjectedWorktreeContext(text: string): string {
-    const trimmed = text.trimStart();
-    const openTag = '<elevenex-worktree-context>';
-    const closeTag = '</elevenex-worktree-context>';
-    if (!trimmed.startsWith(openTag)) {
-      return text;
-    }
-    const closingIndex = trimmed.indexOf(closeTag);
-    if (closingIndex === -1) {
-      return text;
-    }
-    const afterClose = trimmed.slice(closingIndex + closeTag.length);
-    return afterClose.replace(/^\s+/, '');
   }
 
   private async findSessionFile(sessionId: string): Promise<string | null> {

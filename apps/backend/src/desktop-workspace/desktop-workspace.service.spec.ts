@@ -1,0 +1,789 @@
+import { resolve, basename } from 'node:path';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { Test } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
+import { eq } from 'drizzle-orm';
+import { createTestDb } from '../database/testing/create-test-db.js';
+import { DRIZZLE } from '../database/database.provider.js';
+import * as schema from '../database/schema/index.js';
+import { ProjectsService } from '../projects/projects.service.js';
+import { ReposService } from '../repos/repos.service.js';
+import { TasksService } from '../tasks/tasks.service.js';
+import { TaskGitService } from '../tasks/task-git.service.js';
+import { SessionsService } from '../sessions/sessions.service.js';
+import { BranchesService } from '../branches/branches.service.js';
+import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
+import { DesktopSessionDelegates } from './desktop-session-delegates.js';
+import { DesktopWorkspaceActivityService } from './desktop-workspace-activity.service.js';
+import { inactiveSessionStatus, type WorkspaceSessionActivity } from './desktop-session-status.js';
+import { DesktopWorkspaceService } from './desktop-workspace.service.js';
+
+describe('DesktopWorkspaceService', () => {
+  let database: ReturnType<typeof createTestDb>;
+  let service: DesktopWorkspaceService;
+  let projectId: number;
+  let repoId: number;
+  let taskId: number;
+  let checkout: string;
+  const retryTask = jest.fn();
+  const candidateIds = jest.fn<readonly number[], []>();
+  const liveStatuses = new Map<number, string>();
+  it('pages active sessions and unseen completions across root and child history', async () => {
+    const create = (values: Partial<typeof schema.sessions.$inferInsert> = {}) =>
+      database.db.insert(schema.sessions).values({
+        repoId, workspaceId: taskId, branchName: 'main', worktreePath: '/repo/task', ...values,
+      }).returning().get();
+    const parent = create();
+    const running = create({ parentSessionId: parent.id, delegatedBySessionId: parent.id });
+    const waiting = create();
+    const unread = create({ status: 'active', hasUnreviewedCompletion: true, lastCompletionAt: '2026-11-24T00:00:00Z' });
+    const incomplete = create({ hasUnreviewedCompletion: true });
+    const archived = create({ status: 'archived', hasUnreviewedCompletion: true, lastCompletionAt: '2026-11-24T00:00:00Z' });
+    const temporary = create({ isTemporary: true });
+    const foreign = create({ workspaceId: null });
+    for (let index = 0; index < 30; index++) create();
+    liveStatuses.set(running.id, 'running');
+    liveStatuses.set(waiting.id, 'attention');
+    liveStatuses.set(archived.id, 'running');
+    liveStatuses.set(temporary.id, 'running');
+    liveStatuses.set(foreign.id, 'running');
+    candidateIds.mockReturnValue([...liveStatuses.keys(), incomplete.id]);
+    const query = { state: 'priority', limit: '2' };
+    const latest = await service.listSessions(taskId, query);
+    expect(latest.items.map(row => row.id)).toEqual([unread.id]);
+    expect(latest.nextCursor).toBe(String(unread.id));
+    const earlier = await service.listSessions(taskId, { ...query, cursor: latest.nextCursor! });
+    expect(earlier.items.map(row => row.id)).toEqual([running.id, waiting.id]);
+    expect(earlier.parentSessions?.map(row => row.id)).toEqual([parent.id]);
+    expect(earlier.items[0].delegatedBy).toMatchObject({ sessionId: parent.id });
+    expect(earlier.parentSessions?.[0]).toMatchObject({
+      childSummary: { status: 'running', count: 1 },
+      activeChildAgents: [running.id],
+      childStopRequired: true,
+    });
+    expect(earlier.nextCursor).toBeNull();
+    expect((await service.listSessions(taskId, { limit: '20', order: 'latest' })).items.every(row => row.id > unread.id)).toBe(true);
+    database.db.update(schema.sessions).set({ hasUnreviewedCompletion: false }).where(eq(schema.sessions.id, unread.id)).run();
+    expect((await service.listSessions(taskId, { ...query, limit: '100' })).items.map(row => row.id)).toEqual([running.id, waiting.id]);
+    await expect(service.listSessions(taskId, { ...query, parentSessionId: 'root' })).rejects.toThrow(BadRequestException);
+
+    liveStatuses.delete(running.id);
+    database.db.update(schema.sessions).set({
+      hasUnreviewedCompletion: true, lastCompletionAt: '2026-11-24T00:01:00Z',
+    }).where(eq(schema.sessions.id, running.id)).run();
+    const completedChild = await service.listSessions(taskId, { ...query, limit: '100' });
+    expect(completedChild.items.find(row => row.id === running.id)?.status).toBe('review');
+    expect(completedChild.parentSessions?.[0].childSummary).toBeUndefined();
+  });
+
+  const activityStatus = jest.fn<string | undefined, []>();
+  const detachedCommands = jest.fn<number, []>();
+  const archiveSession = jest.fn();
+  const archiveGroup = jest.fn();
+  const restoreSession = jest.fn();
+  it('appends older sessions with bounded nesting cursors while preserving legacy order', async () => {
+    const create = (name: string) => database.db.insert(schema.sessions).values({repoId,workspaceId:taskId,branchName:'main',worktreePath:'/repo/task',name}).returning().get();
+    database.db.update(schema.workspaces).set({taskState:'ready'}).where(eq(schema.workspaces.id,taskId)).run();
+    const parent = create('Parent'), older = create('Older'), newer = create('Newer'), last = create('Last');
+    await service.moveSession(taskId,newer.id,parent.id);
+    await service.moveSession(taskId,older.id,parent.id);
+    await service.moveSession(taskId,last.id,parent.id);
+    const query = {parentSessionId:String(parent.id),childOrder:'nested',order:'latest',limit:'2'};
+    const latest = await service.listSessions(taskId, query);
+    expect(latest.items.map(row=>row.id)).toEqual([older.id,last.id]);
+    expect(latest.nextCursor).toMatch(/^2:/);
+    // The cursor is self-contained even if its session is removed from the group.
+    await service.moveSession(taskId,older.id,null);
+    expect((await service.listSessions(taskId,{...query,cursor:latest.nextCursor!})).items.map(row=>row.id)).toEqual([newer.id]);
+    await service.moveSession(taskId,older.id,parent.id);
+    await service.moveSession(taskId,last.id,parent.id); // idempotent, does not reorder
+    expect((await service.listSessions(taskId,{...query,limit:'20'})).items.map(row=>row.id)).toEqual([newer.id,last.id,older.id]);
+    expect((await service.listSessions(taskId,{parentSessionId:String(parent.id)})).items.map(row=>row.id)).toEqual([older.id,newer.id,last.id]);
+    for (const cursor of ['x','1:0','-1:2','1:2:3','99999999999999999999:1']) await expect(service.listSessions(taskId,{...query,cursor})).rejects.toThrow();
+    await expect(service.listSessions(taskId,{childOrder:'nested',parentSessionId:'root'})).rejects.toThrow();
+  });
+  it('reconciles a creation by its indexed request identity without replaying setup', async () => {
+    await database.db.update(schema.workspaces).set({ taskRequestId: 'desktop-stable-request' }).where(eq(schema.workspaces.id, taskId));
+    expect((await service.taskRequest(repoId, 'desktop-stable-request')).task?.id).toBe(taskId);
+    expect(await service.taskRequest(repoId + 1, 'desktop-stable-request')).toEqual({ task: null });
+    expect(await service.taskRequest(repoId, 'never-dispatched')).toEqual({ task: null });
+    await expect(service.taskRequest(repoId, 'x'.repeat(101))).rejects.toThrow(BadRequestException);
+    expect(retryTask).not.toHaveBeenCalled();
+  });
+  beforeEach(async () => {
+    candidateIds.mockReset().mockReturnValue([]);
+    liveStatuses.clear();
+    checkout = await mkdtemp(resolve(tmpdir(), 'desktop-task-health-'));
+    activityStatus.mockReset();
+    detachedCommands.mockReset();
+    archiveSession.mockReset(); restoreSession.mockReset();
+    archiveGroup.mockReset();
+    archiveSession.mockImplementation(async (id: number) => {
+      await database.db.update(schema.sessions).set({status: 'archived'}).where(eq(schema.sessions.id, id));
+    });
+    restoreSession.mockImplementation(async (id: number) => {
+      return (await database.db.update(schema.sessions).set({status: 'stopped'}).where(eq(schema.sessions.id, id)).returning())[0];
+    });
+    retryTask.mockReset();
+    retryTask.mockResolvedValue(undefined);
+    database = createTestDb();
+    const db = database.db;
+    projectId = (
+      await db.insert(schema.projects).values({ name: 'Visible' }).returning()
+    )[0].id;
+    repoId = (
+      await db
+        .insert(schema.repos)
+        .values({ projectId, name: 'repo', path: '/repo' })
+        .returning()
+    )[0].id;
+    taskId = (
+      await db
+        .insert(schema.workspaces)
+        .values({
+          repoId,
+          name: 'Build',
+          path: checkout,
+          taskBranch: 'build',
+        })
+        .returning()
+    )[0].id;
+    const module = await Test.createTestingModule({
+      providers: [
+        DesktopWorkspaceService,
+        DesktopSessionDelegates,
+        { provide: AgentRuntimeRegistryService, useValue: {} },
+        TaskGitService,
+        { provide: DesktopWorkspaceActivityService, useValue: {
+          status: activityStatus,
+          priorityCandidateIds: candidateIds,
+          transientIds: candidateIds,
+          turnStatus: (row: WorkspaceSessionActivity) => liveStatuses.get(row.id) ?? inactiveSessionStatus(row),
+          delegation: { get: () => undefined },
+          view: (row: WorkspaceSessionActivity) => ({
+            status: liveStatuses.get(row.id) ?? activityStatus() ?? inactiveSessionStatus(row),
+            ...(detachedCommands() ? { turnStatus: 'review', commandCount: detachedCommands() } : {}),
+          }),
+        } },
+        ProjectsService,
+        { provide: DRIZZLE, useValue: db },
+        {
+          provide: ReposService,
+          useValue: {
+            validatePath: jest.fn(async (path: string) => ({
+              name: basename(path),
+              path: resolve(path),
+            })),
+            addRepo: (id: number, path: string) =>
+              db
+                .insert(schema.repos)
+                .values({ projectId: id, name: 'new', path })
+                .returning()
+                .then((rows) => rows[0]),
+          },
+        },
+        {
+          provide: TasksService,
+          useValue: {
+            retry: retryTask,
+            record: (id: number) =>
+              db
+                .select()
+                .from(schema.workspaces)
+                .where(eq(schema.workspaces.id, id))
+                .then((rows) => rows[0]),
+            repo: (id: number) =>
+              db
+                .select()
+                .from(schema.repos)
+                .where(eq(schema.repos.id, id))
+                .then((rows) => rows[0]),
+          },
+        },
+        {
+          provide: SessionsService,
+          useValue: {
+            delegationHandoffs: { waiting: () => false },
+            archiveAllByProject: jest.fn().mockResolvedValue(undefined),
+            archiveAndStop: archiveSession,
+            archiveTaskSessionGroup: archiveGroup,
+            deleteUnstarted: async (id: number, canDelete: (session: typeof schema.sessions.$inferSelect) => boolean) => {
+              const session = db.select().from(schema.sessions).where(eq(schema.sessions.id,id)).get();
+              if (!session || !canDelete(session)) throw new BadRequestException('This session has started. Archive it instead.');
+              db.delete(schema.sessions).where(eq(schema.sessions.id,id)).run();
+            },
+            unarchive: restoreSession,
+          },
+        },
+        { provide: BranchesService, useValue: {} },
+      ],
+    }).compile();
+    service = module.get(DesktopWorkspaceService);
+  });
+  afterEach(async () => {
+    database?.sqlite.close();
+    await rm(checkout, { recursive: true, force: true });
+  });
+
+  it('archives only task-owned conversations, preserves their data and marks them for task reopen', async () => {
+    await database.db.update(schema.workspaces).set({taskState:'ready'}).where(eq(schema.workspaces.id,taskId));
+    const [session] = await database.db.insert(schema.sessions).values({repoId, workspaceId:taskId, branchName:'build', worktreePath:'/repo/task', name:'Keep history', status:'stopped'}).returning();
+    await expect(service.archiveSession(taskId,session.id,'yes')).rejects.toThrow(BadRequestException);
+    await expect(service.archiveSession(taskId,session.id + 1,true)).rejects.toThrow('does not belong');
+    expect(archiveSession).not.toHaveBeenCalled();
+    await service.archiveSession(taskId,session.id,false);
+    expect(archiveSession).toHaveBeenCalledWith(session.id,true);
+    const [archived] = await database.db.select().from(schema.sessions).where(eq(schema.sessions.id,session.id));
+    expect(archived.name).toBe('Keep history'); expect(archived.status).toBe('archived'); expect(archived.archivedByTask).toBe(true);
+    expect((await service.listSessions(taskId,{})).items).toHaveLength(0);
+    const restored = await service.restoreSession(taskId,session.id);
+    expect(restored.id).toBe(session.id); expect(restored.status).toBe('done');
+    expect(restoreSession).toHaveBeenCalledWith(session.id);
+    const [row] = await database.db.select().from(schema.sessions).where(eq(schema.sessions.id,session.id));
+    expect(row.archivedByTask).toBe(false);
+    await database.db.update(schema.workspaces).set({archivedAt:'now'}).where(eq(schema.workspaces.id,taskId));
+    await expect(service.archiveSession(taskId,session.id,true)).rejects.toThrow('not ready');
+  });
+
+  it('deletes only unstarted task sessions and promotes their children without archiving', async () => {
+    database.db.update(schema.workspaces).set({taskState:'ready'}).where(eq(schema.workspaces.id,taskId)).run();
+    const [parent, child] = database.db.insert(schema.sessions).values(['Unused','Child with history'].map(name => ({repoId, workspaceId:taskId, branchName:'build', worktreePath:'/repo/task', name}))).returning().all();
+    database.db.update(schema.sessions).set({status:'active',codexSessionId:'child-history'}).where(eq(schema.sessions.id,child.id)).run();
+    await service.moveSession(taskId, child.id, parent.id);
+    expect((await service.listSessions(taskId,{})).items.find(row=>row.id===parent.id)?.canDelete).toBe(true);
+    await expect(service.deleteSession(taskId + 1, parent.id)).rejects.toThrow();
+    expect(await service.deleteSession(taskId,parent.id)).toEqual({accepted:true});
+    expect(database.db.select().from(schema.sessions).where(eq(schema.sessions.id,parent.id)).get()).toBeUndefined();
+    expect(database.db.select().from(schema.sessions).where(eq(schema.sessions.id,child.id)).get()?.parentSessionId).toBeNull();
+    expect(archiveSession).not.toHaveBeenCalled();
+    expect((await service.listSessions(taskId,{state:'archived'})).items).toEqual([]);
+  });
+  it.each([
+    {status:'active'}, {status:'stopped'}, {status:'archived'},
+    {claudeSessionId:'claude-history'}, {codexSessionId:'codex-history'},
+    {piSessionPath:'/history'}, {opencodeSessionId:'opencode-history'},
+    {lastCompletionAt:'2026-11-16T00:00:00.000Z'}, {hasUnreviewedCompletion:true},
+  ])('preserves started sessions on delete: %j', async patch => {
+    database.db.update(schema.workspaces).set({taskState:'ready'}).where(eq(schema.workspaces.id,taskId)).run();
+    const session = database.db.insert(schema.sessions).values({repoId,workspaceId:taskId,branchName:'build',worktreePath:'/repo/task',...patch}).returning().get();
+    await expect(service.deleteSession(taskId,session.id)).rejects.toThrow('has started');
+    expect(database.db.select().from(schema.sessions).where(eq(schema.sessions.id,session.id)).get()).toBeDefined();
+  });
+  it('rejects deletion when live activity starts before the request or the task is closed', async () => {
+    database.db.update(schema.workspaces).set({taskState:'ready'}).where(eq(schema.workspaces.id,taskId)).run();
+    const session = database.db.insert(schema.sessions).values({repoId,workspaceId:taskId,branchName:'build',worktreePath:'/repo/task'}).returning().get();
+    expect((await service.listSessions(taskId,{})).items[0].canDelete).toBe(true);
+    activityStatus.mockReturnValue('running');
+    await expect(service.deleteSession(taskId,session.id)).rejects.toThrow('has started');
+    activityStatus.mockReturnValue(undefined);
+    database.db.update(schema.workspaces).set({archivedAt:'now'}).where(eq(schema.workspaces.id,taskId)).run();
+    await expect(service.deleteSession(taskId,session.id)).rejects.toThrow('not ready');
+  });
+
+  it('pages roots independently from children and promotes children when their parent is archived', async () => {
+    await database.db.update(schema.workspaces).set({taskState:'ready'}).where(eq(schema.workspaces.id,taskId));
+    const [parent, child, other] = await database.db.insert(schema.sessions).values(['Plan','Implement','Review'].map(name => ({repoId,workspaceId:taskId,branchName:'build',worktreePath:'/repo/task',name}))).returning();
+    await service.moveSession(taskId, child.id, parent.id);
+    expect((await service.listSessions(taskId,{parentSessionId:'root'})).items.map(row=>row.id)).toEqual([parent.id,other.id]);
+    const children = await service.listSessions(taskId,{parentSessionId:String(parent.id),limit:'1',order:'latest'});
+    expect(children.items.map(row=>row.id)).toEqual([child.id]);
+    expect((await service.listSessions(taskId,{parentSessionId:'root'})).items[0].childCount).toBe(1);
+    await service.archiveSession(taskId,parent.id,false);
+    expect((await service.listSessions(taskId,{parentSessionId:'root'})).items.map(row=>row.id)).toEqual([child.id,other.id]);
+    expect((await service.listSessions(taskId,{})).items.find(row=>row.id===child.id)?.parentSessionId).toBeNull();
+    await expect(service.listSessions(taskId,{parentSessionId:'invalid'})).rejects.toThrow();
+  });
+
+  it('requires authoritative running confirmation and reports cleanup failures', async () => {
+    const [session] = await database.db.insert(schema.sessions).values({repoId, workspaceId:taskId, branchName:'build', worktreePath:'/repo/task', name:'Running'}).returning();
+    activityStatus.mockReturnValue('running');
+    await expect(service.archiveSession(taskId,session.id,false)).rejects.toThrow('Stop and archive');
+    expect(archiveSession).not.toHaveBeenCalled();
+    archiveSession.mockRejectedValueOnce(new Error('Cleanup failed'));
+    await expect(service.archiveSession(taskId,session.id,true)).rejects.toThrow('Cleanup failed');
+    expect(archiveSession).toHaveBeenCalledWith(session.id,true);
+    const [row] = await database.db.select().from(schema.sessions).where(eq(schema.sessions.id,session.id));
+    expect(row.archivedByTask).toBe(false);
+  });
+
+  it('requires confirmation for live subsessions when archiving a group', async () => {
+    const values = { repoId, workspaceId: taskId, branchName: 'build', worktreePath: '/repo/task' };
+    const parent = database.db.insert(schema.sessions).values(values).returning().get();
+    const child = database.db.insert(schema.sessions).values({ ...values, parentSessionId: parent.id }).returning().get();
+    activityStatus.mockReturnValueOnce('done').mockReturnValueOnce('done').mockReturnValueOnce('attention');
+    archiveGroup.mockImplementation(async (_task, _parent, confirm) => confirm([parent, child]));
+    await expect(service.archiveSession(taskId, parent.id, false, undefined, true)).rejects.toThrow('Stop and archive');
+    await expect(service.archiveSession(taskId, parent.id, true, undefined, true)).resolves.toEqual({ accepted: true });
+    expect(archiveGroup).toHaveBeenCalledWith(taskId, parent.id, expect.any(Function));
+    expect(archiveSession).not.toHaveBeenCalled();
+  });
+
+  it('bounds project pages, excludes hidden/archived projects, and validates cursors', async () => {
+    await database.db
+      .insert(schema.projects)
+      .values([
+        { name: 'Hidden', hidden: true },
+        { name: 'Archived', archivedAt: '2026-01-01' },
+        { name: 'Next' },
+        { name: 'Last' },
+      ]);
+    const first = await service.listProjects({ limit: '1' });
+    expect(first.items.map((project) => project.name)).toEqual(['Visible']);
+    expect(first.nextCursor).toBe(String(projectId));
+    const next = await service.listProjects({
+      limit: '1',
+      cursor: first.nextCursor!,
+    });
+    expect(next.items.map((project) => project.name)).toEqual(['Next']);
+    expect(
+      await service.listProjects({ limit: '100', cursor: next.nextCursor! }),
+    ).toMatchObject({ items: [{ name: 'Last' }], nextCursor: null });
+    await expect(service.listProjects({ limit: '101' })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    await expect(service.listProjects({ cursor: '-1' })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+  it('persists presentation stages without changing legacy lifecycle and excludes default workspaces', async () => {
+    await database.db.insert(schema.workspaces).values({
+      repoId,
+      name: 'Default workspace',
+      path: '/repo',
+      isDefault: true,
+    });
+    await service.setStage(taskId, 'waiting');
+    expect(
+      (await service.listTasks({ projectId: String(projectId) })).items,
+    ).toEqual([
+      expect.objectContaining({ id: taskId, stage: 'waiting', state: 'ready' }),
+    ]);
+    expect(
+      (
+        await database.db
+          .select()
+          .from(schema.workspaces)
+          .where(eq(schema.workspaces.id, taskId))
+      )[0].taskState,
+    ).toBe('ready');
+    await expect(service.setStage(taskId, 'nonsense')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+  it('reports project repository cardinality even when only one repository has tasks in the page', async () => {
+    expect(
+      (await service.listTasks({ limit: '1' })).items[0].projectRepositoryCount,
+    ).toBe(1);
+    expect((await service.task(taskId)).projectRepositoryCount).toBe(1);
+    await database.db
+      .insert(schema.repos)
+      .values({ projectId, name: 'second', path: '/second' });
+    expect(
+      (await service.listTasks({ limit: '1' })).items[0].projectRepositoryCount,
+    ).toBe(2);
+    expect((await service.task(taskId)).projectRepositoryCount).toBe(2);
+  });
+
+  it('adds newest-first keyset windows while preserving chronological display and legacy ordering', async () => {
+    await database.db.insert(schema.sessions).values(Array.from({length:25},(_,index)=>({repoId,workspaceId:taskId,name:`Session ${index}`,branchName:'build',worktreePath:'/repo/task'})));
+    const legacy = await service.listSessions(taskId,{limit:'5'});
+    expect(legacy.items.map(session=>session.name)).toEqual(['Session 0','Session 1','Session 2','Session 3','Session 4']);
+    const latest = await service.listSessions(taskId,{limit:'5',order:'latest'});
+    expect(latest.items.map(session=>session.name)).toEqual(['Session 20','Session 21','Session 22','Session 23','Session 24']);
+    const earlier = await service.listSessions(taskId,{limit:'5',order:'latest',cursor:latest.nextCursor!});
+    expect(earlier.items.map(session=>session.name)).toEqual(['Session 15','Session 16','Session 17','Session 18','Session 19']);
+    await expect(service.listSessions(taskId,{order:'random'})).rejects.toThrow('Invalid session order');
+  });
+
+  it('returns bounded session summaries without private tokens and excludes archived sessions', async () => {
+    await database.db.insert(schema.sessions).values([
+      {
+        repoId,
+        workspaceId: taskId,
+        name: 'First',
+        branchName: 'build',
+        worktreePath: '/repo/task',
+        mcpAgentToken: 'private-token',
+      },
+      {
+        repoId,
+        workspaceId: taskId,
+        name: 'Second',
+        branchName: 'build',
+        worktreePath: '/repo/task',
+      },
+      {
+        repoId,
+        workspaceId: taskId,
+        name: 'Archived',
+        branchName: 'build',
+        worktreePath: '/repo/task',
+        status: 'archived',
+      },
+    ]);
+    const first = await service.listSessions(taskId, { limit: '1' });
+    expect(first.items).toHaveLength(1);
+    expect(JSON.stringify(first)).not.toContain('private-token');
+    expect(Object.keys(first.items[0]).sort()).toEqual([
+      'canDelete',
+      'childCount',
+      'id',
+      'name',
+      'parentSessionId',
+      'provider',
+      'repoId',
+      'status',
+      'taskId',
+      'updatedAt',
+    ]);
+    expect(
+      (
+        await service.listSessions(taskId, { cursor: first.nextCursor! })
+      ).items.map((session) => session.name),
+    ).toEqual(['Second']);
+  });
+  it('adds the agent turn and command count only for sessions with detached commands', async () => {
+    await database.db.insert(schema.sessions).values({ repoId, workspaceId: taskId, name: 'Busy', branchName: 'build', worktreePath: '/repo/task' });
+    activityStatus.mockReturnValue('running');
+    expect((await service.listSessions(taskId, {})).items[0]).not.toHaveProperty('commandCount');
+    detachedCommands.mockReturnValue(2);
+    expect((await service.listSessions(taskId, {})).items[0]).toMatchObject({ status: 'running', turnStatus: 'review', commandCount: 2 });
+  });
+  it('persists project name, appearance and instructions and validates the supported token vocabulary', async () => {
+    await service.updateProject(projectId, {
+      name: 'Renamed',
+      appearance: { look: 'emoji', emoji: '🦊', hue: 'pine' },
+      agentInstructions: 'Run checks.',
+    });
+    expect((await service.project(projectId)).project).toEqual({
+      id: projectId,
+      name: 'Renamed',
+      agentInstructions: 'Run checks.',
+      appearance: { look: 'emoji', emoji: '🦊', hue: 'pine' },
+    });
+    await expect(
+      service.updateProject(projectId, { appearance: { hue: 'pink' } }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('creates, replaces and removes project images while preserving unmodified fields and legacy pages', async () => {
+    const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAYAAACOEfKtAAAAm0lEQVR4nO3QMQ0AIADAMOQgG2k4AQ88ZEmP/UvHXPvovfF7oB5AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMN0FBhVS3x1b1tkAAAAASUVORK5CYII=';
+    const created = await service.createProject({ name: 'Branded', path: '/one', appearance: { look: 'letters', image } });
+    const id = created.project.id;
+    expect(created.project.appearance).toEqual({ look: 'letters', image });
+    const lookup = async (images?: string) =>
+      (await service.listProjects({ images })).items.find(project => project.id === id)?.appearance;
+    expect(await lookup()).toEqual({ look: 'letters' });
+    expect(await lookup('true')).toEqual({ look: 'letters', image });
+
+    await service.updateProject(id, { appearance: { look: 'icon', icon: 'repo' } });
+    expect(await lookup('true')).toEqual({ look: 'icon', icon: 'repo', image });
+    const replacement = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAYAAACOEfKtAAAAm0lEQVR4nO3QMQ0AIADAMLShDhk4BQ88ZEmP/UvHmvvovfF7oB5AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMN0Fo4lEhTMAsccAAAAASUVORK5CYII=';
+    await service.updateProject(id, { appearance: { look: 'icon', icon: 'repo', image: replacement } });
+    expect(await lookup('true')).toEqual({ look: 'icon', icon: 'repo', image: replacement });
+    await expect(service.updateProject(id, { appearance: { image: 'file:///tmp/icon.png' } })).rejects.toBeInstanceOf(BadRequestException);
+    expect(await lookup('true')).toMatchObject({ image: replacement });
+    await service.updateProject(id, { appearance: { look: 'icon', icon: 'repo', image: null } });
+    expect(await lookup('true')).toEqual({ look: 'icon', icon: 'repo' });
+  });
+
+  it('keeps archived conversation history navigable for closed tasks', async () => {
+    await database.db.insert(schema.sessions).values({
+      repoId,
+      workspaceId: taskId,
+      name: 'History',
+      branchName: 'build',
+      worktreePath: '/repo/task',
+      status: 'archived',
+      archivedByTask: true,
+    });
+    expect((await service.listSessions(taskId, {})).items).toEqual([]);
+    await database.db
+      .update(schema.workspaces)
+      .set({ archivedAt: new Date().toISOString() })
+      .where(eq(schema.workspaces.id, taskId));
+    expect((await service.listSessions(taskId, { limit: '1' })).items).toEqual([
+      expect.objectContaining({ name: 'History', status: 'archived' }),
+    ]);
+  });
+  it('pages archived sessions independently and keeps completed sessions normal', async () => {
+    const rows = await database.db.insert(schema.sessions).values([
+      { repoId, workspaceId: taskId, branchName: 'build', worktreePath: '/repo/task', name: 'Stopped', status: 'stopped' },
+      { repoId, workspaceId: taskId, branchName: 'build', worktreePath: '/repo/task', name: 'Archived first', status: 'archived' },
+      { repoId, workspaceId: taskId, branchName: 'build', worktreePath: '/repo/task', name: 'Archived second', status: 'archived' },
+      { repoId, workspaceId: taskId, branchName: 'build', worktreePath: '/repo/task', name: 'Hidden auxiliary', surface: 'git-job', status: 'archived' },
+    ]).returning();
+    const normal = await service.listSessions(taskId, { state: 'normal' });
+    expect(normal.items.map(row => row.name)).toEqual(['Stopped']);
+    const latest = await service.listSessions(taskId, { state: 'archived', order: 'latest', limit: '1' });
+    expect(latest.items.map(row => row.name)).toEqual(['Archived second']);
+    const earlier = await service.listSessions(taskId, { state: 'archived', order: 'latest', limit: '1', cursor: latest.nextCursor! });
+    expect(earlier.items.map(row => row.name)).toEqual(['Archived first']);
+    expect(earlier.nextCursor).toBeNull();
+    await database.db.update(schema.sessions).set({ status: 'stopped' }).where(eq(schema.sessions.id, rows[1].id));
+    expect((await service.listSessions(taskId, { state: 'archived' })).items.map(row => row.name)).toEqual(['Archived second']);
+    await expect(service.listSessions(taskId, { state: 'all' })).rejects.toThrow('Invalid session state');
+    await expect(service.listSessions(taskId, { state: 'archived', limit: '101' })).rejects.toThrow('Page limit');
+  });
+
+  it('rejects duplicate normalized paths before creating any durable project or repository', async () => {
+    await expect(
+      service.createProject({
+        name: 'Canonical duplicate',
+        path: '/repo',
+        additionalPaths: ['/repo/'],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(
+      (await database.db.select().from(schema.projects)).map(
+        (project) => project.name,
+      ),
+    ).toEqual(['Visible']);
+    expect(
+      (await database.db.select().from(schema.repos)).map((repo) => repo.path),
+    ).toEqual(['/repo']);
+  });
+
+  it('creates all selected repositories and project appearance', async () => {
+    const created = await service.createProject({
+      name: 'Multi',
+      path: '/one',
+      additionalPaths: ['/two'],
+      appearance: { look: 'letters', hue: 'ocean' },
+    });
+    expect(created.repositories.items.map((repo) => repo.path)).toEqual([
+      '/one',
+      '/two',
+    ]);
+    expect(created.project.appearance).toEqual({
+      look: 'letters',
+      hue: 'ocean',
+    });
+    await expect(
+      service.createProject({
+        name: 'Duplicate',
+        path: '/one',
+        additionalPaths: ['/one'],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+  it('returns a bounded setup issue for saved failed tasks instead of hiding the cause', async () => {
+    await database.db
+      .update(schema.workspaces)
+      .set({
+        taskState: 'failed',
+        taskError: JSON.stringify({
+          code: 'external_checkout',
+          path: '/work/existing',
+          canSnapshot: true,
+          secret: 'private',
+        }),
+      })
+      .where(eq(schema.workspaces.id, taskId));
+    const task = await service.task(taskId);
+    expect(task.setupIssue).toMatchObject({
+      code: 'external-checkout',
+      workspacePath: '/work/existing',
+      canUseSnapshot: true,
+    });
+    expect(JSON.stringify(task)).not.toContain('private');
+    expect((await service.listTasks({})).items[0].setupIssue).toEqual(
+      task.setupIssue,
+    );
+  });
+  it('reports the setup step while preparing and where a failed setup stopped, never the raw configuration', async () => {
+    const config = (preparationStage: string) =>
+      JSON.stringify({ mode: 'new', branchName: 'x', preparationStage, secret: 'private' });
+    await database.db
+      .update(schema.workspaces)
+      .set({ taskState: 'preparing', taskConfig: config('preparing_checkout') })
+      .where(eq(schema.workspaces.id, taskId));
+    const preparing = await service.task(taskId);
+    expect(preparing).toMatchObject({ state: 'preparing', setupStep: 'checkout' });
+    expect(JSON.stringify(preparing)).not.toContain('private');
+    expect((await service.listTasks({})).items[0].setupStep).toBe('checkout');
+    await database.db
+      .update(schema.workspaces)
+      .set({ taskState: 'failed', taskError: JSON.stringify({ code: 'branch_exists' }) })
+      .where(eq(schema.workspaces.id, taskId));
+    expect((await service.task(taskId)).setupStep).toBe('checkout');
+    await database.db
+      .update(schema.workspaces)
+      .set({ taskState: 'ready', taskError: null, taskConfig: config('restoring_sessions') })
+      .where(eq(schema.workspaces.id, taskId));
+    expect(await service.task(taskId)).not.toHaveProperty('setupStep');
+  });
+  it('detects a missing visible checkout and recovers when the directory returns, without Git or losing history', async () => {
+    await rm(checkout, { recursive: true });
+    const missing = await service.task(taskId);
+    expect(missing).toMatchObject({
+      state: 'failed',
+      setupIssue: { code: 'other', workspaceRecovery: 'prepare' },
+    });
+    expect((await service.listTasks({})).items[0]).toMatchObject({
+      id: taskId,
+      state: 'failed',
+    });
+    await mkdir(checkout);
+    expect(await service.task(taskId)).toMatchObject({
+      id: taskId,
+      state: 'ready',
+    });
+    expect(retryTask).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed close as cleanup recovery on the open task', async () => {
+    await database.db
+      .update(schema.workspaces)
+      .set({
+        taskState: 'failed',
+        taskError: JSON.stringify({ code: 'finish_failed' }),
+      })
+      .where(eq(schema.workspaces.id, taskId));
+    const task = await service.task(taskId);
+    expect(task).toMatchObject({
+      state: 'failed',
+      archivedAt: null,
+      setupIssue: { code: 'other', closeFailed: true, canUseSnapshot: false },
+    });
+    expect((await service.listTasks({})).items[0].setupIssue).toEqual(
+      task.setupIssue,
+    );
+  });
+
+  it('normalizes old missing-folder errors and permits only the advertised recovery', async () => {
+    await database.db
+      .update(schema.workspaces)
+      .set({
+        taskState: 'failed',
+        linkStatus: 'unlinked',
+        taskError: JSON.stringify({
+          message:
+            'The task worktree is missing. Reopen or choose another worktree.',
+        }),
+      })
+      .where(eq(schema.workspaces.id, taskId));
+    expect((await service.task(taskId)).setupIssue).toMatchObject({
+      workspaceRecovery: 'prepare',
+    });
+    await expect(
+      service.retryTask(taskId, { recovery: 'restore-branch' }),
+    ).rejects.toThrow();
+    await expect(
+      service.retryTask(taskId, { recovery: 'new-workspace' }),
+    ).rejects.toThrow();
+    const savedCommit = 'a'.repeat(40);
+    await database.db
+      .update(schema.workspaces)
+      .set({
+        taskError: JSON.stringify({ code: 'branch_missing', savedCommit }),
+      })
+      .where(eq(schema.workspaces.id, taskId));
+    expect((await service.task(taskId)).setupIssue).toMatchObject({
+      workspaceRecovery: 'restore-branch',
+    });
+    await service.retryTask(taskId, { recovery: 'restore-branch' });
+    expect(retryTask).toHaveBeenLastCalledWith(
+      taskId,
+      { mode: 'new', branchName: 'build', baseRef: savedCommit },
+      JSON.stringify({ code: 'branch_missing', savedCommit }),
+    );
+    await database.db
+      .update(schema.workspaces)
+      .set({ taskError: JSON.stringify({ code: 'worktree_not_clean' }) })
+      .where(eq(schema.workspaces.id, taskId));
+    await service.retryTask(taskId, { recovery: 'new-workspace' });
+    expect(retryTask).toHaveBeenLastCalledWith(
+      taskId,
+      { environment: 'new' },
+      JSON.stringify({ code: 'worktree_not_clean' }),
+    );
+  });
+  it('preserves default retries and validates explicit recovery against durable task state', async () => {
+    await service.retryTask(taskId);
+    expect(retryTask).toHaveBeenLastCalledWith(taskId);
+    await database.db
+      .update(schema.workspaces)
+      .set({
+        taskState: 'failed',
+        taskError: JSON.stringify({
+          code: 'external_checkout',
+          canSnapshot: true,
+        }),
+      })
+      .where(eq(schema.workspaces.id, taskId));
+    await service.retryTask(taskId, { recovery: 'use-existing' });
+    expect(retryTask).toHaveBeenLastCalledWith(taskId, {
+      confirmExternal: true,
+    }, JSON.stringify({ code: 'external_checkout', canSnapshot: true }));
+    await service.retryTask(taskId, { recovery: 'snapshot' });
+    expect(retryTask).toHaveBeenLastCalledWith(taskId, {
+      checkoutMode: 'snapshot',
+      environment: 'automatic',
+    }, JSON.stringify({ code: 'external_checkout', canSnapshot: true }));
+    await database.db
+      .update(schema.workspaces)
+      .set({
+        taskState: 'failed',
+        taskError: JSON.stringify({
+          code: 'environment_busy',
+          canSnapshot: true,
+        }),
+      })
+      .where(eq(schema.workspaces.id, taskId));
+    retryTask.mockClear();
+    await expect(
+      service.retryTask(taskId, { recovery: 'use-existing' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.retryTask(taskId, { recovery: 'arbitrary' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.retryTask(taskId, { confirmExternal: true }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.retryTask(taskId, { recovery: 'exceed-worktree-limit' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await database.db
+      .update(schema.workspaces)
+      .set({ taskState: 'ready', taskError: null })
+      .where(eq(schema.workspaces.id, taskId));
+    await expect(
+      service.retryTask(taskId, { recovery: 'snapshot' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(retryTask).not.toHaveBeenCalled();
+  });
+  it('allows quota consent only for a saved quota failure and keeps the same task', async () => {
+    await database.db
+      .update(schema.workspaces)
+      .set({
+        taskState: 'failed',
+        taskError: JSON.stringify({
+          code: 'worktree_limit_reached',
+          count: 23,
+          limit: 5,
+        }),
+      })
+      .where(eq(schema.workspaces.id, taskId));
+    expect((await service.task(taskId)).setupIssue).toMatchObject({
+      canExceedWorktreeLimit: true,
+    });
+    await expect(
+      service.retryTask(taskId, { confirmOverLimit: true }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await service.retryTask(taskId, { recovery: 'exceed-worktree-limit' });
+    expect(retryTask).toHaveBeenLastCalledWith(taskId, {
+      confirmOverLimit: true,
+    }, JSON.stringify({ code: 'worktree_limit_reached', count: 23, limit: 5 }));
+    retryTask.mockClear();
+    await database.db
+      .update(schema.workspaces)
+      .set({ taskState: 'ready' })
+      .where(eq(schema.workspaces.id, taskId));
+    await expect(
+      service.retryTask(taskId, { recovery: 'exceed-worktree-limit' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(retryTask).not.toHaveBeenCalled();
+  });
+});

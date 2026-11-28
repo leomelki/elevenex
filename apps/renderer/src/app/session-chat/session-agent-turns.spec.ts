@@ -1,0 +1,96 @@
+import type { SessionAgentReference, SessionAgentTurnEntry, SessionChatState } from '@elevenex/shared';
+import { describe, expect, it } from 'vitest';
+import type { ChatExchange, WorkStep } from '../conversation';
+import { SessionAgentTurnProjection } from './session-agent-turns';
+
+const at = '2026-11-24T02:00:00.000Z';
+const later = '2026-11-24T02:02:00.000Z';
+const child: SessionAgentReference = { sessionId: 7, taskId: 4, title: 'Review retries', selection: { provider: 'codex', model: 'worker' } };
+const launch: SessionAgentTurnEntry = { id: 'launch', at, operation: { type: 'launch', title: child.title, requestId: 'review' } };
+const step = (entry: SessionAgentTurnEntry, id = entry.id): WorkStep => ({ id, kind: 'tool', agentEntry: entry });
+const exchange = (steps: readonly WorkStep[], status: ChatExchange['status'] = 'live'): ChatExchange =>
+  ({ id: 'turn', prompt: 'Review', status, steps, answer: '' });
+
+describe('session agent turn projection', () => {
+  it('retains the first card through a launch retry, mixes in native work and keeps reply chronology', () => {
+    const accepted = { ...launch, id: 'retry', endedAt: at, result: { session: child, status: 'running' as const } };
+    const native = { id: 'native', at, endedAt: at, operation: { type: 'native' as const, title: 'Search earlier decisions' },
+      result: { agentId: 'agent-a', status: 'completed' as const } };
+    const wait = { id: 'wait', at, operation: { type: 'wait' as const, sessions: [7] } };
+    const projector = new SessionAgentTurnProjection();
+    const pending = projector.project([exchange([step(launch)])], null)[0]!;
+    expect(pending.steps[0]?.agentBoard?.agents).toMatchObject([{ id: 'launch', status: 'pending' }]);
+    const waiting = projector.project([exchange([step(launch), step(accepted), step(native), step(wait)])], null)[0]!;
+    expect(waiting.steps).toHaveLength(1);
+    expect(waiting.steps[0]?.agentBoard).toMatchObject({
+      agents: [{ id: 'launch', title: 'Review retries' }, { id: 'native', title: 'Search earlier decisions' }],
+      wait: 'Waiting for Review retries', waiting: true,
+    });
+    const returned = { ...wait, endedAt: later, result: { session: child, status: 'completed' as const,
+      reply: { id: 'answer', text: '**Checked.**', truncated: false } } };
+    const comment = { id: 'narration', kind: 'say' as const, text: 'Continuing independently.' };
+    const result = projector.project([exchange([step(launch), step(accepted), step(native), step(wait), comment, step(returned, 'receipt')])], null, 4)[0]!;
+    expect(result.steps.map(row => row.id)).toEqual(['launch', 'narration', 'receipt']);
+    expect(result.steps[0]?.agentBoard?.agents[0]).toMatchObject({ id: 'launch', status: 'completed' });
+    expect(result.steps[2]?.agentReply).toMatchObject({ replyId: 'answer', text: '**Checked.**' });
+  });
+
+  it('updates just the affected turn when a child delivers a queued message', () => {
+    const reply = { ...launch, endedAt: at, result: { session: child, status: 'running' as const } };
+    const message = { id: 'message', at, endedAt: at, operation: { type: 'message' as const, sessions: [7], message: 'Check the timeout.' },
+      result: { messageId: 'send-id', delivery: 'queued' as const, session: child } };
+    const annotated = exchange([step(reply), step(message)]);
+    const ordinary = { ...exchange([]), id: 'ordinary' };
+    const streams = (delivered: readonly string[]): Pick<SessionChatState, 'provider' | 'work'> => ({ provider: 'codex', work: {
+      sessions: [{ session: child, status: 'running', detail: '', startedAt: at, endedAt: null, delivered }],
+      running: [], recent: [],
+    } });
+    const projector = new SessionAgentTurnProjection();
+    const before = projector.project([ordinary, annotated], streams([]), 4);
+    const after = projector.project([ordinary, annotated], streams(['send-id']), 4);
+    expect(before[0]).toBe(after[0]);
+    expect(before[1]?.steps[1]).toMatchObject({
+      id: 'message', status: 'done', agentAction: { label: 'Messaged Review retries', detail: 'Check the timeout.', status: 'Queued' },
+    });
+    expect(after[1]?.steps[1]).toMatchObject({ id: 'message', agentAction: { status: 'Delivered' } });
+    expect(projector.project([ordinary, annotated], streams(['send-id']), 4)[1]).toBe(after[1]);
+  });
+
+  it('retains a reported Claude native model at completion and leaves an unknown model absent', () => {
+    const native: SessionAgentTurnEntry = {
+      id: 'claude-agent', at, operation: { type: 'native', title: 'Check callbacks' },
+      result: { agentId: 'child', status: 'completed' },
+    };
+    const project = (model?: string) => new SessionAgentTurnProjection().project([exchange([step(native)])], {
+      provider: 'claude',
+      work: { running: [], recent: [{ id: 'child-finished', kind: 'finished', tone: 'success', title: 'Check callbacks', detail: '', at: later,
+        agentId: 'child', agentStatus: 'completed', model }] },
+    })[0]?.agentCards?.[0]?.selection;
+    expect(project('Sonnet')).toMatchObject({ provider: 'claude', model: 'Sonnet' });
+    expect(project()?.model).toBeUndefined();
+  });
+
+  it('keeps OpenCode native tasks inspectable before completion and reconciles a resumed task and its background result', () => {
+    const running: SessionAgentTurnEntry = {
+      id: 'task', at, operation: { type: 'native', title: 'Review', identity: { provider: 'opencode', model: 'local/worker' } },
+      result: { agentId: 'ses_review', status: 'running' },
+    };
+    const resumed: SessionAgentTurnEntry = { ...running, id: 'resume', operation: { ...running.operation, title: 'Review the follow-up' } };
+    const returned: SessionAgentTurnEntry = {
+      id: 'output', at: later, endedAt: later, operation: { type: 'native-wait', agents: ['ses_review'] },
+      result: { agents: [{ agentId: 'ses_review', status: 'completed', detail: 'Review complete.' }] },
+    };
+    const projector = new SessionAgentTurnProjection();
+    const state = { provider: 'opencode', nativeAgentInspection: true };
+    expect(projector.project([exchange([step(running)])], state)[0]?.agentCards).toMatchObject([
+      { id: 'task', status: 'running', target: { kind: 'native', agentId: 'ses_review' } },
+    ]);
+    const [first, next] = projector.project([
+      exchange([step(running), step(resumed)], 'done'),
+      { ...exchange([{ ...step(returned), kind: 'note' }]), id: 'follow-up' },
+    ], state);
+    expect(first?.agentCards).toMatchObject([{ id: 'task', status: 'completed', detail: 'Review complete.', selection: { provider: 'opencode', model: 'local/worker' } }]);
+    expect(first?.steps.map(row => row.id)).toEqual(['task']);
+    expect(next?.steps).toHaveLength(1);
+  });
+});

@@ -1,0 +1,257 @@
+# Renderer component system
+
+Standalone Angular components, Signals, OnPush change detection and plain token CSS.
+The production renderer contains no example projects, agent output, repository
+services or synthetic activity. It starts on machine Home, then opens the
+connected workspace through the typed backend bridge. Existing
+frontend/backend/Electron commands retain their original behavior.
+
+## Try the components
+
+```sh
+pnpm desktop:preview
+```
+
+Open `http://127.0.0.1:4310`. The workspace preview composes real components;
+Foundations, Tasks, Projects, Settings, Sub-tasks, Git helpers, Conversation, Agent picker, Machines and views, and Machine flow exercise their public
+APIs. `/task-browser` exercises the production browser's default/new-tab flow
+with a preview-only transport. Example data lives only in `preview/`, under a separate Angular build
+configuration. It is absent from the production entry graph and packaged app.
+
+The **Sidebar motion** and **Git motion** pages exercise repeated/bulk changes
+and interrupted transitions through the real components. Sidebar controls include
+keeping only the original fourth task, or the fourth and seventh, and 100-task
+batches. Git controls cover Commit → Committing → Push → Pushing → Up to date.
+
+Use `pnpm desktop:dev` for the normal native application. Checks are
+`pnpm desktop:lint`, `pnpm desktop:test`, and `pnpm desktop:build`.
+Visual verification uses [the native capture runner](../../scripts/desktop-capture/README.md),
+with `--url http://127.0.0.1:4310` when reviewing the component preview.
+The [historical verification log](VERIFICATION.md) records earlier checks and
+captured states; routine new results belong in chat/PR descriptions and ignored
+`artifacts/`, as described in the root `AGENTS.md`.
+See [the design review](DESIGN_REVIEW.md) for corrected defects and remaining
+differences from the supplied component and motion specifications.
+
+## Boundaries
+
+| Folder | Responsibility | Public API |
+| --- | --- | --- |
+| `src/app/ui` | Native actions, glyphs, feedback, choices, tooltip, motion | `ui/index.ts` |
+| `src/app/tasks` | Projects, task lifecycle, branch/workspace choice, sidebar, git and panel tabs | [Task APIs](src/app/tasks/README.md) |
+| `src/app/projects` | Project creation, appearance, project menu, settings and confirmations | [Project APIs](src/app/projects/README.md) |
+| `src/app/conversation` | Messages, turns, work evidence, decisions, composer, presets, Markdown, scroll | [Conversation APIs](src/app/conversation/README.md) |
+| `src/app/machines` | Machine home, connection steps, title island, launch transition | [Machine and view APIs](src/app/machines/README.md) |
+| `src/app/machines/application` | Production startup, machine selection and platform integration | [Production flow](src/app/machines/application/README.md) |
+| `src/app/views` | Changes review, change list, Browser and Terminal frames | `views/index.ts` |
+| `src/app/shell` | Four-region layout and native/system theme subscription ownership | `AppShellComponent` |
+| `src/app/workbench` | Supplied-data composition and connected side-view shells | `WorkbenchComponent` |
+| `src/app/workspace` | Connected project/task navigation, creation, settings and task git state | [Workspace ownership](src/app/workspace/README.md) |
+| `preview` | Interactive examples and composition fixtures | Separate development entry |
+
+Feature barrels export components and readonly view models. Import from the
+family you need; there is no all-features module or mutable global store.
+Serializable IPC contracts remain in `packages/shared`; renderer-only view
+models and DOM interaction state stay in the renderer.
+
+## Inputs and outputs
+
+An owner supplies readonly data. Children emit intent and retain only unfinished
+interaction state: an open menu, draft, disclosure, current wizard step, or local
+selection. Outputs do not secretly execute git, spawn agents, write files, copy
+to the clipboard, or initiate network requests. For example, `Composer.submitted`
+emits `{ text, intent, context }`; `DiffReview.fileRequested` emits the file's
+identity, revision and requested mode. The future application controller owns
+those operations, their busy/error state and cancellation.
+
+Pass stable IDs when updating task/session/message/file lists. Replace changed
+objects or collections rather than mutating an input in place. Diff responses
+must match file ID, revision and review mode. `draft` and selected workspace
+controls expose model inputs where two-way binding is useful. Most actions
+remain controlled: apply the emitted value explicitly so loading, rejection and
+optimistic updates have a clear owner.
+
+Substantial templates and styles are beside their owning component. Tiny marks
+and native-control wrappers use inline templates. Shared primitives are small
+standalone imports, not feature services. Browser and Terminal expose trusted projection slots; their controls emit typed
+requests. The [production Terminal adapter](src/app/task-terminal/README.md)
+connects user shells through the scoped backend bridge. Browser keeps its safe
+frame and a typed serving-port handoff.
+
+## Composition
+
+`AppShellComponent` lays out five named slots: `shellTitle`, `shellRail`,
+`shellSidebar`, `shellMain`, `shellPanel`. Its `panelOpen`, `wideReview`, and
+`panelLabel` inputs control layout without changing feature data. The side panel
+remains mounted and inert while closed; wider review makes the covered main
+region inert and restores focus when it exits. A takeover stops short of the
+chat: the main region recedes (scaled and faded towards its left edge, without
+reflow) and a `Return to chat` peek button over its visible edge emits
+`reviewExited`, or `panelCloseRequested` for a compact takeover, exactly like
+Escape. The peek is inert whenever nothing takes over. The shell's readonly `panelPresent`
+signal includes the closing slide; `panelWide` retains the outgoing compact/wide
+feature layout during that exit. Use a template reference (`#shell`) and this
+signal to retain expensive projected content through exit, while `panelOpen`
+continues to control interaction. Closing immediately makes the region inert,
+keeps its contents opaque at their outgoing width, then releases visual retention
+when the actual width transition settles. Reopening cancels that release; reduced
+motion and absent/cancelled transitions do not leave retained contents behind. Rail and sidebar keep their place.
+The available workspace is a named CSS `workspace` size container. Projected
+features can use its width for responsive affordances without measuring or
+overriding the shell's private navigation geometry.
+
+Drag the handle in the chat/panel gutter to resize the side panel. When the
+handle is focused, Left/Right move the boundary, Shift makes larger steps and
+Home/End move to the width limits. Double-click or press Enter to reset to the
+default width. Escape cancels an active drag. The shell keeps the chosen width
+when the panel closes or enters a takeover and fits it to the current space
+while keeping room for chat. Compact and expanded takeovers use the full
+available panel area and omit the splitter.
+
+The shell owns its width transition for its full duration; closing content stays
+opaque until clipping completes. Projected
+Code content predicts its destination viewport without finishing shell motion.
+It resizes the iframe once behind browser-owned snapshots, stretches the outer
+compositor surface to follow the animated panel, and blends the editor images
+with blur while the surrounding application and toolbar remain live.
+
+`WorkbenchComponent` composes project/task navigation around supplied content.
+Use `workbenchConversation` and `workbenchPanel` slots, readonly `projects` and
+`tasks`, and its selection models. A platform container can replace this route
+without modifying the reusable component families.
+
+Bind `Workbench.wideReview` with the projected review's `wide` input/output to
+activate shell takeover; Escape resets it through the shell. Handle
+`closedTasksRequested` to open the closed-task list in the application owner.
+
+The production `MachineWorkspaceComponent` composes `AppShell` with
+`titleBar=false`, since `MachineApp` already owns the native title island.
+The connected workspace code prefetches during idle time. Only the selected
+candidate mounts, behind inert Home, before launch; its first render crosses a
+paint boundary before opening starts. Its scoped feature
+stores supply the existing presentational components; they never import the
+legacy renderer or contact the backend directly. The side views provide tabs, close and expansion behavior. Changes reviews the
+selected agent reply; Browser composes the [production task browser](src/app/task-browser/README.md);
+Code hosts the [task-confined web workbench](src/app/code/README.md); Terminal provides real task-owned shells and scripts. Apps shows [task-owned native and streamed app runs](src/app/task-apps/README.md). Actions retains its frame. See [terminal ownership and recovery](src/app/task-terminal/README.md). Expansion
+is available on every view and stays active when switching tabs.
+`/connected-workspace` exercises this production composition with a typed,
+preview-only backend adapter. Its fixture never enters the production build.
+
+## Motion and accessibility
+
+- Task session caps use internal pixel-height scroll batches, with bottom-aligned
+  rows and an 18px masked edge while moving. Reveal/close durations follow travel
+  distance (440–760ms); closing batches share the total travel duration. Settled
+  batches release clipping, and reduced motion settles instantly. Fold's older
+  opt-in `unroll` API remains available for compatibility; caps no longer use it.
+- `FoldComponent` animates unknown height in place, preserves local state,
+  releases clipping after settling, and makes closed descendants inert.
+  Use `animateOpenOnMount` when an explicit disclosure mounts a fold open.
+  The default keeps initial history still.
+- `AutoHeightDirective` observes one inner wrapper and eases meaningful height
+  changes. Give that inner wrapper the same gap/direction as its content.
+  Block wrappers must contain descendant margins (for example with
+  `display: flow-root`); otherwise the observer excludes collapsed margins and
+  the animation's target height disagrees with the natural layout.
+  Width-driven wrapping follows the panel/window resize directly and cancels
+  competing height motion. The observer's delivered sizes establish the new
+  baseline; subsequent content growth at that width still animates.
+  Bind `[exAutoHeight]` to a boolean when only part of a view's lifetime should
+  animate. Disabling it releases the observer and cancels any height animation.
+  A wrapper can set `--auto-height-duration` and `--auto-height-easing` using
+  motion tokens to coordinate its resize with a neighbouring fold.
+- `FlipDirective` captures painted positions before keyed children update and
+  animates only elements in its own `data-flip-scope`. Nested session scopes do
+  not get transformed twice. Sidebar scopes use reordering only: Fold already
+  moves neighbours continuously when their space opens or closes.
+- `ListPresence` retains removed task/session identities until Fold closes their
+  space. Returning a key during its exit preserves that component's local state.
+  Gaps, stage headings, empty state and Closed count live inside folding rows.
+  The owner releases its scheduled frame, cleanup timer and media listener.
+- `PresenceComponent` uses Angular `animate.enter`/`animate.leave`; `EaseSwap`
+  retains a control while its text fades and its width eases.
+  Plain labels use `[value]`. Rich labels can supply `[contentTemplate]` and
+  readonly `[content]`: `value` then identifies the phase, and the template's
+  `$implicit` receives that phase's content snapshot. Content updates within a
+  phase preserve child identity (for example a rolling Ticker); changing phase
+  retains the outgoing snapshot during its blur/slide exit. Session caps use
+  this for “N older” ↔ “Show fewer”, with the native action and focus retained.
+- Keyed Angular `@for` blocks with entry/exit classes implement the design's
+  MotionList vocabulary. `Message.isNew` explicitly opts a new message into
+  entry motion; opening existing history never does.
+- Observers, subscriptions, timers, scheduled frames and WAAPI animations are
+  disposed by their owning component/directive. Reduced motion disables movement
+  and loops. Motion never gates user input.
+- Running status indicators rotate their HTML host so Chromium can composite
+  them without repeated SVG layout. A separate inner surface owns one-shot
+  status changes; changing reduced motion cancels those effects immediately.
+  Keep continuous motion off inner SVG paths, and avoid blanket layer hints
+  across repository-sized lists.
+- Tooltips are pointer-transparent, close when dragging begins, and stay suppressed
+  until drop, drag cancellation or window blur. Delayed hover tooltips are cancelled
+  too; a fresh hover/focus restores ordinary behavior after the drag. Shared drag
+  listeners belong to the renderer injector and are released on destruction.
+- Menus/popovers use CDK overlay/focus facilities. Native buttons retain native
+  disabled, keyboard and form semantics. The button primitive is used as
+  `<button exButton variant="primary">…</button>`; icon actions require a label.
+
+Use the shared [dropdown components](src/app/ui/dropdown/README.md) for ordinary
+single-choice controls and action menus. Task stages, workspace selection,
+project menus, Git actions and settings choices share these primitives. Keep
+searchable pickers and forms as specialized dialogs.
+
+## Design sources and deliberate adapter boundaries
+
+The [brand book](../../docs/design-system/project/README.md), tokens and component
+specifications were imported verbatim from the supplied standalone ZIP.
+`docs/design-system/project/tokens.css` is authoritative and is copied verbatim
+by the desktop commands. The two licensed fonts are bundled locally; the
+reference's runtime Google Fonts import is not shipped.
+
+The current component families include project creation/settings, repository
+tags, sub-task navigation, git-helper jobs and machine onboarding. Machine Home
+owns first run and card preparation; AddMachine owns SSH/pair dialogs. RunChoice
+and its old flow have been removed. Full-window GettingReady is reserved for
+updates to a machine already open in a window. Features the designer marked
+as not designed (Code/Actions content, global Settings, command palette, split diff,
+multi-line review comments) were not invented. The existing desktop CSP is
+preserved: HTML reply cards emit an Open in Browser intent rather than creating
+an untrusted frame; external media needs a confined platform resolver. Mermaid
+fences stay readable code until a trusted diagram adapter is supplied.
+
+Large change lists use CDK virtual scrolling. Reviews page files and lines and
+request content lazily rather than computing unbounded diffs in the UI thread.
+The owner is responsible for incremental repository data, bounded history
+windows and cancelling asynchronous work after navigation.
+
+Toast defaults still dismiss after an action. For asynchronous Undo, use
+`dismissOnAction=false`, bind `busy` to disable duplicate actions, and remove the
+toast after confirmed success. Every toast automatically dismisses after five
+seconds by default; a positive finite `duration` overrides that timeout. Zero,
+negative and non-finite durations use the default. Hover and keyboard focus
+pause the countdown, including for asynchronous Undo notifications.
+
+The `/agent-picker` preview exercises the agent chip and menu (harness logos,
+model list and filter, thinking track, usage) with every supported state. `Switch` accepts `size="sm"` for its reference 28×16 agent-setting form;
+its default size remains unchanged. Both sizes expose native switch semantics,
+visible focus and reduced-motion behavior.
+
+
+`WorkspacePanels` accepts `[workspaceChanges]` projected content with a
+`#workspaceChanges` template reference. The owner retains panel navigation and
+supplies the connected review inside that slot; inactive panels are hidden and
+inert. `MachineWorkspace` mounts its review only while Changes is open/active,
+which owns cancellation of any pending diff reads.
+
+At widths up to 700px, an open AppShell side panel takes over the main region
+instead of squeezing chat into an unusable column. The covered main is inert,
+focus moves into the panel and returns when it closes. Bind `panelCloseRequested`
+to the owner's close action for Escape in this compact mode; `reviewExited`
+retains its wider-review meaning. `Workbench` and production MachineWorkspace
+provide both bindings. Ordinary desktop widths keep the existing panel motion.
+
+`WorkspacePanels` also accepts `[workspaceCode]` / `#workspaceCode`. Code follows task identity across sessions and owns its native surface behind that projection.
+
+`WorkspacePanels.codeActions` optionally accepts a `TemplateRef` from
+`CodePanel.actions() ?? null` to keep Code actions in the existing panel-tabs row.
+The feature retains action state and handlers; no extra toolbar is mounted.

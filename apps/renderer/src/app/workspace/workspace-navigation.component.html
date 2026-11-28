@@ -1,0 +1,48 @@
+<div class="sidebar" [attr.aria-busy]="store.loading()">
+  <header>
+    @if (store.selectedProject(); as project) {
+      <button class="project-title" type="button" [attr.aria-label]="'Project menu for ' + label()" [exTooltip]="label()" [cdkMenuTriggerFor]="projectMenu" [disabled]="store.busy()"><h1>{{ label() }}</h1><ex-icon name="chevron-down" [size]="12" /></button>
+      <ng-template #projectMenu><ex-project-menu [project]="projectMark() ?? project" [machine]="store.machine()?.name ?? ''" [disabled]="store.busy()" (action)="projectAction($event)" /></ng-template>
+      <ex-icon-button icon="focus" [label]="store.focused() ? 'Stop focusing this project' : 'Focus project, mute other projects'" [active]="store.focused()" (pressed)="store.focused.set(!store.focused())" />
+    } @else { <h1>{{ label() }}</h1> }
+    <ex-icon-button icon="plus" label="New task" [disabled]="!store.projects().length || store.busy() || !store.scopeId()" (pressed)="store.openNewTask()" />
+  </header>
+  @if (!store.closed()) {
+    <ex-status-summary [counts]="store.counts()" [active]="store.filter()" (selectStatus)="store.filter.set($event)" />
+  }
+  @if (store.offline()) { <p class="last-seen">As of {{ store.asOfLabel() }}</p> }
+  @if (visibleError(); as error) {
+    <div class="notice" role="alert"><span>{{ error }}</span><button exButton size="sm" [disabled]="store.loading()" (click)="store.refresh()">Refresh</button></div>
+  }
+  @if (store.waitingTasks().length || store.waitingSessions().length) {
+    <section class="waiting-tasks" aria-label="Tasks waiting for the machine">
+      @for (item of store.waitingTasks(); track item.id) {
+        <button type="button" [disabled]="item.status !== 'waiting'" [exTooltip]="item.draft.title" (click)="store.editWaitingTask(item.id)"><ex-icon name="layers" [size]="13" /><span>{{ item.draft.title }}</span><small>{{ item.status === 'waiting' ? 'when back' : item.status === 'sending' ? 'creating' : 'check' }}</small></button>
+      }
+      @for (item of store.waitingSessions(); track item.id) { <button type="button" disabled><ex-icon name="chat" [size]="13" /><span>New session · {{ item.taskName }}</span><small>{{ item.status === 'waiting' ? 'when back' : item.status === 'sending' ? 'creating' : 'check' }}</small></button> }
+    </section>
+  }
+  @if (!taskListMounted() && store.loading() && !store.tasks().length) {
+    <p class="loading" role="status">Loading tasks…</p>
+  } @else if (store.closed()) {
+    <div class="closed-tasks">
+      <h2>Closed tasks</h2>
+      @for (task of store.tasks(); track task.id) {
+        <div class="closed-task">
+          <ex-task-group [task]="task" [selected]="store.selectedSessionId()" [showProject]="store.activeProject() === 'all'" [allowAdd]="false" [allowAddSubtask]="false" [sessionDisclosure]="store.sessionDisclosures().get(task.id) ?? null" (sessionDisclosureChange)="store.setSessionDisclosure(task.id, $event)" (selectSession)="store.selectSession({taskId:task.id,sessionId:$event})" (moreSessionsRequested)="store.loadOlderSessions($event)" />
+          <div class="closed-task-actions"><button exButton size="sm" [disabled]="store.busy()" (click)="store.reopenTask(+task.id)">Reopen task</button></div>
+        </div>
+      } @empty { <p>No closed tasks.</p> }
+    </div>
+  } @else {
+    <ex-task-list [allowNesting]="store.sessionNestingAvailable()" (moveSessionRequested)="moveSession($event)" (sessionChildrenRequested)="store.loadSessionChildren($event)" [loading]="store.loading()" (archivedSessionsRequested)="store.loadArchivedSessions($event)" (restoreRequested)="restoreSession($event)" [(sessionDisclosures)]="store.sessionDisclosures" [sessionCap]="preferences.sessionCap()" [allowArchive]="store.sessionArchiveAvailable()" (archiveRequested)="removeSession($event)" (deleteRequested)="removeSession($event, true)" [tasks]="store.tasks()" [selected]="store.selectedSessionId()" [filter]="store.filter()" [showProjects]="store.activeProject() === 'all'" [disabled]="store.busy()" (selectSession)="store.selectSession($event)" (addSession)="store.createSession($event)" (emptyTaskRequested)="store.openEmptyTask($event)" (moreSessionsRequested)="store.loadOlderSessions($event)" (closedRequested)="store.showClosed()" />
+  }
+  <footer>
+    @if (store.taskPage()) { <button exButton size="sm" [disabled]="store.loading()" (click)="store.loadTasks()">Newest tasks</button> }
+    @if (store.tasksCursor(); as cursor) { <button exButton size="sm" [disabled]="store.loading()" (click)="store.loadTasks(cursor)">Next tasks<ex-icon name="chevron-right" [size]="12" /></button> }
+    <button exButton variant="ghost" size="sm" [disabled]="store.loading() || !store.scopeId()" (click)="store.showClosed()"><ex-icon [name]="store.closed() ? 'back' : 'archive'" [size]="13" />{{ store.closed() ? 'Active tasks' : 'Closed tasks' }}</button>
+    @if (store.projectsCursor()) { <button exButton size="sm" [disabled]="store.loading()" (click)="store.nextProjects()">Next projects</button> }
+    @if (store.projectPage()) { <button exButton size="sm" [disabled]="store.loading()" (click)="store.refresh()">First projects</button> }
+    <ex-icon-button class="refresh" icon="refresh" label="Refresh workspace" [disabled]="store.loading() || store.busy() || !store.scopeId()" (pressed)="store.refresh()" />
+  </footer>
+</div>

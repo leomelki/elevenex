@@ -4,6 +4,7 @@ import type {
   AgentAuthStatus,
   AgentForkConversationRequest,
   AgentImageInput,
+  AgentPromptOptions,
   AgentLoginMode,
   AgentLoginStartResult,
   AgentRuntimeEvent,
@@ -52,8 +53,8 @@ export class PiAgentRuntimeProvider
 
   reloadMcpConfiguration(sessionId: number) { return this.runtimeService.reloadMcpConfiguration(sessionId); }
 
-  getHistory(sessionId: number) {
-    return this.runtimeService.getHistory(sessionId);
+  getHistory(sessionId: number, options?: { changeDetails?: 'summary' }) {
+    return this.runtimeService.getHistory(sessionId, options);
   }
 
   getRuntimeState(sessionId: number) {
@@ -125,12 +126,14 @@ export class PiAgentRuntimeProvider
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
+    options?: AgentPromptOptions,
   ) {
     return this.runtimeService.submitPrompt(
       sessionId,
       prompt,
       titlePrompt,
       images,
+      options,
     );
   }
 

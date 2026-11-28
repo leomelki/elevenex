@@ -1,0 +1,20 @@
+<ol [attr.aria-label]="label() ?? null">
+  @for (step of steps(); track step.id) {
+    <li [class.active]="step.state === 'active'" [class.todo]="step.state === 'todo'" [class.failed]="step.state === 'failed'" [attr.aria-current]="step.state === 'active' ? 'step' : null">
+      <span class="glyph" aria-hidden="true">
+        @if (step.state === 'todo') {
+          <span class="dot"></span>
+        } @else {
+          <!-- One mounted glyph lets running → done play its check once. -->
+          <ex-status-glyph [status]="step.state === 'active' ? 'running' : step.state === 'done' ? 'done' : 'failed'" [size]="14" />
+        }
+      </span>
+      <div class="body">
+        <span class="label"><span class="visually-hidden">{{ stateLabels[step.state] }}: </span>{{ step.label }}</span>
+        @if (step.detail) { <span class="detail">{{ step.detail }}</span> }
+        @if (step.state === 'active' && step.progress !== undefined) { <ex-progress-line [value]="step.progress" [label]="step.label + ' progress'" /> }
+      </div>
+      @if (step.meta) { <span class="meta">{{ step.meta }}</span> }
+    </li>
+  }
+</ol>

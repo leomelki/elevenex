@@ -1,0 +1,152 @@
+import { chatModelQuota, chatPlanUsage } from './desktop-chat-usage.js';
+
+const usage = {
+  provider: 'codex',
+  planName: 'Plus',
+  status: 'warning',
+  updatedAt: '2026-10-30T10:00:00Z',
+  windows: [
+    {
+      id: 'primary',
+      label: '5-hour limit',
+      remainingPercentage: 12,
+      resetsAt: 1793368800,
+    },
+  ],
+};
+describe('desktop subscription allowance', () => {
+  it('projects only subscription facts and drops secrets and unsupported providers', () => {
+    const raw = {
+      planUsage: { ...usage, secret: 'private' },
+      authStatus: { authMethod: 'oauth' },
+    };
+    expect(chatPlanUsage(raw, 'codex')).toEqual(usage);
+    expect(chatPlanUsage(raw, 'claude')).toBeNull();
+    expect(chatPlanUsage(raw, 'pi')).toBeNull();
+    expect(
+      chatPlanUsage({ ...raw, authStatus: { authMethod: 'api-key' } }, 'codex'),
+    ).toBeNull();
+    expect(chatPlanUsage({ ...raw, authStatus: null }, 'codex')).toBeNull();
+    expect(
+      chatPlanUsage(
+        {
+          sessionMetadata: { apiKeySource: 'oauth' },
+          planUsage: { ...usage, provider: 'claude' },
+        },
+        'claude',
+      )?.provider,
+    ).toBe('claude');
+  });
+  it('bounds windows, rejects invalid percentages and never invents quota for unknown windows', () => {
+    const project = (windows: unknown[]) =>
+      chatPlanUsage(
+        {
+          authStatus: { authMethod: 'oauth' },
+          planUsage: { ...usage, windows },
+        },
+        'codex',
+      );
+    expect(
+      project([{}, { ...usage.windows[0], remainingPercentage: NaN }]),
+    ).toBeNull();
+    expect(
+      project([{ ...usage.windows[0], remainingPercentage: -1 }]),
+    ).toBeNull();
+    expect(
+      project([{ ...usage.windows[0], resetsAt: Infinity }])?.windows[0]
+        .resetsAt,
+    ).toBeNull();
+    expect(
+      project(
+        Array.from({ length: 100 }, (_, i) => ({
+          ...usage.windows[0],
+          id: String(i),
+        })),
+      )?.windows,
+    ).toHaveLength(8);
+    expect(project([usage.windows[0], usage.windows[0]])?.windows).toHaveLength(
+      1,
+    );
+  });
+
+  it('projects native Claude subscription facts before first init and with no API key, but excludes explicit API-key sessions', () => {
+    for (const apiKeySource of [undefined, 'none', 'oauth']) {
+      expect(
+        chatPlanUsage(
+          {
+            sessionMetadata:
+              apiKeySource === undefined ? null : { apiKeySource },
+            planUsage: { ...usage, provider: 'claude', planName: 'Max' },
+          },
+          'claude',
+        ),
+      ).toMatchObject({ provider: 'claude', planName: 'Max' });
+    }
+    expect(
+      chatPlanUsage(
+        {
+          sessionMetadata: { apiKeySource: 'ANTHROPIC_API_KEY' },
+          planUsage: { ...usage, provider: 'claude' },
+        },
+        'claude',
+      ),
+    ).toBeNull();
+  });
+});
+
+describe('desktop per-model allowance', () => {
+  const quota = {
+    provider: 'antigravity',
+    tier: 'Antigravity Starter Quota',
+    updatedAt: '2026-11-24T10:00:00Z',
+    models: [
+      {
+        id: 'claude-opus',
+        label: 'Claude Opus',
+        remainingPercentage: 0,
+        exhausted: true,
+        resetsAt: 1795000000,
+      },
+    ],
+  };
+  it('projects bounded per-model facts only for Antigravity', () => {
+    expect(
+      chatModelQuota(
+        { modelQuota: { ...quota, secret: 'token' } },
+        'antigravity',
+      ),
+    ).toEqual(quota);
+    expect(chatModelQuota({ modelQuota: quota }, 'codex')).toBeNull();
+    expect(chatModelQuota({}, 'antigravity')).toBeNull();
+  });
+  it('drops malformed models and keeps a tier-only report', () => {
+    expect(
+      chatModelQuota(
+        {
+          modelQuota: {
+            ...quota,
+            models: [
+              { ...quota.models[0], remainingPercentage: 140 },
+              { ...quota.models[0], exhausted: 'yes' },
+              { ...quota.models[0], id: '' },
+              { ...quota.models[0], remainingPercentage: null, resetsAt: -4 },
+              { ...quota.models[0], remainingPercentage: null },
+            ],
+          },
+        },
+        'antigravity',
+      ),
+    ).toEqual({
+      ...quota,
+      models: [
+        { ...quota.models[0], remainingPercentage: null, resetsAt: null },
+      ],
+    });
+    expect(
+      chatModelQuota(
+        { modelQuota: { ...quota, tier: ' ', models: [] } },
+        'antigravity',
+      ),
+    ).toBeNull();
+  });
+});

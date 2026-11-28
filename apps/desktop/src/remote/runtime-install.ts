@@ -1,0 +1,86 @@
+import { remoteClientSources } from './runtime-sources';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { gzip } from 'node:zlib';
+import type { BackendRelease } from '../backend/release';
+import { shellQuote } from './ssh';
+
+/** All script substitutions are application-owned revisions, source and nonces. */
+export async function bootstrapScript(release: BackendRelease, nonce: string, serverDownload = true, developmentNamespace?: string, allowUpdate = false): Promise<{ command: string; payload: Buffer }> {
+  if (developmentNamespace !== undefined && !/^[a-f0-9]{32}$/.test(developmentNamespace)) throw new Error('Invalid development runtime namespace');
+  const { modules, sources, clientId } = await remoteClientSources();
+  const installerFiles = ['backend/download', 'backend/archive', 'backend/release', 'remote/server-install'];
+  const installerSources = await Promise.all(installerFiles.map(name => readFile(join(__dirname, `../${name}.js`), 'utf8')));
+  const script = `set -eu
+umask 077
+unset NODE_OPTIONS NODE_PATH ELECTRON_RUN_AS_NODE
+fail() { printf 'EX11_%s: %s\\n' "$1" "$2" >&2; exit 1; }
+command -v uname >/dev/null 2>&1 || fail COMPATIBILITY 'Install uname on the remote PATH'
+case "$(uname -s)" in Linux) os=linux;; Darwin) os=darwin;; MINGW*|MSYS*|CYGWIN*) fail COMPATIBILITY 'Windows host needs PowerShell';; *) fail COMPATIBILITY 'This remote platform is unsupported; use Linux or macOS';; esac
+for tool in git tar head mktemp; do command -v "$tool" >/dev/null 2>&1 || fail COMPATIBILITY "Install $tool on the remote PATH"; done
+command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || fail COMPATIBILITY 'Install sha256sum or shasum'
+case "$(uname -m)" in x86_64|amd64) arch=x64;; arm64|aarch64) arch=arm64;; *) fail COMPATIBILITY 'Use an x64 or arm64 remote host';; esac
+root="$HOME/.elevenex/${developmentNamespace ? `desktop-remote-dev/${developmentNamespace}` : 'desktop-remote'}"
+mkdir -p "$root/runtimes" "$root/clients"
+case "$os" in darwin) target=macos-$arch;; *) target=linux-$arch;; esac
+cache="$root/runtimes/${release.tag}-$target"
+printf '\\nEX11:${nonce}:platform:%s:%s\\n' "$os" "$arch"
+stage=''
+cleanup() { if [ -n "$stage" ]; then rm -rf "$stage"; fi; }
+trap cleanup EXIT HUP INT TERM
+if [ -x "$cache/backend/node/bin/node" ] && [ -s "$cache/backend/main.cjs" ] && [ -s "$cache/installation.sha256" ]; then
+  printf 'EX11:${nonce}:cache:yes\\n'
+else
+  stage=$(mktemp -d "$root/runtimes/.install-XXXXXXXX")
+  fetched=no
+  ${serverDownload ? `if command -v node >/dev/null 2>&1 && node -e 'if(Number(process.versions.node.split(".")[0])<22)process.exit(1)' >/dev/null 2>&1; then
+    printf 'EX11:${nonce}:download:server\\n'
+    mkdir -p "$stage/installer/backend" "$stage/installer/remote"
+${installerSources.map((source, index) => `cat > "$stage/installer/${installerFiles[index]}.js" <<'EX11_INSTALL_${nonce}'\n${source}\nEX11_INSTALL_${nonce}`).join('\n')}
+    if node "$stage/installer/remote/server-install.js" "$stage" "$os" "$arch" '${release.version}' '${release.tag}' '${nonce}'; then fetched=yes; fi
+    rm -rf "$stage/installer"
+  fi` : ''}
+  if [ "$fetched" != yes ]; then
+  printf 'EX11:${nonce}:cache:no\\n'
+  read -r size digest
+  case "$size" in ''|*[!0-9]*) fail CONFIGURATION 'Invalid archive size';; esac
+  [ "$size" -gt 0 ] && [ "$size" -le 1073741824 ] || fail CONFIGURATION 'Invalid archive size'
+  [ "\${#digest}" -eq 64 ] || fail CONFIGURATION 'Invalid checksum'
+  case "$digest" in *[!a-f0-9]*) fail CONFIGURATION 'Invalid checksum';; esac
+  head -c "$size" > "$stage/archive.tar.gz"
+  if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$stage/archive.tar.gz");
+  elif command -v shasum >/dev/null 2>&1; then actual=$(shasum -a 256 "$stage/archive.tar.gz");
+  else fail COMPATIBILITY 'Install sha256sum or shasum'; fi
+  [ "\${actual%% *}" = "$digest" ] || fail CONFIGURATION 'Transferred runtime checksum mismatch'
+  tar -xzf "$stage/archive.tar.gz" -C "$stage" || fail COMPATIBILITY 'Runtime extraction failed; check disk space and tar support'
+  rm "$stage/archive.tar.gz"
+  printf '%s' "$digest" > "$stage/installation.sha256"
+  fi
+  printf 'EX11:${nonce}:installation:start\\n'
+  "$stage/backend/node/bin/node" -e 'if(Number(process.versions.node.split(".")[0])<22)process.exit(1)' || fail COMPATIBILITY 'Bundled Node cannot run on this host; check OS and libc compatibility'
+  "$stage/backend/node/bin/node" -e 'const fs=require("fs");try{fs.renameSync(process.argv[1],process.argv[2])}catch(e){if(!["EEXIST","ENOTEMPTY"].includes(e.code))throw e;if(!fs.existsSync(process.argv[2]+"/installation.sha256"))throw Error("Damaged runtime cache; move it aside before retrying")}' "$stage" "$cache" || fail CONFIGURATION 'Cannot publish runtime; check permissions or move the damaged version cache aside'
+  cleanup
+  stage=''
+fi
+client="$root/clients/${clientId}"
+mkdir -p "$client/node_modules/@elevenex/browser-network/dist"
+${sources.map((source, index) => `cat > "$client/${modules[index]}.${nonce}.tmp" <<'EX11_SOURCE_${nonce}'\n${source}\nEX11_SOURCE_${nonce}\nmv "$client/${modules[index]}.${nonce}.tmp" "$client/${modules[index]}.js"`).join('\n')}
+printf 'EX11:${nonce}:runtime:start\\n'
+"$cache/backend/node/bin/node" --version >/dev/null 2>&1 || fail COMPATIBILITY 'The cached Node executable is incompatible or damaged; check OS and libc support'
+exec "$cache/backend/node/bin/node" "$client/runtime.js" bridge "$root" "$cache" '${release.version}' '${allowUpdate ? 'update' : 'join'}'
+`;
+  // Keep SSH argv bounded as the bridge grows. Read exactly one compressed
+  // script before giving the same input stream to the archive and wire protocol.
+  const payload = await new Promise<Buffer>((resolve, reject) => gzip(script, (error, bytes) => error ? reject(error) : resolve(bytes)));
+  const loader = `set -eu
+umask 077
+for tool in head gzip mktemp; do command -v "$tool" >/dev/null 2>&1 || { printf 'EX11_COMPATIBILITY: Install %s\\n' "$tool" >&2; exit 1; }; done
+stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT HUP INT TERM
+head -c ${payload.length} > "$stage/source.gz"
+gzip -dc "$stage/source.gz" > "$stage/source.sh"
+sh "$stage/source.sh"
+`;
+  return { command: `sh -c ${shellQuote(loader)}`, payload };
+}
+

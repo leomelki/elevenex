@@ -1,9 +1,9 @@
 import { EventEmitter } from 'events';
 import { mkdirSync, writeFileSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
+import { getElevenexDataRoot } from '../config/app-data-paths.js';
 
-const CRASH_LOG_DIR = join(homedir(), '.elevenex', 'logs');
+const CRASH_LOG_DIR = join(getElevenexDataRoot(), 'logs');
 const RING_BUFFER_SIZE = 50;
 
 export type LogLevel =

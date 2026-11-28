@@ -267,6 +267,13 @@ describe('WorktreePoolService', () => {
               row.poolWorktreeId === null,
           ),
       ).toBe(true);
+      expect(
+        preserved
+          .filter((row) => !row.isDefault)
+          .every(
+            (row) => JSON.parse(row.taskError!).code === 'environment_missing',
+          ),
+      ).toBe(true);
       expect(await db.select().from(schema.sessions)).toEqual([session]);
       expect(await service.getWorktreeQuota(repo)).toMatchObject({ count: 0 });
 
@@ -480,16 +487,15 @@ describe('WorktreePoolService', () => {
     const featurePath = FEATURE_PATH;
     gitMock.status
       .mockReset()
-      .mockResolvedValueOnce({
-        current: 'main',
-        isClean: () => true,
-        conflicted: [],
-      })
-      .mockResolvedValueOnce({
-        current: 'feature',
-        isClean: () => false,
-        conflicted: ['src/x.ts'],
-      });
+      .mockImplementation(async (cwd: string) => ({
+        current: cwd === REPO_PATH ? 'main' : 'feature',
+        isClean: () => cwd === REPO_PATH,
+        conflicted: cwd === REPO_PATH ? [] : ['src/x.ts'],
+      }));
+    // Concurrent status reads may arrive in either order; identify the checkout.
+    jest.mocked(worktreeSimpleGit).mockImplementation(cwd => ({
+      ...gitMock, status: () => gitMock.status(cwd),
+    }) as never);
 
     const items = await service.listForRepo(repo);
     pathExists.mockRestore();

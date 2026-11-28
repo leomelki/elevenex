@@ -117,9 +117,36 @@ describe('orderReasoningEfforts', () => {
 
   it('keeps unrecognised levels at the end instead of dropping them', () => {
     expect(orderReasoningEfforts(['ultra', 'low', 'minimal'])).toEqual([
-      'low',
       'minimal',
+      'low',
       'ultra',
     ]);
+  });
+  it('orders off/none/minimal and xhigh/max/ultra without inventing levels or reordering custom variants', () => {
+    expect(
+      orderReasoningEfforts([
+        'custom-z',
+        'ultra',
+        'max',
+        'high',
+        'none',
+        'minimal',
+        'off',
+        'xhigh',
+        'custom-a',
+        'max',
+      ]),
+    ).toEqual([
+      'off',
+      'none',
+      'minimal',
+      'high',
+      'xhigh',
+      'max',
+      'ultra',
+      'custom-z',
+      'custom-a',
+    ]);
+    expect(orderReasoningEfforts([])).toEqual([]);
   });
 });

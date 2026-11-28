@@ -1,3 +1,4 @@
+import { NavigationEventsModule } from '../navigation/navigation-events.module.js';
 import { Module, forwardRef } from '@nestjs/common';
 import { SessionsController } from './sessions.controller.js';
 import { PlanChatForksService } from './plan-chat-forks.service.js';
@@ -13,6 +14,7 @@ import { SessionFoldersService } from './session-folders.service.js';
 
 @Module({
   imports: [
+    NavigationEventsModule,
     forwardRef(() => AgentRuntimeModule),
     forwardRef(() => TerminalModule),
     SettingsModule,

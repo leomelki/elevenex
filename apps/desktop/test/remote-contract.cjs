@@ -1,0 +1,27 @@
+const calls = [
+  ['workspaceWaitingRead', 'workspace:waiting-read', [{ kind: 'local' }]],
+  ['workspaceWaitingSave', 'workspace:waiting-save', [{ kind: 'local' }, 'identity', { chat: [], tasks: [] }]],
+  ['sessionChatDraftRead', 'session-chat:draft-read', [{ kind: 'local' }, { taskId: 1, sessionId: 2 }]],
+  ['sessionChatDraftSave', 'session-chat:draft-save', [{ kind: 'local' }, 'identity', { target: { taskId: 1, sessionId: 2 }, draft: { text: 'Draft' } }]],
+
+  ['remoteHosts', 'remote:hosts', []],
+  ['chooseRemoteSshFile', 'remote:choose-file', ['identity']],
+  ['saveRemoteHost', 'remote:save-host', [{ name: 'dev', host: 'dev' }, null]],
+  ['removeRemoteHost', 'remote:remove-host', ['host-id']],
+  ['environmentStatus', 'environment:status', []],
+  ['environmentBackendStatus', 'environment:backend-status', []],
+  ['selectEnvironment', 'environment:select', [{ kind: 'local' }]],
+  ['saveEnvironmentContext', 'environment:context', [{ projectId: null, taskId: null, sessionId: null, draft: '', cursor: null }, { kind: 'local' }]],
+  ['retryRemote', 'remote:retry', []],
+  ['forceRemoteUpdate', 'remote:force-update', ['host-id', '33333333-3333-4333-8333-333333333333']],
+  ['startRemoteWithoutApps', 'remote:start-without-apps', ['host-id']],
+  ['useRemoteDesktopSession', 'remote:use-desktop-session', ['host-id']],
+  ['pauseRemoteRecovery', 'remote:pause', []],
+  ['disconnectRemote', 'remote:disconnect', []],
+  ['answerRemoteChallenge', 'remote:answer', ['challenge-id', null]],
+  ['addRemoteForward', 'remote:add-forward', [{ remotePort: 8000, localPort: 0, label: 'web' }]],
+  ['retryRemoteForward', 'remote:retry-forward', ['forward-id']],
+  ['removeRemoteForward', 'remote:remove-forward', ['forward-id']],
+  ['remoteDiagnostics', 'remote:diagnostics', []],
+];
+module.exports = { calls, methods: [...calls.map(([name]) => name), 'onEnvironmentChanged'] };

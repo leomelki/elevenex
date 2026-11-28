@@ -10,8 +10,12 @@ import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { promisify } from 'util';
-import { buildAugmentedEnv, buildSpawnCommand } from '../config/system-paths.js';
-import { resolveCodexBinary } from './codex-binary.js';
+import {
+  buildAugmentedEnv,
+  buildAugmentedEnvAsync,
+  buildSpawnCommand,
+} from '../config/system-paths.js';
+import { resolveCodexBinaryAsync } from './codex-binary.js';
 import type {
   CodexAuthStatus,
   CodexLoginMode,
@@ -59,9 +63,11 @@ export class CodexAuthService extends EventEmitter {
   }
 
   async getFastStatus(): Promise<CodexAuthStatus> {
-    const authFile = await this.readAuthFile();
-    this.refreshStatusInBackground();
-    return this.buildStatus(this.cachedVersionValue(), authFile);
+    // A cold cache means detection is pending, not that Codex is missing.
+    // readVersion coalesces the first check and caches subsequent reads.
+    const status = await this.getStatus();
+    this.emit('status', status);
+    return status;
   }
 
   refreshStatusInBackground(): void {
@@ -131,10 +137,11 @@ export class CodexAuthService extends EventEmitter {
     if (this.active) {
       await this.killActive();
     }
-    const codexBin = resolveCodexBinary();
+    const env = await buildAugmentedEnvAsync();
+    const codexBin = await resolveCodexBinaryAsync();
     try {
       await execFile(codexBin, ['--version'], {
-        env: buildAugmentedEnv(),
+        env,
         timeout: 5000,
       });
     } catch {
@@ -395,11 +402,6 @@ export class CodexAuthService extends EventEmitter {
     this.refreshStatusInBackground();
   }
 
-  private cachedVersionValue(): string | null {
-    const cached = this.versionCache;
-    return cached && cached.expiresAt > Date.now() ? cached.value : null;
-  }
-
   private async readVersion(): Promise<string | null> {
     const now = Date.now();
     const cached = this.versionCache;
@@ -410,12 +412,13 @@ export class CodexAuthService extends EventEmitter {
       return this.versionInFlight;
     }
     const inflight = (async () => {
-      const codexBin = resolveCodexBinary();
       try {
+        const env = await buildAugmentedEnvAsync();
+        const codexBin = await resolveCodexBinaryAsync();
         const { command, shell } = buildSpawnCommand(codexBin);
         const { stdout } = await execFile(command, ['--version'], {
           encoding: 'utf-8',
-          env: buildAugmentedEnv(),
+          env,
           timeout: 5000,
           shell,
         });
@@ -428,8 +431,8 @@ export class CodexAuthService extends EventEmitter {
     try {
       const value = await inflight;
       // Successful reads cache for an hour; failed reads (binary missing or
-      // PATH not yet warm) cache for only 10s so retries aren't blocked.
-      const ttlMs = value ? 60 * 60 * 1000 : 10 * 1000;
+      // PATH not yet warm) cache for only 3s so retries aren't blocked.
+      const ttlMs = value ? 60 * 60 * 1000 : 3 * 1000;
       this.versionCache = { value, expiresAt: Date.now() + ttlMs };
       return value;
     } finally {

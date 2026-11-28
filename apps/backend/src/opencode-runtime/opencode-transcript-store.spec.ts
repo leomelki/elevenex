@@ -1,4 +1,4 @@
-import type { Message, Part } from '@opencode-ai/sdk/v2/client';
+import type { Message, Part, ToolPart } from '@opencode-ai/sdk/v2/client';
 import { OpenCodeTranscriptStore } from './opencode-transcript-store.js';
 
 const message: Message = {
@@ -18,6 +18,35 @@ const text = (value: string, id = 'p'): Part => ({
 });
 
 describe('OpenCode transcript reconciliation', () => {
+  it('waits for the owning message before publishing text parts that could be prompts', () => {
+    const store = new OpenCodeTranscriptStore();
+    const prompt = text('Check');
+    store.putPart(prompt);
+    expect(store.partItems(prompt)).toEqual([]);
+    store.appendDelta(prompt.id, ' the change.');
+    const [ready] = store.putMessage(message);
+    expect(store.partItems(ready)).toMatchObject([{ id: prompt.id, kind: 'user', content: 'Check the change.' }]);
+    expect(store.putMessage(message)).toEqual([]);
+  });
+
+  it('keeps an active message and its tool receipt through a stale restore', () => {
+    const store = new OpenCodeTranscriptStore();
+    store.putMessage(message);
+    const call = { id: 'tool', callID: 'call', sessionID: 's', messageID: 'm', type: 'tool', tool: 'read' } as const;
+    const running: ToolPart = { ...call, state: { status: 'running', input: {}, time: { start: 1 } } };
+    const done: ToolPart = { ...call, state: { status: 'completed', input: {}, time: { start: 1, end: 2 },
+      output: 'Notes', metadata: {}, title: 'Read' } };
+    store.putPart(text('Read the notes.'));
+    store.putPart(done);
+    store.putPart(text('Still reading', 'new'));
+    store.reconcile([{ info: message, parts: [text('Read'), running] }], store.snapshot(), undefined, new Set([message.id]));
+    expect(store.history().map(row => [row.id, row.content])).toEqual([
+      ['p', 'Read the notes.'], ['tool', undefined], ['tool:result', 'Notes'], ['new', 'Still reading'],
+    ]);
+    store.reconcile([{ info: message, parts: [] }], store.snapshot(), message.id, new Set([message.id]));
+    expect(store.history()).toEqual([]);
+  });
+
   it('refreshes live content and keeps stable native part ordering', () => {
     const store = new OpenCodeTranscriptStore();
     store.putMessage(message);

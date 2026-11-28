@@ -1,0 +1,10 @@
+:host, .window { display: block; height: 100%; }
+ex-app-shell { height: 100%; }
+.machine { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: var(--radius-full); background: var(--glass); box-shadow: var(--shadow-raised); font-weight: 600; }
+.machine span { width: 8px; height: 8px; border-radius: 50%; background: var(--project-ocean); }
+.sidebar { display: flex; flex-direction: column; min-height: 0; }
+.head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 8px; }
+.project { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+.main { display: flex; flex-direction: column; height: 100%; }
+.content { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 12px; padding: 24px; color: var(--ink-muted); font-size: 13px; }
+.actions { display: flex; gap: 8px; }

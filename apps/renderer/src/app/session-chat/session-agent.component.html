@@ -1,0 +1,311 @@
+<ex-modal-layer
+  [open]="open()"
+  [from]="origin()"
+  (closeRequested)="close()"
+  (closed)="closed.emit()"
+>
+  <section
+    class="agent-dialog"
+    role="dialog"
+    aria-modal="true"
+    [attr.aria-labelledby]="titleId"
+    tabindex="-1"
+    [attr.inert]="open() ? null : ''"
+  >
+    <header>
+      <span class="mark" [attr.data-tone]="state().tone" aria-hidden="true">
+        @if (provider(); as provider) {
+          <ex-agent-mark [harness]="provider" mark="A" appearance="tinted" />
+        } @else { <ex-icon name="subtask" [size]="16" /> }
+      </span>
+      <div class="heading">
+        <h2 [id]="titleId" tabindex="-1" cdkFocusInitial>
+          {{ heading() }}
+          @if (identity()) {
+            <span class="role">{{ identity() }}</span>
+          }
+        </h2>
+        <div class="facts">
+          @if (page(); as page) {
+            <ex-status-badge [status]="state().tone" [label]="state().label" />
+            @if (agentRole()) {
+              <span class="fact">{{ agentRole() }}</span>
+            }
+            @if (page.model) {
+              <span class="fact">{{ page.model }}</span>
+            }
+            @if (usage()) {
+              <span class="fact">{{ usage() }}</span>
+            }
+            @if (page.context; as context) {
+              <span class="fact context">
+                <ex-context-meter
+                  [used]="context.percentage / 100"
+                  [tokens]="context.tokens + ' of ' + context.limit"
+                />
+                context
+              </span>
+            }
+          } @else {
+            <span class="fact">Agent</span>
+          }
+        </div>
+      </div>
+      <div class="head-actions">
+        <ex-icon-button
+          icon="refresh"
+          size="sm"
+          [label]="busy() ? 'Loading transcript' : 'Refresh transcript'"
+          [disabled]="busy() || unreachable()"
+          (pressed)="refresh()"
+        />
+        <ex-icon-button
+          icon="x"
+          size="sm"
+          label="Close agent details"
+          (pressed)="close()"
+        />
+      </div>
+    </header>
+
+    @if (result(); as result) {
+      <section class="pinned-result" aria-label="Agent result">
+        <div class="result-head">
+          <ex-status-glyph [status]="state().tone" [size]="14" />
+          <strong>Result</strong>
+          <button exButton size="sm" variant="ghost" type="button" class="result-copy"
+            (click)="copyRequested.emit(result.text)"><ex-icon name="copy" [size]="12" />Copy</button>
+        </div>
+        @if (resultLong() && !resultOpen()) { <p class="result-preview">{{ result.text }}</p> }
+        <ex-fold [open]="!resultLong() || resultOpen()">
+          <div class="result-body" [id]="titleId + '-result'">
+            @if (!resultLong() || resultOpen()) {
+              <ex-markdown [source]="result.text" [copiedCode]="copiedCode()"
+                (copyCode)="copyRequested.emit($event)" (openLink)="linkRequested.emit($event)"
+                (openFile)="fileLinkRequested.emit($event)" (openPage)="notice.set(pageNotice)" />
+            }
+          </div>
+        </ex-fold>
+        @if (resultLong()) {
+          <button exButton variant="ghost" size="sm" type="button" class="result-more"
+            [attr.aria-expanded]="resultOpen()" [attr.aria-controls]="titleId + '-result'"
+            (click)="resultOpen.set(!resultOpen())">{{ resultOpen() ? 'Show less' : 'Show result' }}</button>
+        }
+      </section>
+    } @else if (work()?.detail; as detail) {
+      <p class="banner" role="status">{{ detail }}</p>
+    }
+
+    @if (page()?.prompt; as prompt) {
+      <div class="assignment">
+        <button
+          type="button"
+          class="assignment-head"
+          [attr.aria-expanded]="assignmentOpen()"
+          [attr.aria-controls]="titleId + '-assignment'"
+          (click)="toggleAssignment()"
+        >
+          <span class="overline">Assignment</span>
+          @if (!assignmentOpen()) {
+            <span class="assignment-preview">{{ prompt }}</span>
+          }
+          <span class="grow"></span>
+          <ex-icon
+            [name]="assignmentOpen() ? 'chevron-down' : 'chevron-right'"
+            [size]="12"
+          />
+        </button>
+        <ex-fold [open]="assignmentOpen()">
+          <p class="assignment-text" [id]="titleId + '-assignment'">{{ prompt }}</p>
+        </ex-fold>
+      </div>
+    }
+
+    @if (status() === "waiting") {
+      <p class="banner attention" role="status">
+        <ex-icon name="hand" [size]="14" />
+        This agent is waiting on a decision. Answer it in the main conversation.
+      </p>
+    }
+    @if (unreachable()) {
+      <p class="banner" role="status">
+        <ex-icon name="wifi" [size]="14" />
+        The machine is disconnected. Loaded messages remain available.
+      </p>
+    }
+    @if (error()) {
+      <p class="banner danger" role="alert">
+        <ex-icon name="x" [size]="14" />
+        <span class="grow">{{ error() }}</span>
+        <button
+          exButton
+          variant="secondary"
+          size="sm"
+          [disabled]="busy() || unreachable()"
+          (click)="refresh()"
+        >
+          Retry
+        </button>
+      </p>
+    }
+    @if (notice()) {
+      <p class="banner" role="status">
+        <span class="grow">{{ notice() }}</span>
+        <ex-icon-button
+          icon="x"
+          size="sm"
+          label="Dismiss notice"
+          (pressed)="notice.set('')"
+        />
+      </p>
+    }
+
+    <ex-chat-scroll
+      #transcript
+      class="transcript"
+      [reminder]="false"
+      [historyBefore]="!!page()?.before && !unreachable()"
+      [historyAfter]="hasNewer() && !unreachable()"
+      [historyLoading]="busy()"
+      [historyError]="error()"
+      [historyRevision]="windowRevision()"
+      (historyRequested)="$event.direction === 'before' ? earlier() : later()"
+      (historyCancelled)="cancelHistory()"
+      (latestRequested)="latest()"
+    >
+      @if (busy() && !page()) {
+        <ex-skeleton variant="rows" [count]="5" />
+      }
+      @if (page(); as page) {
+        @if (!rows().length) {
+          <div class="empty" role="status">
+            <ex-status-glyph
+              [status]="
+                page.availability === 'starting'
+                  ? 'running'
+                  : page.availability === 'error'
+                    ? 'failed'
+                    : 'queued'
+              "
+              [size]="20"
+            />
+            <h3>
+              {{
+                page.availability === "starting"
+                  ? "Waiting for the first message"
+                  : page.availability === "error"
+                    ? "Transcript could not be loaded"
+                    : "No retained messages"
+              }}
+            </h3>
+            <p>{{ page.message || "Refresh to check for new messages." }}</p>
+          </div>
+        }
+        <ol class="entries">
+          @for (row of rows(); track row.item.id) {
+            <li [attr.data-kind]="row.item.kind" [attr.data-chat-anchor]="row.item.id">
+              @switch (row.item.kind) {
+                @case ("tool_use") {
+                  <ex-tool-step
+                    [icon]="row.icon"
+                    [verb]="row.verb"
+                    [detail]="row.tool!.summary"
+                    [meta]="row.tool!.meta || ''"
+                    [status]="row.status"
+                    [presentation]="row.tool!"
+                    [copiedCode]="copiedCode()"
+                    (copyCode)="copyRequested.emit($event)"
+                    [output]="row.item.input || ''"
+                  />
+                }
+                @case ("tool_result") {
+                  <ex-tool-step
+                    icon="plug"
+                    verb="Result"
+                    [detail]="row.item.toolName || 'Tool'"
+                    [status]="row.status"
+                    [presentation]="row.tool!"
+                    [copiedCode]="copiedCode()"
+                    (copyCode)="copyRequested.emit($event)"
+                    [output]="row.item.text"
+                  />
+                }
+                @case ("thinking") {
+                  <div class="reasoning">
+                    <button
+                      type="button"
+                      [attr.aria-expanded]="reasoningOpen().has(row.item.id)"
+                      (click)="toggleReasoning(row.item.id)"
+                    >
+                      <ex-icon name="bulb" [size]="14" />
+                      <span>Reasoning</span>
+                      <ex-icon
+                        [name]="
+                          reasoningOpen().has(row.item.id)
+                            ? 'chevron-down'
+                            : 'chevron-right'
+                        "
+                        [size]="12"
+                      />
+                    </button>
+                    <ex-fold [open]="reasoningOpen().has(row.item.id)">
+                      <p>{{ row.item.text }}</p>
+                    </ex-fold>
+                  </div>
+                }
+                @case ("error") {
+                  <div class="callout danger" role="note">
+                    <ex-icon name="x" [size]="14" />
+                    <p>{{ row.item.text }}</p>
+                  </div>
+                }
+                @case ("system") {
+                  <p class="system">{{ row.item.text }}</p>
+                }
+                @case ("user") {
+                  <div class="from-parent">
+                    <span class="overline">Message from the main agent</span>
+                    <ex-markdown
+                      [source]="row.item.text"
+                      [copiedCode]="copiedCode()"
+                      (copyCode)="copyRequested.emit($event)"
+                      (openLink)="linkRequested.emit($event)"
+                      (openFile)="fileLinkRequested.emit($event)"
+                      (openPage)="notice.set(pageNotice)"
+                    />
+                  </div>
+                }
+                @default {
+                  <ex-markdown
+                    class="reply"
+                    [source]="row.item.text"
+                    [copiedCode]="copiedCode()"
+                    (copyCode)="copyRequested.emit($event)"
+                    (openLink)="linkRequested.emit($event)"
+                    (openFile)="fileLinkRequested.emit($event)"
+                    (openPage)="notice.set(pageNotice)"
+                  />
+                }
+              }
+              @if (row.item.truncated) {
+                <p class="shortened">
+                  Shortened to keep this page bounded.
+                </p>
+              }
+            </li>
+          }
+        </ol>
+      }
+    </ex-chat-scroll>
+
+    <footer>
+      <span class="snapshot" role="status">
+        @if (busy()) {
+          Loading…
+        } @else if (loadedAt()) {
+          Loaded {{ loadedAt() }}
+        }
+      </span>
+    </footer>
+  </section>
+</ex-modal-layer>

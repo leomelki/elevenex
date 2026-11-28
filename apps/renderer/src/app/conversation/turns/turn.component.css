@@ -1,0 +1,324 @@
+:host {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  max-width: var(--chat-max);
+  outline: none;
+}
+:host:focus-visible {
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring);
+}
+/* ReplyMark owns the tile; the turn owns its entry and live ring. */
+:host.live .mark {
+  animation: breathe calc(var(--dur-deliberate) * 4) var(--ease-in-out) infinite;
+}
+:host.arriving {
+  /* Follow the 380ms bubble flight by one small beat; reserve layout from frame one. */
+  animation: turn-arrive var(--dur-glide) var(--ease-glide) var(--dur-instant) both;
+}
+:host.arriving .mark {
+  animation: turn-mark-arrive var(--dur-glide) var(--ease-spring) var(--dur-instant) both;
+}
+:host.arriving.live .mark {
+  animation:
+    turn-mark-arrive var(--dur-glide) var(--ease-spring) var(--dur-instant) both,
+    breathe calc(var(--dur-deliberate) * 4) var(--ease-in-out) infinite;
+}
+@keyframes turn-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-3));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes turn-mark-arrive {
+  from { transform: scale(0.86); }
+  to { transform: scale(1); }
+}
+@keyframes turn-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  container-type: inline-size;
+}
+ex-fold.work-region {
+  /* Give the answer's 36px handoff a full, interruptible settling curve. */
+  transition-duration: var(--dur-slow);
+}
+.preceding-work {
+  /* Spacing inside the fold collapses with its content. */
+  padding-bottom: var(--space-2);
+}
+.following-work,
+footer {
+  padding-top: var(--space-2);
+}
+.work-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding-bottom: var(--space-2);
+}
+.work {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-xs);
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: var(--text-caption-size);
+  cursor: pointer;
+}
+.work-label {
+  flex: none;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--ink);
+}
+.work-time {
+  /* Nested in the label so verb and time read and wrap as one phrase. */
+  font-weight: 400;
+  color: var(--ink-muted);
+  /* Ticking digits keep their width so the chevron and Stop never shift. */
+  font-variant-numeric: tabular-nums;
+}
+.work:hover .work-label {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.work:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.facts {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  gap: var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+.facts.clipped {
+  mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+}
+.work-item {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  opacity: 0;
+  transform: translateX(calc(-1 * var(--space-1)));
+}
+:host:hover .work-item,
+:host:focus-within .work-item,
+:host.expanded .work-item {
+  opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .work-item {
+    /* Leave together on a shorter curve; the entry spring must not bounce out. */
+    transition:
+      opacity var(--dur-fast) var(--ease-in),
+      transform var(--dur-fast) var(--ease-in);
+  }
+  :host:hover .work-item,
+  :host:focus-within .work-item,
+  :host.expanded .work-item {
+    transition:
+      opacity var(--dur-fast) var(--ease-out),
+      transform var(--dur-base) var(--ease-spring);
+    transition-delay: calc(var(--fact-index) * 35ms);
+  }
+}
+.work-item.failure {
+  opacity: 1;
+  transform: none;
+}
+.fact {
+  gap: var(--space-1);
+}
+.fact.ok ex-icon {
+  color: var(--accent);
+}
+.diff {
+  display: inline-flex;
+  gap: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-meta-size);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.add {
+  color: var(--diff-add);
+}
+.del {
+  color: var(--diff-del);
+}
+.chevron {
+  flex: none;
+  margin-left: calc(-1 * var(--space-1));
+}
+@container (max-width: 560px) {
+  .work:has(.fact:nth-child(3)) {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: var(--space-2);
+    row-gap: var(--space-1);
+    padding-block: var(--space-1);
+  }
+  .work:has(.fact:nth-child(3)) .facts {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    mask-image: none;
+  }
+  .work:has(.fact:nth-child(3)) .chevron {
+    grid-column: 3;
+    grid-row: 1;
+    margin: 0;
+  }
+}
+.chevron ex-icon {
+  transition: transform var(--dur-glide) var(--ease-glide);
+}
+:host.expanded .chevron ex-icon {
+  transform: rotate(90deg);
+}
+/* Opened activity still reading after an instant-feeling interval. The heading
+   pulses in place, so a fast read never flashes and nothing shifts. */
+:host.pending .work-label,
+:host.pending .chevron {
+  animation: work-pending calc(2 * var(--dur-deliberate)) var(--ease-in-out) infinite alternate;
+}
+@keyframes work-pending {
+  to {
+    opacity: 0.45;
+  }
+}
+.failure,
+.failed {
+  color: var(--danger);
+}
+.answer {
+  min-width: 0;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+}
+footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-height: 26px;
+}
+/* The agent chips take a full row; without wrapping they squeezed the changed files into a sliver beside them. */
+footer ex-outcome-bar {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+footer ex-turn-acts {
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+:host:hover footer ex-turn-acts,
+:host:focus-within footer ex-turn-acts {
+  opacity: 1;
+}
+.error {
+  display: flex;
+  margin-top: var(--space-2);
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font-size: var(--text-ui-size);
+}
+.error span {
+  flex: 1;
+}
+.error.failed {
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+@keyframes breathe {
+  50% {
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 40%, transparent);
+  }
+}
+@media (hover: none) {
+  footer ex-turn-acts,
+  .work-item {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :host.arriving {
+    animation: turn-fade 160ms var(--ease-out) both;
+    /* This opacity-only fade is the exception to the global reduced-motion reset. */
+    animation-duration: 160ms !important;
+  }
+  :host.live .mark,
+  :host.arriving .mark,
+  :host.arriving.live .mark {
+    animation: none;
+  }
+  .chevron ex-icon,
+  footer ex-turn-acts {
+    transition: none;
+  }
+  :host.pending .work-label,
+  :host.pending .chevron {
+    animation: none;
+    opacity: 0.6;
+  }
+  .work-item {
+    transform: none;
+  }
+}
+
+.reach-line { color: var(--ink-muted); font-size: var(--text-caption-size); line-height: var(--text-ui-line); padding: var(--space-2) 0; }
+.reach-line b { font-weight: 500; color: var(--attention); }
+
+:host(.live) .mark { animation-play-state: var(--ex-live-play-state, running); }
+:host(.live.arriving) .mark { animation-play-state: running, var(--ex-live-play-state, running); }
+
+.agent-outcomes { display: flex; flex-wrap: wrap; gap: var(--space-1); flex: 1 0 100%; min-width: 0; }
+.agent-chip {
+  display: inline-flex; align-items: center; gap: var(--space-1); max-width: 100%; min-width: 0;
+  min-height: 24px; padding-inline: var(--space-2); color: var(--ink-muted);
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  font-size: var(--text-caption-size);
+}
+.agent-chip span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.agent-chip ex-agent-mark { --agent-mark-size: 14px; }
+.handoff {
+  display: flex; align-items: center; gap: var(--space-2); min-width: 0;
+  margin-block: var(--space-2); padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  color: var(--ink-muted); font-size: var(--text-caption-size);
+  background: var(--surface-sunken); border-radius: var(--radius-md);
+}
+.handoff-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.handoff-text strong { color: var(--ink); font-weight: 600; }
+.handoff-text time { margin-inline-start: var(--space-2); }
+.handoff button { flex: none; }

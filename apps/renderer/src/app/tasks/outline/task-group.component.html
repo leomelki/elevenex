@@ -1,0 +1,155 @@
+<article exSessionNestingDrag [dragSessions]="task().sessions" [dragTaskId]="task().id" [dragEnabled]="allowNesting() && !archiveDisabled()" (sessionDropped)="moveSessionRequested.emit({taskId:task().id,sessionId:$event.sessionId,parentSessionId:$event.parentSessionId})" [class.fresh]="task().fresh" [class.current]="current()" [attr.data-task-id]="task().id">
+  <header data-session-task-header>
+    <button
+      class="toggle"
+      type="button"
+      [exTooltip]="headerTooltip()"
+      [attr.aria-expanded]="!collapsed()"
+      (click)="toggle(); !task().archive && task().sessions.length === 0 && emptyTaskRequested.emit(task().id)"
+    >
+      <ex-icon
+        class="chevron"
+        name="chevron-down"
+        [size]="12"
+        [class.closed]="collapsed()"
+      />
+      @if (showProject() && task().project; as project) {
+        <ex-project-mark
+          [name]="project.name"
+          [logo]="project.logo"
+          [initials]="project.initials"
+          [emoji]="project.emoji"
+          [icon]="project.icon"
+          [hue]="project.hue ?? 'steel'"
+          [size]="18"
+          [decorative]="true"
+        />
+      }
+      <span class="task-name">
+        <span class="title">{{ task().title }}</span>
+        @if (task().temporary) {
+          <span class="temporary" role="img" aria-label="Temporary task"><ex-icon name="agent" [size]="14" /></span>
+        }
+      </span>
+      @if (task().repo; as repo) {
+        <ex-repo-tag [repo]="repo" />
+      }
+    </button>
+    @if (showLink() && leadLink(); as link) {
+      <ex-link-chip
+        [kind]="link.kind"
+        [label]="link.label"
+        [state]="link.state"
+        [compact]="true"
+      />
+    }
+    <ex-task-signal
+      [attention]="attention()"
+      [running]="running()"
+      [total]="everyone().length"
+      [collapsed]="collapsed()"
+      [workspace]="task().workspace"
+    />
+    @if (allowAdd() && task().canAddSession !== false) {
+      <ex-icon-button
+        class="add"
+        icon="plus"
+        label="New session in this task"
+        size="sm"
+        (pressed)="addSession.emit(task().id)"
+      />
+    }
+  </header>
+  <ex-fold [open]="!collapsed()"
+    ><div class="tree" [exFlip]="motionOrder()" [exFlipReorderOnly]="true">
+      <ex-working-sessions [taskId]="task().id" [sessions]="working()" [selected]="selected()" [filtered]="!!filter()" [moreAvailable]="!!task().moreSessions" [loadingOlder]="!!task().loadingOlderSessions"
+        (moreRequested)="moreSessionsRequested.emit($event)"
+        [allowNesting]="allowNesting() && !archiveDisabled()" (moveRequested)="moveSessionRequested.emit({taskId:task().id,sessionId:$event.sessionId,parentSessionId:$event.parentSessionId})" (childrenRequested)="sessionChildrenRequested.emit({taskId:task().id,sessionId:$event.sessionId,earlier:$event.earlier})" [cap]="cap()" [capStep]="capStep()" [allowArchive]="allowArchive()" [(disclosure)]="sessionDisclosure"
+        (activated)="selectSession.emit($event)" (archiveRequested)="archiveRequested.emit($event)" (deleteRequested)="deleteRequested.emit($event)" />
+      @for (entry of presence.rows(); track entry.key) {
+        @let row = entry.value;
+        <ex-fold
+          [attr.data-flip]="entry.key"
+          [class.leaving]="!entry.present"
+          [class.entering]="entry.entering"
+          [open]="entry.present && !entry.entering && row.visible"
+          (transitionend)="presence.settled(entry.key, $event)"
+        >
+          @if (row.kind === "subtask") {
+            <ex-subtask-row
+              [subtask]="row.subtask"
+              [allowArchive]="allowArchive()"
+              (archiveRequested)="archiveRequested.emit($event)" (deleteRequested)="deleteRequested.emit($event)"
+              [depth]="row.depth"
+              [path]="row.path"
+              [selected]="selected()"
+              [reveal]="reveal()"
+              [filter]="filter()"
+              [lit]="litSubtasks().has(row.subtask.id)"
+              [tip]="tipSubtask() === row.subtask.id"
+              [allowAdd]="allowAddSubtask()"
+              (selectSession)="selectSession.emit($event)"
+              (addSession)="addSubtaskSession.emit($event)"
+              (pathHover)="hoverSubtask($event)"
+            />
+          } @else if (row.kind === "more") {
+            <button
+              type="button"
+              class="outline-action"
+              (click)="moreSubtasks.set(true)"
+            >
+              <ex-subtask-glyph /><ex-ticker [value]="row.count" /> more
+              sub-tasks
+            </button>
+          } @else if (row.kind === "merged") {
+            <div
+              class="merged"
+              [title]="'Merged ' + (row.subtask.branch || row.subtask.title)"
+            >
+              <ex-icon name="merged" [size]="12" /><span class="merged-title">{{
+                row.subtask.title
+              }}</span>
+              @if (row.subtask.diff; as diff) {
+                <span class="diff">
+                  @if (diff.add) {
+                    <span class="diff-add"
+                      >+<ex-ticker [value]="diff.add"
+                    /></span>
+                  }
+                  @if (diff.del) {
+                    <span class="diff-del"
+                      >−<ex-ticker [value]="diff.del"
+                    /></span>
+                  }
+                </span>
+              }
+            </div>
+          } @else if (row.kind === "empty") {
+            <button class="outline-action empty-session" type="button" (click)="addSession.emit(task().id)"><ex-icon name="plus" [size]="13" />New session</button>
+          } @else {
+            <div class="merged-summary">
+              <button
+                class="outline-action"
+                type="button"
+                [attr.aria-expanded]="mergedOpen()"
+                (click)="mergedOpen.set(!mergedOpen())"
+              >
+                <ex-icon
+                  class="chevron"
+                  name="chevron-down"
+                  [size]="12"
+                  [class.closed]="!mergedOpen()"
+                />
+                <ex-ticker [value]="row.count" /> merged
+              </button>
+            </div>
+          }
+        </ex-fold>
+      }
+      @if (!filter() && task().archive; as archive) {
+        <ex-archived-sessions [archive]="archive" [selected]="selected()" [disabled]="archiveDisabled()"
+          (requested)="archivedSessionsRequested.emit($event)" (selectSession)="selectSession.emit($event)" (restoreRequested)="restoreRequested.emit($event)" />
+      }
+    </div></ex-fold
+  >
+</article>

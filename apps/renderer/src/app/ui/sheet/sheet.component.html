@@ -1,0 +1,38 @@
+<ex-modal-layer [open]="open()" align="top" (closeRequested)="closeRequested.emit()">
+  <div class="sheet" [class.resizing]="resizing()" role="dialog" aria-modal="true" [attr.aria-label]="label()">
+    <nav class="nav" aria-label="Sections">
+      <ng-content select="[sheetNavHead]" />
+      @if (items().length) {
+        <div #list class="list">
+          @if (listThumb(); as thumb) { <span class="thumb" aria-hidden="true" [style.transform]="'translateY(' + thumb.top + 'px)'" [style.width.px]="thumb.width" [style.height.px]="thumb.height"></span> }
+          @for (item of items(); track item.id) {
+            <button type="button" class="nav-item" [attr.aria-current]="active() === item.id ? 'true' : null" (click)="go(item.id)">
+              @if (item.icon) { <ex-icon [name]="item.icon" [size]="14" /> }
+              <span class="grow">{{ item.label }}</span>
+              @if (item.count !== undefined) { <span class="count">{{ item.count }}</span> }
+            </button>
+          }
+        </div>
+      } @else { <ng-content select="[sheetNav]" /> }
+    </nav>
+    <div class="body">
+      <div class="top"><span class="grow"></span><button type="button" class="close" aria-label="Close (Esc)" (click)="closeRequested.emit()"><ex-icon name="x" [size]="16" /></button></div>
+      <div #scroll class="scroll" tabindex="-1" (scroll)="spy()" (wheel)="unlock()" (touchstart)="unlock()" (mousedown)="unlock()" (keydown)="unlock()">
+        <ng-content select="[sheetHero]" />
+        @if (items().length) {
+          <nav #tabs class="tabs" aria-label="Sections">
+            @if (tabThumb(); as thumb) { <span class="thumb" aria-hidden="true" [style.transform]="'translateX(' + thumb.left + 'px)'" [style.width.px]="thumb.width"></span> }
+            @for (item of items(); track item.id; let index = $index) {
+              <button type="button" class="tab" [attr.aria-current]="active() === item.id ? 'true' : null" (keydown)="tabKey($event, index)" (click)="go(item.id)">{{ item.label }}</button>
+            }
+          </nav>
+          @for (item of items(); track item.id) {
+            <section class="section" [attr.data-sheet-sec]="item.id" [attr.aria-label]="item.label">
+              <h2>{{ item.label }}</h2><ng-container [ngTemplateOutlet]="item.content" />
+            </section>
+          }
+        } @else { <ng-content /> }
+      </div>
+    </div>
+  </div>
+</ex-modal-layer>

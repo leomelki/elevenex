@@ -17,7 +17,7 @@ export function openCodePartItems(
   message?: Message,
 ): ClaudeTranscriptItem[] {
   const timestamp = new Date(
-    message?.time.created ??
+    (part.type === 'tool' && 'time' in part.state ? part.state.time.start : undefined) ?? message?.time.created ??
       ('time' in part && part.time && 'start' in part.time
         ? part.time.start
         : undefined) ??
@@ -31,6 +31,16 @@ export function openCodePartItems(
   };
   if (part.type === 'text' || part.type === 'reasoning') {
     if (part.type === 'text' && part.ignored) return [];
+    // OpenCode delivers background results as synthetic user parts in a new
+    // native turn. Keep them in the originating work timeline in the desktop.
+    if (part.type === 'text' && part.synthetic && message?.role === 'user') {
+      const task = openCodeTaskOutput(part.text);
+      if (task && task.status !== 'running') return [{
+        ...base, kind: 'system', nativeTask: task,
+        content: task.detail || (task.status === 'error' ? 'Agent failed.' : 'Agent finished.'),
+        isSynthetic: true, isError: task.status === 'error',
+      }];
+    }
     return [
       {
         ...base,
@@ -65,6 +75,7 @@ export function openCodePartItems(
   }
   if (part.type === 'tool') {
     const canonical = canonicalizeAgentTool(part.tool, part.state.input);
+    const nativeTask = part.tool === 'task' ? openCodeTask(part.state) : undefined;
     const tool = {
       ...base,
       ...canonical,
@@ -72,6 +83,7 @@ export function openCodePartItems(
       toolName: canonical.toolDisplayName,
       providerToolName: part.tool,
       providerToolInput: part.state.input,
+      ...(nativeTask ? { nativeTask } : {}),
     };
     const items: ClaudeTranscriptItem[] = [{ ...tool, kind: 'tool_use' }];
     if (part.state.status === 'completed' || part.state.status === 'error') {
@@ -82,6 +94,7 @@ export function openCodePartItems(
         content:
           part.state.status === 'error' ? part.state.error : part.state.output,
         isError: part.state.status === 'error',
+        timestamp: Number.isFinite(part.state.time.end) ? new Date(part.state.time.end).toISOString() : timestamp,
       });
     }
     return items;
@@ -95,6 +108,36 @@ export function openCodePartItems(
       },
     ];
   return [];
+}
+
+function openCodeTaskOutput(output: string): ClaudeTranscriptItem['nativeTask'] {
+  const tag = /^<task id="(ses_[\w-]{1,252})" state="(running|completed|error)">\r?\n/.exec(output);
+  if (!tag) return;
+  const status = tag[2] === 'error' ? 'error' : tag[2] === 'completed' ? 'completed' : 'running';
+  const detail = status === 'running' ? undefined :
+    /<task_(?:result|error)>\s*([\s\S]*?)\s*<\/task_(?:result|error)>/.exec(output)?.[1];
+  return { agentId: tag[1], provider: 'opencode', status, detail: detail?.slice(0, 720) };
+}
+
+function openCodeTask(state: Extract<Part, { type: 'tool' }>['state']): ClaudeTranscriptItem['nativeTask'] {
+  const metadata = 'metadata' in state ? state.metadata : undefined;
+  const output = state.status === 'completed' ? state.output : state.status === 'error' ? state.error : '';
+  const notification = openCodeTaskOutput(output);
+  const legacy = /^task_id:\s*(ses_[\w-]+)/.exec(output);
+  const agentId = metadata?.sessionId ?? metadata?.sessionID ?? notification?.agentId ?? legacy?.[1] ?? state.input.task_id;
+  if (typeof agentId !== 'string' || !/^ses_[\w-]+$/.test(agentId) || agentId.length > 256) return;
+  const model = metadata?.model;
+  const providerID: unknown = model && typeof model === 'object' && 'providerID' in model ? model.providerID : undefined;
+  const modelID: unknown = model && typeof model === 'object' && 'modelID' in model ? model.modelID : undefined;
+  const status = state.status === 'error' ? 'error' : notification?.status ??
+    (state.status !== 'completed' || metadata?.background === true ? 'running' : 'completed');
+  const detail = status !== 'running' && output
+    ? (notification?.detail ?? output.replace(/^task_id:[^\n]*\n+/, '')).slice(0, 720)
+    : undefined;
+  return {
+    agentId, provider: 'opencode', status, detail,
+    ...(typeof providerID === 'string' && typeof modelID === 'string' ? { model: providerID + '/' + modelID } : {}),
+  };
 }
 
 export function openCodePermission(

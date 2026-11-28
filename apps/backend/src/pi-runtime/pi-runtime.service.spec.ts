@@ -8,10 +8,12 @@ import { PiRuntimeService } from './pi-runtime.service.js';
 import { PiSessionRuntime } from './pi-session-runtime.js';
 import type { PiSessionRuntimeEvent } from './pi-runtime.types.js';
 import { buildAugmentedEnvAsync } from '../config/system-paths.js';
+import type { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 
 jest.mock('../session-title/session-title.service.js', () => ({
   SessionTitleService: jest.fn(),
 }));
+jest.mock('../sessions/sessions.service.js', () => ({ SessionsService: class SessionsService {} }));
 
 jest.mock('child_process', () => ({
   execFile: jest.fn(),
@@ -21,6 +23,7 @@ jest.mock('child_process', () => ({
 jest.mock('../config/system-paths.js', () => ({
   buildAugmentedEnvAsync: jest.fn(async () => ({ PATH: '/mock/bin' })),
   findBinary: jest.fn(() => null),
+  findBinaryAsync: jest.fn(async () => null),
   buildSpawnCommand: jest.fn((command: string) => ({ command, shell: false })),
 }));
 
@@ -81,7 +84,11 @@ function emitPiEvent(
 
 function createPiProcess(
   sessionFile: string,
-  options?: { entries?: Record<string, unknown>[] },
+  options?: {
+    entries?: Record<string, unknown>[];
+    holdPrompts?: boolean;
+    onSteer?: () => void;
+  },
 ): MockPiProcess {
   const child = new EventEmitter() as MockPiProcess;
   child.stdin = new MockWritable();
@@ -109,7 +116,7 @@ function createPiProcess(
       );
   });
   child.stdin.onWrite((chunk) => {
-    const command = JSON.parse(chunk.trim()) as { id: string; type: string };
+    const command = JSON.parse(chunk.trim()) as { id: string; type: string; streamingBehavior?: string };
     if (command.type === 'get_state') {
       child.stdout.emit(
         'data',
@@ -159,6 +166,7 @@ function createPiProcess(
       return;
     }
     if (command.type === 'prompt') {
+      if (command.streamingBehavior === 'steer') options?.onSteer?.();
       child.stdout.emit(
         'data',
         Buffer.from(
@@ -170,7 +178,7 @@ function createPiProcess(
           }) + '\n',
         ),
       );
-      child.stdout.emit('data', Buffer.from('{"type":"agent_end"}\n'));
+      if (!options?.holdPrompts) child.stdout.emit('data', Buffer.from('{"type":"agent_end"}\n'));
       return;
     }
     child.stdout.emit(
@@ -192,6 +200,7 @@ function createService(options?: {
   idleMs?: string;
   idleCap?: string;
   piSessionPath?: string;
+  turnChanges?: Pick<TurnChangesService, 'begin' | 'finish' | 'cancelSession'>;
 }) {
   if (options?.idleMs) process.env.PI_RUNTIME_IDLE_MS = options.idleMs;
   if (options?.idleCap) process.env.PI_RUNTIME_IDLE_CAP = options.idleCap;
@@ -203,7 +212,11 @@ function createService(options?: {
       piSessionPath,
     })),
     updateStatus: jest.fn(async () => undefined),
+    markCompletionUnreviewed: jest.fn(async () => undefined),
     updatePiSessionPath: jest.fn(async (_sessionId: number, path: string) => {
+      piSessionPath = path;
+    }),
+    replaceEditedConversation: jest.fn((_id: number, _provider: string, _previous: string, path: string, _before: number | string | undefined) => {
       piSessionPath = path;
     }),
   };
@@ -237,6 +250,7 @@ function createService(options?: {
         }),
       } as never,
       tokens as never,
+      options?.turnChanges as never,
     ),
     sessions,
     tokens,
@@ -244,6 +258,161 @@ function createService(options?: {
 }
 
 describe('PiRuntimeService lifecycle', () => {
+  it('applies the saved delegation model and effort before delivering the first prompt', async () => {
+    const { service, sessions } = createService();
+    const selection = {
+      ...await sessions.findOne(1),
+      agentSelection: { provider: 'pi', model: 'anthropic/claude-sonnet', reasoningEffort: 'high' },
+    };
+    sessions.findOne.mockResolvedValue(selection);
+    const child = createPiProcess('/tmp/pi-delegated-selection.jsonl');
+    mockSpawn.mockReturnValue(child as never);
+    try {
+      const receipt = jest.fn();
+      await service.submitPrompt(1, 'Review', undefined, undefined, {
+        waitForCompletion: false, onAccepted: receipt,
+      });
+      expect(receipt).toHaveBeenCalledWith('running');
+      expect(child.stdin.writes.map(line => JSON.parse(line)).filter(command =>
+        ['set_model', 'set_thinking_level', 'prompt'].includes(command.type),
+      )).toMatchObject([
+        { type: 'set_model', provider: 'anthropic', modelId: 'claude-sonnet' },
+        { type: 'set_thinking_level', level: 'high' },
+        { type: 'prompt', message: 'Review' },
+      ]);
+    } finally { await service.onModuleDestroy(); }
+  });
+
+  it('passes the socket-mode MCP endpoint to the Pi extension environment', async () => {
+    const environment = jest.replaceProperty(process, 'env', {
+      ...process.env,
+      ELEVENEX_DESKTOP_SOCKET: '/private/backend.sock',
+      ELEVENEX_MCP_URL: 'http://127.0.0.1:43210/api/mcp',
+    });
+    const { service } = createService();
+    mockSpawn.mockReturnValue(
+      createPiProcess('/tmp/pi-socket-mcp.jsonl') as never,
+    );
+    try {
+      await service.submitPrompt(1, 'Hello');
+      expect(mockBuildAugmentedEnv).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ELEVENEX_MCP_URL: 'http://127.0.0.1:43210/api/mcp',
+          ELEVENEX_AGENT_TOKEN: 'evx_pi_test',
+        }),
+        '/repo/session-1',
+      );
+    } finally {
+      await service.onModuleDestroy();
+      environment.restore();
+    }
+  });
+
+  it('releases a completed run when final evidence fails, allowing the next explicit prompt', async () => {
+    const changes = { begin: jest.fn(async () => undefined), finish: jest.fn(async () => undefined), cancelSession: jest.fn() };
+    changes.finish.mockRejectedValueOnce(new Error('Cannot save final evidence'));
+    const { service, sessions } = createService({ turnChanges: changes });
+    const child = createPiProcess('/tmp/pi-final-evidence-failure.jsonl');
+    mockSpawn.mockReturnValue(child as never);
+    try {
+      await expect(service.submitPrompt(1, 'First turn')).rejects.toThrow('Cannot save final evidence');
+      expect(sessions.markCompletionUnreviewed).not.toHaveBeenCalled();
+      await service.submitPrompt(1, 'Second explicit turn');
+      expect(child.stdin.writes.filter(line => JSON.parse(line).type === 'prompt')).toHaveLength(2);
+      expect(sessions.markCompletionUnreviewed).toHaveBeenCalledTimes(1);
+    } finally { await service.onModuleDestroy(); }
+  });
+  it('persists one unseen completion when a real prompt finishes', async () => {
+    const { service, sessions } = createService();
+    mockSpawn.mockReturnValue(createPiProcess('/tmp/pi-completion.jsonl') as never);
+    try {
+      await service.submitPrompt(1, 'Finish a reply');
+      expect(sessions.markCompletionUnreviewed).toHaveBeenCalledWith(1, 'completed');
+      await service.getRuntimeState(1);
+      expect(sessions.markCompletionUnreviewed).toHaveBeenCalledTimes(1);
+    } finally { await service.onModuleDestroy(); }
+  });
+  it('does not turn marker-write failures into failed or repeated agent work', async () => {
+    const { service, sessions } = createService();
+    sessions.markCompletionUnreviewed.mockRejectedValueOnce(new Error('Temporary database failure'));
+    const child = createPiProcess('/tmp/pi-completion-failure.jsonl');
+    mockSpawn.mockReturnValue(child as never);
+    try {
+      await service.submitPrompt(1, 'Finish a reply');
+      expect(sessions.markCompletionUnreviewed).toHaveBeenCalledTimes(1);
+      expect((await service.getRuntimeState(1)).runPhase).toBe('idle');
+      expect(child.stdin.writes.filter(line => JSON.parse(line).type === 'prompt')).toHaveLength(1);
+    } finally { await service.onModuleDestroy(); }
+  });
+  it('does not restart a disposed runtime for an effort capability read', async () => {
+    const { service } = createService();
+    mockSpawn.mockReturnValue(createPiProcess('/tmp/pi-thinking-cleanup.jsonl') as never);
+    await service.submitPrompt(1, 'Hello');
+    const models = createDeferred<{ models: unknown[] }>();
+    const send = jest.spyOn(PiSessionRuntime.prototype, 'send')
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ model: { provider: 'local', id: 'model' }, thinkingLevel: 'high' })
+      .mockImplementationOnce(() => models.promise);
+    try {
+      const updating = service.setReasoningEffort(1, 'high');
+      for (let i = 0; i < 20 && send.mock.calls.length < 3; i++) await Promise.resolve();
+      expect(send).toHaveBeenCalledTimes(3);
+      await service.cleanupSession(1);
+      models.resolve({ models: [] });
+      await updating;
+      expect(send.mock.calls.map(([command]) => command.type)).toEqual(['set_thinking_level', 'get_state', 'get_available_models']);
+    } finally {
+      models.resolve({ models: [] });
+      send.mockRestore();
+      await service.onModuleDestroy();
+    }
+  });
+  it('sends element prose and actual image data together through native Pi RPC', async () => {
+    const { service } = createService();
+    const child = createPiProcess('/tmp/pi-element.jsonl'); mockSpawn.mockReturnValue(child as never);
+    try {
+      const prompt = 'Align ❶ (image 1).';
+      await service.submitPrompt(1, prompt, undefined, [{ mediaType: 'image/jpeg', data: '/9j/image' }]);
+      const commands = child.stdin.writes.map(line => JSON.parse(line) as Record<string, unknown>);
+      expect(commands.find(command => command.type === 'prompt')).toMatchObject({ message: prompt, images: [{ type: 'image', mimeType: 'image/jpeg', data: '/9j/image' }] });
+    } finally { await service.onModuleDestroy(); }
+  });
+
+  it('retains a cold effort without spawning, applies it through native RPC, and rejects failed changes', async () => {
+    const { service } = createService();
+    const child = createPiProcess('/tmp/pi-thinking.jsonl');
+    mockSpawn.mockReturnValue(child as never);
+    await service.setReasoningEffort(1, 'minimal');
+    expect(mockSpawn).not.toHaveBeenCalled();
+    await service.submitPrompt(1, 'Hello');
+    const commands = child.stdin.writes.map(
+      (line) => JSON.parse(line) as Record<string, unknown>,
+    );
+    const set = commands.findIndex(
+      (command) => command.type === 'set_thinking_level',
+    );
+    const prompt = commands.findIndex((command) => command.type === 'prompt');
+    expect(commands[set]).toMatchObject({ level: 'minimal' });
+    expect(set).toBeLessThan(prompt);
+    expect(commands[prompt]).not.toHaveProperty('reasoningEffort');
+    await service.setReasoningEffort(1, 'high');
+    expect(
+      child.stdin.writes.some(
+        (line) =>
+          JSON.parse(line).type === 'set_thinking_level' &&
+          JSON.parse(line).level === 'high',
+      ),
+    ).toBe(true);
+    const send = jest
+      .spyOn(PiSessionRuntime.prototype, 'send')
+      .mockRejectedValueOnce(new Error('unsupported'));
+    await expect(service.setReasoningEffort(1, 'max')).rejects.toThrow(
+      'unsupported',
+    );
+    send.mockRestore();
+    expect((await service.getRuntimeState(1)).reasoningEffort).toBe('high');
+    await service.onModuleDestroy();
+  });
   const originalIdleMs = process.env.PI_RUNTIME_IDLE_MS;
   const originalIdleCap = process.env.PI_RUNTIME_IDLE_CAP;
 
@@ -253,6 +422,30 @@ describe('PiRuntimeService lifecycle', () => {
     mockBuildAugmentedEnv.mockResolvedValue({ PATH: '/mock/bin' });
     delete process.env.PI_RUNTIME_IDLE_MS;
     delete process.env.PI_RUNTIME_IDLE_CAP;
+  });
+
+  it('waits for the first catalog instead of returning an empty list while discovery runs', async () => {
+    const { service } = createService();
+    const response = createDeferred<{ models: { provider: string; id: string; name: string }[] }>();
+    const start = jest.spyOn(PiSessionRuntime.prototype, 'start').mockResolvedValue(undefined);
+    const send = jest.spyOn(PiSessionRuntime.prototype, 'send').mockReturnValue(response.promise);
+    const stop = jest.spyOn(PiSessionRuntime.prototype, 'stop').mockResolvedValue(undefined);
+    try {
+      let settled = false;
+      const first = service.getModelCatalog().then(catalog => { settled = true; return catalog; });
+      const second = service.getModelCatalog();
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      response.resolve({ models: [{ provider: 'local', id: 'available', name: 'Available' }] });
+      const catalogs = await Promise.all([first, second]);
+      expect(catalogs.map(catalog => catalog.models[0].id)).toEqual(['local/available', 'local/available']);
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(stop).toHaveBeenCalledTimes(1);
+    } finally {
+      start.mockRestore(); send.mockRestore(); stop.mockRestore();
+      await service.onModuleDestroy();
+    }
   });
 
   it('queues one fresh CLI probe after an automatic probe for concurrent reloads', async () => {
@@ -468,9 +661,7 @@ describe('PiRuntimeService lifecycle', () => {
   it('ignores an old exit after cleanup and reopen without touching the replacement run', async () => {
     jest.useRealTimers();
     const { service } = createService();
-    mockSpawn.mockImplementation(
-      () => createPiProcess('/tmp/pi-session.jsonl') as never,
-    );
+    mockSpawn.mockImplementation(() => createPiProcess('/tmp/pi-session.jsonl') as never);
     const old = await (service as any).ensureRuntime(1);
     await service.cleanupSession(1);
     await (service as any).ensureRuntime(1);
@@ -491,7 +682,9 @@ describe('PiRuntimeService lifecycle', () => {
   it('keeps socket ownership across cleanup and only schedules idle shutdown after the last tab detaches', async () => {
     jest.useRealTimers();
     const { service } = createService();
-    mockSpawn.mockImplementation(() => createPiProcess('/tmp/pi-session.jsonl') as never);
+    mockSpawn.mockImplementation(
+      () => createPiProcess('/tmp/pi-session.jsonl') as never,
+    );
     service.onClientAttached(1);
     service.onClientAttached(1);
     await (service as any).ensureRuntime(1);
@@ -720,9 +913,10 @@ describe('PiRuntimeService lifecycle', () => {
       await writeFile(
         sessionPath,
         [
-          JSON.stringify({ type: 'session', version: 3 }),
+          JSON.stringify({ type: 'session', version: 3, id: 'source' }),
           JSON.stringify({
             id: 'first-user',
+            parentId: null,
             type: 'message',
             message: {
               role: 'user',
@@ -731,7 +925,18 @@ describe('PiRuntimeService lifecycle', () => {
             },
           }),
           JSON.stringify({
+            id: 'abandoned',
+            parentId: 'first-user',
+            type: 'message',
+            message: {
+              role: 'user',
+              timestamp: Date.parse('2026-05-22T10:00:30.000Z'),
+              content: [{ type: 'text', text: 'abandoned branch' }],
+            },
+          }),
+          JSON.stringify({
             id: 'first-assistant',
+            parentId: 'first-user',
             type: 'message',
             message: {
               role: 'assistant',
@@ -741,6 +946,7 @@ describe('PiRuntimeService lifecycle', () => {
           }),
           JSON.stringify({
             id: 'edit-user',
+            parentId: 'first-assistant',
             type: 'message',
             message: {
               role: 'user',
@@ -750,6 +956,7 @@ describe('PiRuntimeService lifecycle', () => {
           }),
           JSON.stringify({
             id: 'old-assistant',
+            parentId: 'edit-user',
             type: 'message',
             message: {
               role: 'assistant',
@@ -767,6 +974,7 @@ describe('PiRuntimeService lifecycle', () => {
       });
 
       const beforeRewind = await service.getHistory(1);
+      expect(beforeRewind.map(item => item.content)).toEqual(['first', 'done', 'edit this', 'old answer']);
       const editMessageId = beforeRewind.find(
         (item) => item.content === 'edit this',
       )?.sourceMessageId;
@@ -776,13 +984,14 @@ describe('PiRuntimeService lifecycle', () => {
       const history = await service.rewindConversation(1, editMessageId!);
 
       expect(history.map((item) => item.content)).toEqual(['first', 'done']);
-      expect(sessions.updatePiSessionPath).toHaveBeenCalledWith(
-        1,
-        expect.stringContaining('-fork-'),
+      expect(sessions.replaceEditedConversation).toHaveBeenCalledWith(
+        1, 'pi', sessionPath, expect.stringContaining('-fork-'), Date.parse('2026-05-22T10:02:00.000Z'),
       );
-      const rewoundPath = sessions.updatePiSessionPath.mock.calls[0]?.[1];
+      const rewoundPath = sessions.replaceEditedConversation.mock.calls[0]?.[3];
       const raw = await readFile(rewoundPath!, 'utf8');
+      expect(JSON.parse(raw.split('\n')[0])).toMatchObject({ type: 'session', id: expect.not.stringMatching(/^source$/), parentSession: sessionPath });
       expect(raw).toContain('first-assistant');
+      expect(raw).not.toContain('abandoned');
       expect(raw).not.toContain('edit this');
       expect(raw).not.toContain('old answer');
       expect(child.kill).toHaveBeenCalledWith('SIGTERM');
@@ -816,7 +1025,7 @@ describe('PiRuntimeService lifecycle', () => {
       await expect(
         service.rewindConversation(1, 'first-user'),
       ).resolves.toEqual([]);
-      expect(sessions.updatePiSessionPath).toHaveBeenCalledWith(1, '-1');
+      expect(sessions.replaceEditedConversation).toHaveBeenCalledWith(1, 'pi', sessionPath, '-1', Date.parse('2026-05-22T10:00:00.000Z'));
       expect((await service.getRuntimeState(1)).claudeSessionId).toBeNull();
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -832,7 +1041,7 @@ describe('PiRuntimeService lifecycle', () => {
     await expect(service.rewindConversation(1, 'user-entry')).rejects.toThrow(
       'Cannot edit a message while Pi is actively running.',
     );
-    expect(sessions.updatePiSessionPath).not.toHaveBeenCalled();
+    expect(sessions.replaceEditedConversation).not.toHaveBeenCalled();
   });
 
   afterEach(() => {
@@ -867,13 +1076,14 @@ describe('PiRuntimeService lifecycle', () => {
       envStarted.resolve();
       return env.promise;
     });
-    const { service } = createService({ idleMs: '60000' });
+    const { service, sessions } = createService({ idleMs: '60000' });
     const first = service.submitPrompt(1, 'first');
     await envStarted.promise;
     await service.interrupt(1);
     await service.submitPrompt(1, 'second');
     env.resolve({ PATH: '/mock/bin' });
     await first;
+    expect(sessions.markCompletionUnreviewed).not.toHaveBeenCalled();
     expect(child.stdin.writes.map((write) => JSON.parse(write)).filter((command) => command.type === 'prompt')).toEqual([]);
     expect(await service.getRuntimeState(1)).toMatchObject({
       runPhase: 'idle',
@@ -881,6 +1091,64 @@ describe('PiRuntimeService lifecycle', () => {
       pendingPrompts: [expect.objectContaining({ prompt: 'second' })],
     });
     await service.onModuleDestroy();
+  });
+
+  it('steers accepted Pi turns over native RPC without restarting or draining the local queue', async () => {
+    const child = createPiProcess('/tmp/pi-session-1.jsonl', { holdPrompts: true });
+    mockSpawn.mockReturnValue(child as never);
+    const { service } = createService({ idleMs: '60000' });
+    try {
+      await service.submitPrompt(1, 'Original', undefined, undefined, { waitForCompletion: false });
+      await service.submitPrompt(1, 'Later', undefined, undefined, { queue: true });
+      const accepted = jest.fn();
+      await service.submitPrompt(1, 'Redirect', undefined, undefined, {
+        requireSteering: true, onAccepted: accepted,
+      });
+      expect(accepted).toHaveBeenCalledWith('steered');
+      expect(await service.getRuntimeState(1)).toMatchObject({
+        runPhase: 'running', pendingPrompts: [expect.objectContaining({ prompt: 'Later' })],
+      });
+      const [pending] = (await service.getRuntimeState(1)).pendingPrompts;
+      await service.steerPendingPrompt(1, pending.id);
+      const commands = child.stdin.writes.map(write => JSON.parse(write));
+      expect(commands.filter(command => command.type === 'prompt')).toEqual([
+        expect.objectContaining({ message: 'Original' }),
+        expect.objectContaining({ message: 'Redirect', streamingBehavior: 'steer' }),
+        expect.objectContaining({ message: 'Later', streamingBehavior: 'steer' }),
+      ]);
+      expect(commands.some(command => command.type === 'abort')).toBe(false);
+      expect((await service.getRuntimeState(1)).pendingPrompts).toEqual([]);
+      child.stdout.emit('data', Buffer.from('{"type":"agent_end"}\n'));
+    } finally {
+      await service.onModuleDestroy();
+    }
+  });
+
+  it('holds Pi completion across a native end and start racing steering admission', async () => {
+    const nativeEvent = (type: string) => child.stdout.emit('data', Buffer.from(JSON.stringify({ type }) + '\n'));
+    const child = createPiProcess('/tmp/pi-session-1.jsonl', {
+      holdPrompts: true,
+      onSteer: () => {
+        nativeEvent('agent_end');
+        nativeEvent('agent_start');
+      },
+    });
+    mockSpawn.mockReturnValue(child as never);
+    const { service, sessions } = createService({ idleMs: '60000' });
+    try {
+      const accepted = createDeferred<void>();
+      const original = service.submitPrompt(1, 'Original', undefined, undefined, {
+        waitForCompletion: false, onAccepted: () => accepted.resolve(),
+      });
+      await accepted.promise;
+      await original;
+      await service.submitPrompt(1, 'Redirect', undefined, undefined, { preferSteering: true });
+      expect((await service.getRuntimeState(1)).runPhase).toBe('running');
+      expect(sessions.markCompletionUnreviewed).not.toHaveBeenCalled();
+      nativeEvent('agent_end');
+    } finally {
+      await service.onModuleDestroy();
+    }
   });
 
   it('queues prompts submitted while the Pi run is still initializing', async () => {
@@ -1144,11 +1412,11 @@ describe('PiRuntimeService lifecycle', () => {
       const history = await service.getHistory(1);
 
       expect(history.map((item) => item.kind)).toEqual(['user', 'thinking']);
-      expect(history[1]?.id).toBe('sig-file:thinking_start:0');
       expect(history[1]?.content).toBe('fresher streamed reasoning');
 
       const state = await service.getRuntimeState(1);
       expect(state.liveItems).toHaveLength(1);
+      expect(history[1]?.id).toBe(state.liveItems[0]?.id);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -1182,6 +1450,46 @@ describe('PiRuntimeService lifecycle', () => {
     expect(history.map((item) => item.kind)).toEqual(['thinking']);
     expect(history[0]?.content).toBe('orphaned stream');
     expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it('keeps one prompt and one tool across Pi events and a saved transcript without signatures', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pi-transcript-identities-'));
+    try {
+      const path = join(root, 'session.jsonl');
+      const timestamp = Date.parse('2026-11-22T09:00:00Z');
+      const prompt = { role: 'user', timestamp, content: [{ type: 'text', text: 'Check the notes.' }] };
+      const toolCall = { type: 'toolCall', id: 'tool', name: 'read', arguments: { path: 'notes.txt' } };
+      const partial = { role: 'assistant', timestamp: timestamp + 1, content: [] };
+      const first = { ...partial, content: [{ type: 'text', text: 'Checking.' }, toolCall] };
+      const receipt = { role: 'toolResult', toolCallId: 'tool', toolName: 'read',
+        timestamp: timestamp + 2, content: [{ type: 'text', text: 'Notes' }] };
+      const answer = { ...partial, content: [{ type: 'text', text: 'Ready.', textSignature: 'on-completion-only' }] };
+      await writeFile(path, [prompt, first, receipt, answer].map((message, index) =>
+        JSON.stringify({ id: String(index), type: 'message', message })).join('\n') + '\n');
+      const { service } = createService({ piSessionPath: path });
+      const end = (message: Record<string, unknown>) => emitPiEvent(service, 1, { type: 'message_end', message });
+      const stream = () => emitPiEvent(service, 1, { type: 'message_update',
+        assistantMessageEvent: { type: 'text_start', contentIndex: 0 }, message: partial });
+      end(prompt);
+      stream();
+      emitPiEvent(service, 1, { type: 'message_update',
+        assistantMessageEvent: { type: 'toolcall_end', contentIndex: 1, toolCall }, message: partial });
+      end(first);
+      emitPiEvent(service, 1, { type: 'tool_execution_start', toolCallId: 'tool', toolName: 'read', args: toolCall.arguments });
+      emitPiEvent(service, 1, { type: 'tool_execution_end', toolCallId: 'tool', toolName: 'read', result: { content: receipt.content } });
+      end(receipt);
+      stream();
+      end(answer);
+      const live = (await service.getRuntimeState(1)).liveItems;
+      expect(live.map(row => row.kind)).toEqual(['user', 'assistant', 'tool_use', 'tool_result', 'assistant']);
+      expect(new Set(live.map(row => row.id)).size).toBe(live.length);
+      const history = await service.getHistory(1);
+      expect(history.map(row => row.id)).toEqual(live.map(row => row.id));
+      expect(history.filter(row => row.kind === 'assistant').map(row => row.content)).toEqual(['Checking.', 'Ready.']);
+      expect(history[0].transcriptMessageId).toBe('0');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('does not spawn a runtime or persist a Pi session path when fetching autocomplete for a session with no active run', async () => {

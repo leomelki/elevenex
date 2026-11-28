@@ -34,6 +34,7 @@ export type ClaudeTranscriptItemKind =
 
 export type AgentToolKind =
   | 'read'
+  | 'image_view'
   | 'write'
   | 'edit'
   | 'notebook_edit'
@@ -86,6 +87,7 @@ export interface ClaudeTranscriptItem {
   agentId?: string;
   id: string;
   kind: ClaudeTranscriptItemKind;
+  assistantPhase?: import('@elevenex/shared').AssistantMessagePhase;
   contentType?: 'message' | 'plan';
   content?: string;
   /** Routing and readable payload of an incoming agent message, not assistant output. */
@@ -106,10 +108,20 @@ export interface ClaudeTranscriptItem {
   toolInput?: unknown;
   providerToolInput?: unknown;
   providerToolResult?: unknown;
+  /** Native child identity reported by the tool before its terminal receipt. */
+  nativeTask?: {
+    readonly agentId: string;
+    readonly provider: string;
+    readonly model?: string;
+    readonly status?: 'running' | 'completed' | 'error';
+    readonly detail?: string;
+  };
   interaction?: ClaudeToolInteractionSummary;
   isError?: boolean;
   isSynthetic?: boolean;
   sourceMessageId?: string;
+  /** The provider can display this prompt but cannot rewind safely at its boundary. */
+  editUnsupported?: true;
   transcriptMessageId?: string;
   timestamp: string;
   authoredAt?: string;
@@ -157,6 +169,7 @@ export interface ClaudeUserInputRequest {
   isBlocking?: boolean;
   serverName: string;
   message: string;
+  decision?: 'confirm' | 'unsupported';
   mode?: 'form' | 'url';
   url?: string;
   elicitationId?: string;
@@ -231,6 +244,8 @@ export interface ClaudeAutocompleteItem {
 
 export interface ClaudeModelOption {
   id: string;
+  /** Canonical wire ID reported by Claude for this catalog alias. */
+  resolvedModel?: string;
   displayName: string;
   description: string;
   supportsEffort?: boolean;
@@ -451,6 +466,8 @@ export interface ClaudeSubagentState {
   canBackground?: boolean;
   canFollowUp?: boolean;
   agentPath?: string;
+  /** Stable delegated task title, separate from the agent's nickname and role. */
+  taskTitle?: string;
   agentType: string;
   status: 'started' | 'stopped';
   transcriptPath?: string;
@@ -509,6 +526,7 @@ export interface ClaudeSubagentHistoryPayload {
   transcriptAvailable: boolean;
   transcriptState?: 'starting' | 'available' | 'unavailable' | 'error';
   hasEarlier?: boolean;
+  nativeWindow?: true;
   transcriptError?: string;
 }
 
@@ -614,6 +632,7 @@ export interface ClaudeRuntimePromptTiming {
 }
 
 export interface ClaudeRuntimeStatePayload {
+  dispatchingPrompts?: readonly import('../agent-runtime/queued-prompt-dispatches.js').QueuedPromptDispatch[];
   sessionId: number;
   claudeSessionId: string | null;
   runPhase: ClaudeRunPhase;
@@ -720,6 +739,7 @@ export type ClaudeRuntimeEvent =
         pendingPermissionRequest: ClaudePermissionRequest | null;
         pendingUserInputRequest: ClaudeUserInputRequest | null;
         pendingPrompts: ClaudePendingPrompt[];
+        dispatchingPrompts?: ClaudeRuntimeStatePayload['dispatchingPrompts'];
         queuePaused: boolean;
       };
     }
@@ -884,6 +904,7 @@ export type ClaudeRuntimeEvent =
       payload: { sessionId: number; request: ClaudeUserInputRequest };
     }
   | { type: 'error'; payload: { sessionId: number; message: string } }
+  | { type: 'conversation_rewound'; payload: { sessionId: number } }
   | { type: 'complete'; payload: { sessionId: number } };
 
 export type ClaudeRuntimeClientAction =

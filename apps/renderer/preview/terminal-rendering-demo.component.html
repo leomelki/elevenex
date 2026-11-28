@@ -1,0 +1,8 @@
+<div class="controls">
+  <span>Production terminal renderer · isolated ANSI samples</span>
+  <button exButton size="sm" (click)="metrics(1, 0)">Compact cells</button>
+  <button exButton size="sm" (click)="metrics(1.5, 0)">Default cells</button>
+  <button exButton size="sm" (click)="metrics(2, 2)">Spaced cells</button>
+</div>
+<div #surface class="terminal" [attr.data-ready]="ready()" aria-label="Terminal rendering samples"></div>
+<output aria-label="Terminal input">{{ input() }}</output>

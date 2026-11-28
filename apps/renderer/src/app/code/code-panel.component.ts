@@ -1,0 +1,191 @@
+import { afterRenderEffect, ChangeDetectionStrategy, Component, DestroyRef, ElementRef, TemplateRef, computed, effect, inject, input, linkedSignal, output, signal, untracked, viewChild } from '@angular/core';
+import { DOCUMENT } from '@angular/common';
+import type { CodeAction, CodeFileIntent, CodeSurfaceState, CodeTarget } from '@elevenex/shared';
+import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
+import { ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, KbdComponent, ProgressLineComponent } from '../ui';
+import { CodeFramePool } from './code-frame-pool.service';
+import { CodeWorkspaceStore } from './code-workspace.store';
+import { CodeViewportDirective } from './code-viewport.directive';
+@Component({
+  selector: 'ex-code-panel', providers: [CodeWorkspaceStore],
+  imports: [ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, KbdComponent, ProgressLineComponent, CodeViewportDirective],
+  host: { '[class.wide]': 'wide()', '[attr.aria-busy]': 'launching()' },
+  templateUrl: './code-panel.component.html', styleUrl: './code-panel.component.css', changeDetection: ChangeDetectionStrategy.OnPush,
+})
+export class CodePanelComponent {
+  /** Project compact editor controls into the existing side-panel navigation. */
+  readonly actions = viewChild<TemplateRef<unknown>>('actions');
+  readonly target = input<CodeTarget | null>(null);
+  readonly initialState = input<CodeSurfaceState | null>(null);
+  readonly taskName = input('');
+  readonly branch = input('');
+  readonly active = input(false);
+  /** Retain the picture through the shell's inert closing slide. */
+  readonly retained = input(false);
+  readonly frameVisible = computed(() => this.active() || this.retained());
+  readonly connected = input(true);
+  readonly wide = input(false);
+  readonly panelResizing = input(false);
+  readonly standalone = input(false);
+  readonly wideChange = output<boolean>();
+  readonly file = input<CodeFileIntent | null>(null);
+  readonly store = inject(CodeWorkspaceStore);
+  readonly measuredWidth = signal(0);
+  // Keep the editor viewport live during a drag, but defer moving Explorer
+  // between layouts until the gesture settles at one width.
+  readonly compact = linkedSignal<{ width: number; resizing: boolean }, boolean>({
+    source: () => ({ width: this.measuredWidth(), resizing: this.panelResizing() }),
+    computation: ({ width, resizing }, previous) => resizing && previous ? previous.value : width < 600,
+  });
+  readonly layoutRevision = signal(0);
+  private readonly acknowledgedLayout = signal(-1);
+  private lastPresentationRevision = 0;
+  readonly layoutReady = computed(() => this.acknowledgedLayout() === this.layoutRevision());
+  readonly viewportKey = computed(() => { const target = this.target(); return this.frameVisible() && target ? `${target.scopeId}:${target.taskId}` : ''; });
+  readonly launching = computed(() => this.store.busy() || this.store.state()?.phase === 'loading' || this.showFrame() && this.frameLoading());
+  readonly connectionLost = computed(() => !this.connected() || this.store.state()?.phase === 'disconnected' && !this.store.state()?.relocated && !this.store.state()?.detached);
+  readonly showFrame = computed(() => !!this.frameResource() && this.store.state()?.phase !== 'failed');
+  readonly hasSurface = computed(() => this.showFrame() && this.store.state()?.phase !== 'loading');
+  private readonly presentedFrame = signal<string | null>(null);
+  readonly frameLoading = computed(() => this.store.state()?.phase === 'loading' || this.presentedFrame() !== this.frameResource());
+  readonly title = computed(() => this.launching() ? 'Opening your workspace' : this.store.error() || this.store.state()?.phase === 'failed' ? 'Code couldn’t open' : !this.target() ? 'Choose a task to open Code' : this.store.state() ? 'Continue in your editor' : 'Your task, in Code');
+  readonly modifier = computed(() => this.bridge.platform === 'darwin' ? '⌘' : 'Ctrl+');
+  readonly browsing = computed(() => this.compact() && this.store.state()?.filesOpen === true && this.store.state()?.hasEditors === true);
+  readonly browseLabel = computed(() => this.browsing() ? 'Back to editor · Esc' : this.bridge.platform === 'darwin' ? 'Browse files · ⇧⌘E' : 'Browse files · Ctrl+Shift+E');
+  readonly findShortcut = computed(() => this.modifier() + 'P');
+  readonly searchShortcut = computed(() => this.bridge.platform === 'darwin' ? '⇧⌘F' : 'Ctrl+Shift+F');
+  readonly returnShortcut = computed(() => this.bridge.platform === 'darwin' ? '⇧⌘R' : 'Ctrl+Shift+R');
+  private readonly bridge = inject(ELEVENEX_BRIDGE);
+  private readonly document = inject(DOCUMENT);
+  private readonly frames = inject(CodeFramePool);
+  private readonly frameResource = computed(() => {
+    const state = this.store.state();
+    return state && !state.relocated && !state.detached ? state.frameUrl ?? null : null;
+  });
+  private readonly frameContainer = viewChild<ElementRef<HTMLElement>>('frameContainer');
+  private consumedFile: CodeFileIntent | null = null;
+  private requestedFileFocus: CodeFileIntent | null = null;
+  private openingSelection: CodeTarget | null = null;
+  private standaloneOpened = false;
+  private readonly placedTarget = signal<CodeTarget | null>(null);
+  private readonly focusRequest = signal<CodeTarget | null>(null);
+  constructor() {
+    const stopExit = this.bridge.onCodeExitRequested?.(target => { if (this.active() && this.target()?.scopeId === target.scopeId && this.target()?.taskId === target.taskId) this.wideChange.emit(false); });
+    const destroy = inject(DestroyRef);
+    const watchInput = new AbortController();
+    const cancelFocus = () => this.focusRequest.set(null);
+    const options = { capture: true, signal: watchInput.signal };
+    // A queued handoff belongs to the original gesture. Later host input or
+    // leaving this window takes priority over a delayed editor receipt.
+    this.document.addEventListener('pointerdown', cancelFocus, options);
+    this.document.addEventListener('keydown', cancelFocus, options);
+    this.document.defaultView?.addEventListener('blur', cancelFocus, options);
+    destroy.onDestroy(() => { watchInput.abort(); stopExit?.(); });
+    effect(() => { const target = this.target(), initial = this.initialState(); untracked(() => { this.focusRequest.set(null); this.store.select(target); if (initial) this.store.adopt(initial); }); });
+    effect(() => {
+      const active = this.active(), target = this.target(), connected = this.connected(), standalone = this.standalone();
+      if (active && target && connected) untracked(() => {
+        if (standalone && !this.standaloneOpened) this.focusRequest.set(target);
+        if (standalone) this.standaloneOpened = true;
+        if (this.openingSelection?.scopeId !== target.scopeId || this.openingSelection.taskId !== target.taskId) { this.openingSelection = target; void this.store.open(); }
+      });
+      if (!active || !connected || !target) this.openingSelection = null;
+    });
+    effect(() => {
+      const file = this.file(), target = this.target(), placed = this.placedTarget();
+      if (!file || file === this.consumedFile || !target || file.scopeId !== target.scopeId ||
+          file.taskId !== target.taskId || !this.active() || !this.connected()) return;
+      untracked(() => {
+        if (this.requestedFileFocus !== file) {
+          this.requestedFileFocus = file;
+          this.focusRequest.set(target);
+        }
+        if ((file.file.fromChat || file.file.fromChanges) &&
+            (placed?.scopeId !== target.scopeId || placed.taskId !== target.taskId)) return;
+        this.consumedFile = file;
+        void this.store.openFile(file.file);
+      });
+    });
+    effect(() => { if (!this.active()) untracked(() => { cancelFocus(); this.store.suspend(); }); });
+    afterRenderEffect(onCleanup => {
+      const container = this.frameContainer()?.nativeElement, url = this.frameResource();
+      if (!container || !url || !this.frameVisible()) return;
+      onCleanup(untracked(() => this.frames.mount(url, container)));
+    });
+    afterRenderEffect(onCleanup => {
+      const target = this.target(), active = this.active(), hasSurface = this.hasSurface();
+      const compact = this.compact();
+      const revision = this.layoutRevision();
+      if (!target) return;
+      const requestedLayout = revision !== this.lastPresentationRevision;
+      this.lastPresentationRevision = revision;
+      let stopped = false;
+      // CSS owns layout. Inform main only about visibility and the compact-mode
+      // boundary, never every pixel/frame of panel animation.
+      const visible = active && hasSurface;
+      if (!hasSurface) this.presentedFrame.set(null);
+      const frame = this.frameResource();
+      this.placedTarget.set(null);
+      this.acknowledgedLayout.set(-1);
+      const viewportWidth = requestedLayout && visible && !untracked(this.panelResizing) ? untracked(this.measuredWidth) : 0;
+      // Explorer's own commands may focus the iframe after a width change.
+      // Keep keyboard resizing on the splitter unless the user moves on.
+      const focused = this.document.activeElement;
+      const splitter = visible && focused instanceof HTMLElement && focused.matches('[role="separator"][aria-controls]') ? focused : null;
+      const focusWatch = splitter ? new AbortController() : undefined;
+      let userInput = false;
+      if (focusWatch) {
+        const options = { capture: true, signal: focusWatch.signal };
+        const onInput = () => { userInput = true; };
+        this.document.addEventListener('pointerdown', onInput, options);
+        this.document.addEventListener('keydown', onInput, options);
+      }
+      void this.bridge.codePresent?.(target, { visible, compact, ...(viewportWidth > 0 ? { viewportWidth } : {}) }).then(() => {
+        if (stopped) return;
+        this.acknowledgedLayout.set(revision);
+        if (visible) { this.presentedFrame.set(frame); this.placedTarget.set(target); }
+        const activeElement = this.document.activeElement;
+        if (splitter?.isConnected && !userInput && activeElement instanceof HTMLIFrameElement &&
+            this.frameContainer()?.nativeElement.contains(activeElement) && !activeElement.matches(':hover')) {
+          splitter.focus({ preventScroll: true });
+        }
+      }).catch(() => {
+        if (!stopped) {
+          // A failed barrier must not leave retained writing permanently hidden.
+          this.store.error.set('The editor could not finish resizing. Your edits are retained.');
+          this.acknowledgedLayout.set(revision);
+          if (visible) this.presentedFrame.set(frame);
+        }
+      }).finally(() => focusWatch?.abort());
+      onCleanup(() => { stopped = true; focusWatch?.abort(); });
+    });
+    afterRenderEffect(() => {
+      const wanted = this.focusRequest(), placed = this.placedTarget();
+      if (!wanted || !placed || wanted.scopeId !== placed.scopeId || wanted.taskId !== placed.taskId ||
+          !this.active() || !this.connected() || !this.hasSurface()) return;
+      const frame = this.frameContainer()?.nativeElement.querySelector('iframe');
+      if (!frame) return;
+      untracked(() => {
+        cancelFocus();
+        frame.focus({ preventScroll: true });
+        this.store.focus(true);
+      });
+    });
+    inject(DestroyRef).onDestroy(() => { const target = this.target(); if (target) void this.bridge.codePresent?.(target, {visible:false, compact:this.compact()}).catch(() => undefined); });
+  }
+  retry(): void { this.focusRequest.set(this.target()); void this.store.open(); }
+  focusEditor(): void { this.focusRequest.set(this.target()); }
+  recover(): void { this.focusRequest.set(this.target()); void this.store.recover(); }
+  async runAction(action: CodeAction): Promise<void> {
+    const target = this.target();
+    if (!target || !this.active() || !this.hasSurface()) return;
+    try { await this.bridge.codeAction(target, action); }
+    catch { if (this.target()?.scopeId === target.scopeId && this.target()?.taskId === target.taskId) this.store.error.set('The editor action could not complete. Your edits are retained.'); }
+  }
+  dismissError(): void { this.store.error.set(''); this.focusEditor(); }
+  async detach(): Promise<void> {
+    const target = this.target();
+    if (this.store.state()?.relocated) await this.store.recover();
+    if (target && target.scopeId === this.target()?.scopeId && target.taskId === this.target()?.taskId && !this.store.error()) await this.store.detach();
+  }
+}

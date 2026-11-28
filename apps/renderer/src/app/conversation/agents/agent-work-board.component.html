@@ -1,0 +1,80 @@
+<div class="board" [class.grouped]="grouped()" exAutoHeight [exFlip]="structure()">
+  <div class="board-content">
+    @if (grouped()) {
+      <header class="board-head" animate.enter="board-head-in">
+        <strong>@if (live()) {Working with }<ex-ticker [value]="board().agents.length" /> agents</strong>
+      </header>
+    }
+    <ul aria-label="Agent work">
+      @for (agent of board().agents; track agent.id) {
+        @let presentation = state(agent.status);
+        @let time = elapsed(agent);
+        @let detail = activity(agent, presentation.label);
+        @let destination = agent.target;
+        @let sessionId = destination?.kind === 'session' ? destination.session.sessionId : null;
+        @let decision = sessionId !== null && agent.status === 'waiting';
+        @let retry = sessionId !== null && agent.status === 'error';
+        @let primaryLabel = decision ? 'Open to answer' : retry ? 'Open to retry' : sessionId !== null ? 'Open session' : 'Inspect';
+        @let sessionDisabled = sessionId !== null && controlsDisabled();
+        <li class="agent" [attr.data-state]="agent.status" [attr.data-agent-source]="sessionId">
+          <span class="avatar" [attr.data-flip]="agent.id" data-agent-mark>
+            <ex-agent-mark [harness]="agent.selection?.provider" mark="A" appearance="tinted" />
+          </span>
+          <div class="identity">
+            <strong class="agent-title" [exTooltip]="agent.title">{{ agent.title }}</strong>
+            @if (agent.selection; as selection) {
+              @if (selection.model || selection.effort) {
+                <span class="model" [exTooltip]="identity(selection)">{{ compactIdentity(selection) }}</span>
+              }
+            }
+          </div>
+          <span class="status" [attr.data-tone]="presentation.glyph">
+            <span class="status-label" [exTooltip]="presentation.label">
+              <ex-status-glyph aria-hidden="true" [status]="presentation.glyph" [size]="12" />
+              <span [class.visually-hidden]="agent.status === 'running' || agent.status === 'completed'">{{ presentation.label }}</span>
+            </span>
+            @if (time; as clock) {
+              <time class="elapsed">
+                {{ clock.major }}@if (!clock.major.endsWith('m')) {<ex-ticker [value]="clock.seconds" />s}
+              </time>
+            }
+          </span>
+
+          @if (detail) {
+            <div class="activity" [class.full]="agent.status === 'waiting' || agent.status === 'error' || !destination">
+              @if (agent.status === 'running' || agent.status === 'pending') {
+                <ex-ease-swap [value]="detail" [exTooltip]="detail" />
+              } @else {
+                <span [exTooltip]="detail">{{ detail }}</span>
+              }
+            </div>
+          }
+
+          @if (destination) {
+            <div class="card-actions">
+              @if (sessionId !== null) {
+                <button exButton size="sm" variant="ghost" class="stop" [class.unavailable]="!agent.stoppable"
+                  [attr.tabindex]="agent.stoppable ? null : -1" [attr.aria-disabled]="!agent.stoppable || sessionDisabled || !active() ? true : null"
+                  [attr.aria-label]="'Stop ' + agent.title" exTooltip="Stop agent"
+                  (click)="request(agent, 'stop', $event)"><ex-icon name="stop" [size]="14" /></button>
+              }
+              <button exButton size="sm" [variant]="decision ? 'secondary' : 'ghost'" class="primary-action" [class.decision]="decision"
+                [attr.data-agent-session]="sessionId" [attr.aria-disabled]="sessionDisabled || !active() ? true : null"
+                [attr.aria-label]="primaryLabel + ' for ' + agent.title"
+                (click)="request(agent, decision ? 'answer' : retry ? 'message' : 'open', $event)">
+                {{ primaryLabel === 'Open session' ? 'Open' : primaryLabel }}
+                <ex-icon [name]="decision ? 'hand' : 'forward'" [size]="13" />
+              </button>
+            </div>
+          }
+        </li>
+      }
+    </ul>
+    <ex-fold [open]="!!board().wait && active()">
+      <div class="wait-line" [class.waiting]="board().waiting">
+        <ex-icon [name]="board().waiting ? 'clock' : 'check'" [size]="13" />
+        <ex-ease-swap [value]="board().wait || ''" />
+      </div>
+    </ex-fold>
+  </div>
+</div>

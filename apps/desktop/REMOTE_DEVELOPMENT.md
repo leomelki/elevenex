@@ -1,0 +1,537 @@
+# Remote development backend
+
+Electron main manages the desktop's SSH connections and remote backend
+lifecycle. The renderer accesses them through typed IPC.
+
+## Ownership and transport
+
+`remote/manager.ts` owns saved hosts, window environment selections, drafts and
+forwarding leases. Each saved host has one `RemoteConnection` coordinator. It
+owns authentication, setup, readiness, health checks and recovery; forwards do
+not run competing SSH reconnect loops. Separate aliases pointing at the same
+remote account can have separate transports, but the remote daemon's kernel
+lock still permits only one backend/database owner.
+
+`remote/ssh.ts` launches the installed **OpenSSH client** and lets it resolve its
+normal user and system configuration. There is no app implementation or whitelist
+of SSH settings, and no extra `ssh -G` evaluation during connection. A selected
+custom config uses `-F`, through a private Include-only file: some clients embed
+the `-F` pathname unquoted in ProxyJump commands, so this indirection preserves
+chosen paths containing spaces or shell syntax. As with native `ssh -F`, a custom
+file replaces default user/system configuration. Config files are trusted
+executable configuration: Match exec, ProxyCommand and enabled LocalCommand can run programs.
+On macOS and Linux the client runs with the user's interactive login-shell
+environment, captured once at launch (bounded, refreshed in the background), so
+those commands find the same PATH and agent variables as in a terminal even when
+the app was opened from Finder, the Dock or a launcher. If the capture fails or
+times out, the inherited environment plus common install directories is used.
+Custom config/identity paths must come from the main-process native file picker
+or an already saved host. Renderer-provided arbitrary file paths are rejected.
+Selected paths are treated literally, including spaces, quotes, percent signs,
+glob characters and environment-like text. Identity overrides retain precedence
+over configured identities without changing the keys used by a jump host.
+
+Connection policy follows OpenSSH configuration: aliases, Include/Match,
+ProxyJump/ProxyCommand, identities/agents/certificates, authentication, trust,
+DNS host verification, host-key updates, fingerprint display, forwarding, X11,
+tunnels, LocalCommand, timeouts, keep-alives, retries and logging. ProxyJump
+children evaluate their own matching rules. Configured user and port apply
+unless the user supplies an explicit override in the saved host. The remote account's
+`SSH_AUTH_SOCK` is preserved, whether supplied by SSH or a remote shell setup.
+There is no separate application consent toggle. Old saved host toggles are
+discarded when settings load; saved hosts retain their other settings.
+
+Only the app's session requirements are supplied as command-line options:
+
+- `-T`, `RemoteCommand=none`, `SessionType=default`, `StdinNull=no` and
+  `ForkAfterAuthentication=no` reserve a foreground, non-PTY stdio command for
+  the bridge. A configured terminal or RemoteCommand cannot replace that program.
+- `ControlMaster=no` prevents this owned process from publishing a shared master
+  whose termination would disrupt other sessions. An existing configured
+  ControlPath is reused normally; neither its master nor its listeners are
+  stopped by app disconnect. ControlPath and ControlPersist are not rewritten.
+- Background restoration adds `BatchMode=yes` and denies UI prompts. Explicit
+  connect/retry retains the user's BatchMode. Interactive asks use the app's
+  SSH_ASKPASS broker; the real DISPLAY environment is preserved.
+- `-v` reports login progress. The app parses it in memory and removes it
+  before failure classification, so a configured `LogLevel` cannot change how
+  errors are classified. A login that waits after the server accepted a key is
+  usually waiting for a confirmation outside the app: an agent that confirms
+  each use (1Password, `ssh-add -c`), a security-key touch or a smart-card PIN.
+  OpenSSH does not report when the signature is sent, so the same wait can also
+  be a slow server-side account check. After three seconds the machine shows a
+  quiet "still signing in" note that a key prompt may be waiting. If the sign-in
+  deadline expires there, or a confirmation is declined after the note, the
+  connection pauses for an explicit retry instead of a timed retry, which would
+  raise another unseen prompt on every attempt. A prompt shown inside the app,
+  such as a passphrase, keeps its normal handling.
+
+Configured LocalForward, RemoteForward and DynamicForward listeners are managed
+by OpenSSH, separately from the app's managed-forward API. Conflicts and server
+restrictions obey ExitOnForwardFailure: fatal failures pause with configuration
+guidance, while nonfatal warnings retain native behavior. OpenSSH owns whether
+configured listeners expose loopback or other interfaces. Enabled LocalCommand
+runs normally; background commands must redirect their output rather than write
+into the bridge's protocol stream. User-owned proxy programs retain their own
+process behavior. App deadlines and cancellation still bound operations even
+when an SSH configuration requests a longer wait.
+
+One SSH stdio channel runs an uploaded Node bridge. It multiplexes bounded TCP
+streams, so initialization does not depend on SSH TCP forwarding permissions,
+SOCKS, ControlMaster, tmux, a remote login Node installation, or remote internet
+access. Managed forwards bind **127.0.0.1 only** and target remote loopback only.
+For generic forwards, port 0 requests an OS-allocated local port. Both an occupied local port and an
+unreachable remote service have distinct status. A remote-service probe verifies
+TCP acceptance, not the arbitrary service's application protocol. Retry forward
+rebinds/rechecks it; connection recovery recreates forwards once per generation.
+
+Terminal-created automatic forwards use `remote/terminal-forwards.ts` instead.
+The desktop hashes the saved host ID, exact numeric loopback target and remote
+port with SHA-256; the first unsigned big-endian 32 bits select a preferred port
+in 20000–29999. Initial allocation tries up to 64 consecutive candidates with
+wraparound, skipping saved/in-flight assignments and retrying only `EADDRINUSE`.
+It binds the actual tunnel, without a separate availability-check socket.
+This range is an allocation policy, not a system reservation.
+
+The successful assignment and automatic definitions (including their IPv4/IPv6
+target) are atomically persisted in `remote-settings.json.terminal-forwards.json`
+beside the existing settings. The original settings format is unchanged for
+older releases. Persistence failure closes the new listener; corrupt sidecars
+require repair rather than silently changing established URLs. Missing sidecars
+are supported. Existing auto forwards adopt stable allocation on their next
+explicit terminal opening; manually chosen local ports and generic port-0
+forwards retain their defaults.
+
+Assignments survive reconnects, desktop/website restarts and removal/recreation
+of a terminal's saved forward, provided its saved host and remote endpoint stay
+the same. An occupied established local port reports a conflict without remapping;
+Retry reuses that port, or remove the forward and add an explicit local port.
+Assignments are device-local, and changing the remote listening port identifies
+a different service. Multiple windows opening the same endpoint share one
+listener with independent leases; the last owner closes it. Explicit retry
+recreates the shared listener and updates every owner. A target change replaces
+only that window's lease. Connection replacement awaits old listener cleanup,
+and callbacks from retired attempts cannot update the new listener.
+
+`wire.ts` bounds frames to 96 KiB, data chunks to 64 KiB, aggregate pending output
+to 4 MiB and concurrent stream channels to 64 per transport. Each channel has a
+512 KiB byte-credit window in each direction. Readable-mode pumping splits large
+prefetched chunks, preserves TCP half-closes, and respects shared transport
+backpressure. A stalled channel cannot consume another channel's credits or
+block a separate service. Removing a forward
+closes its accepted sockets; disconnecting one window cannot close another
+window's listeners or shared connection lease.
+
+Host progress reaches only windows selecting that host; draft and forward
+updates reach only their owning window. Unrelated windows do not repeatedly
+receive cloned context snapshots during a download or typing burst.
+
+## Setup and remote work lifetime
+
+Linux glibc and macOS hosts use a POSIX shell, uname, Git, tar, gzip, head with
+`-c`, mktemp, and sha256sum or shasum. The release must ship a matching
+x64/arm64 backend with a bundled Node and native modules compatible with the
+host. Alpine/musl requires a different runtime. Home paths longer than the
+Unix socket limit require a shorter remote home.
+
+Windows SSH hosts use Windows PowerShell 5.1 with its built-in `Add-Type`
+compiler, built-in tar.exe, Task Scheduler, and Git on PATH. The desktop
+transfers the validated Windows x64/arm64 archive over SSH on the first
+connection. The Windows host verifies the size and digest
+before publishing the runtime in the account's private
+`%LOCALAPPDATA%\Elevenex\desktop-remote` directory. Checkout builds use
+`desktop-remote\dev\<namespace>`. Reparse points and unexpected permissions
+on runtime paths can prevent startup.
+
+Apps need the engine to run in the SSH user's Windows desktop session. Setup
+registers an on-demand **Elevenex Desktop <user SID> <production or development
+namespace>** task with a limited interactive token. It stores no password and
+has no login or startup trigger. When that account has a console or Remote
+Desktop session, including a locked or disconnected one, the scheduler starts
+the engine there without opening a console window. Setup compiles the launcher
+in the account's private runtime directory and updates an existing task's
+launcher when the task is idle. Windows application control must permit that
+launcher to run. The machine bridge uses an authenticated private pipe.
+
+When nobody is signed in, the connection pauses and asks. **Start without apps**
+launches the same engine through WMI as that account in session 0, outside the
+SSH session's job so that it survives disconnection. Agents, terminals and files
+work, but apps report that they need a Windows sign-in, and credentials that
+require an interactive logon, such as Windows Credential Manager, may be
+unavailable, as they are for SSH commands. The choice lasts for that connection;
+each new connect asks again. After signing in, **Switch to desktop session** in
+Apps checks for the sign-in, stops the background engine with a signed,
+instance-bound request, and reconnects to the desktop-session engine. The switch
+interrupts running agents, terminals and other connected desktops. Signing out
+of Windows ends a desktop-session engine; the next connection asks again. This registration is specific to that Windows
+account and namespace. To remove it, finish or stop owned work first, close
+the machine connection, and delete the corresponding task in Windows Task
+Scheduler. The runtime root also contains user data and task history. Keep or
+back up those files when removing cached binaries.
+
+Repository operations use the remote machine's Git and its existing authentication
+and configuration. Current, maintained Git is the primary performance and
+correctness target; Git 2.25 has inexpensive, tested fallbacks for basic discovery
+and task setup. Modern installations retain newer command forms and native
+reftable handling. Discovery resolves physical paths without requiring
+`rev-parse --path-format`; version probes are cached and stay out of status reads.
+See [the Git support and tuning policy](../backend/src/config/README.md#git-versions-and-performance).
+
+Use a modern OpenSSH client (9+). macOS is the validated client host. Linux uses
+the same POSIX launcher. Windows client support uses installed OpenSSH and a
+small credential-free .NET askpass executable compiled with built-in Windows
+PowerShell Add-Type into the attempt's temporary directory; there is no command
+shell interpolation of prompts. Interactive prompting requires policy to allow
+that compiler; agent-only background restoration does not compile it. Windows/Linux client runtime
+verification and release-platform certification remain outstanding.
+
+The selected desktop release's `elevenex-backend-<target>.tar.gz` and checksum are
+first downloaded on a **POSIX server**, when its PATH provides Node 22+. This optional
+installer receives the same HTTPS host/redirect allowlist, bounded download and
+safe archive validators as the client. It tries three times, each bounded to 45
+seconds, with one- and two-second backoff. It validates checksums, paths, entry
+types and expanded size before publishing anything. No download errors or signed
+release URLs are copied into diagnostics. A host without compatible Node skips
+direct downloads; bundled Node is still included in every installed runtime.
+
+After three failures (or without compatible Node), the client downloads and
+validates the archive, then streams it over the authenticated SSH channel into a
+private remote staging directory. An application-owned client archive cache
+coalesces downloads, hashing and extraction across hosts. Cancelling one host
+only releases its own lease; preparation aborts after its last owner leaves.
+The remote independently verifies transferred bytes, tests bundled Node, and
+atomically publishes the immutable installation. A healthy remote cache skips
+both paths. No previous version or user data is removed during an update.
+Interrupted downloads/uploads clean their own staging files;
+SIGKILL/power loss can leave harmless `.install-*` directories for later manual
+cleanup. Damaged published caches require moving that version aside, rather
+than risking replacement of code another client may be running.
+
+### Checkout development builds
+
+`pnpm desktop:dev` compiles the checkout backend and attempts the existing curated
+runtime assembly (bundled Node, native module validation, approved assets and
+dependencies). The launcher stores a host-platform archive and checksum beside
+its local development backend. Only unpackaged launches with the development
+backend setting use it. Main validates the source revision, target, archive hash
+and safe extraction before transferring it; packaged launches ignore the setting.
+Custom builds skip server/client release downloads entirely.
+
+POSIX runtime assembly also boots the final pruned backend with bundled Node,
+an isolated temporary home/database and the private remote socket. It must serve
+`/api/info` at the exact build revision within 30 seconds before an archive is
+published. Linux cross-builds run this check inside the target container. The
+probe cleans up its process group and temporary data on success, failure or
+cancellation; it does not exercise the destination server's configuration.
+
+Linux standalone archives, including release builds, use the same portable
+container builder automatically. It bundles Node 24.22.3 independently of the
+client's Node major and compiles SQLite/PTY in manylinux 2.28 (AlmaLinux 8).
+The final ELF files must not require newer symbols than GLIBC 2.28,
+GLIBCXX 3.4.25 or CXXABI 1.3.11. This prevents newer build hosts from silently
+raising the server baseline (Bookworm-built PTYs can require GLIBC 2.34).
+Changing the builder changes the development fingerprint, so the normal explicit
+connect/retry installs the corrected archive without deleting remote data.
+The SSH host needs neither a compiler nor a separately installed Node. Optional
+browser downloads have their own OS requirements; Alpine/musl is not covered.
+
+By default the archive matches the launcher's OS and architecture. On a Mac,
+`pnpm desktop:dev --linux` explicitly builds a Linux ARM64 archive with Docker;
+add `--x64` for Linux x64. macOS native binaries never enter the Linux archive.
+An explicit Linux build must succeed before Electron opens. Local development
+still works if default host-platform archive assembly is unavailable; the
+terminal reports why.
+
+Dirty and untracked backend sources contribute to the development revision;
+the generated revision file itself does not. Development runtime caches, daemon
+ownership, sockets and data use `~/.elevenex/desktop-remote-dev/<workspace-id>/`,
+separate from release data. Regular dev derives its workspace ID from the local
+checkout path. `pnpm desktop:dev:shared --linux` uses a fixed ID and builds once
+per launch. Pass `--workspace <32-character-id>` with the same value on both
+computers to reuse an existing development database. Shared Linux builds use the
+target architecture, pinned runtime and checkout sources for the engine revision.
+Git CRLF and LF checkout endings produce the same revision for those text sources.
+Identical builds reuse their installation. An explicit
+open or Retry waits for that workspace's daemon to become idle before handing
+off to the requested revision. Background recovery follows an accepted update
+for its revision and never initiates a handoff.
+
+Validation on 2026-11-02: desktop lint, build, type checks, 129 desktop tests,
+7 capture-tool tests and 605 renderer tests passed (two Vitest workers), together
+with native Electron smoke. A real macOS ARM64 development archive was assembled,
+validated, transferred through the native bootstrap in an isolated local server
+environment, and started with bundled Node; authenticated HTTP reported the
+expected development revision. Its daemon and temporary data were cleaned up.
+Server-download regressions use controlled HTTPS responses with the real
+validators; separate loopback OpenSSH regressions cover the transport. This is
+not a live customer server, external GitHub download, packaged-app launch or
+cross-platform runtime certification. No renderer UI changed in this work.
+
+The new remote data root is `~/.elevenex/desktop-remote/`, separate from both
+legacy remote data and local desktop data:
+
+| Location | Lifetime |
+| --- | --- |
+| `runtimes/<release>-<target>/` | Immutable backend and bundled Node caches |
+| `clients/<source-hash>/` | Immutable bridge/supervisor code |
+| `data/` | Database, tasks, sessions, agent workspaces and app-owned caches |
+| `b-<instance-hash>`, `agent.sock` | Private, mode-0600 backend instance socket and stable agent proxy |
+| `control-token` | Mode-0600 daemon authentication token; never renderer-visible |
+| `daemon.json` | Atomic mode-0600 discovery record for the current control listener |
+| `handoff-<revision>.json` | Private prepared runtime/shim descriptor, atomically published before handoff |
+
+The release daemon reserves a deterministic remote loopback UDP port in 20000–39999
+as its kernel database ownership lock. Each development checkout derives its own
+port in 10000–19999 from its namespace. During a handoff from a development daemon
+using the old account-wide port, the replacement acquires the checkout's port
+before announcing readiness. If an older discovery record is unreachable, a
+cold start must acquire its account-wide lock before migrating the checkout.
+The HTTP control listener uses an
+OS-allocated TCP port recorded in `daemon.json`, so an unrelated TCP service
+cannot prevent setup. Requests and responses authenticate with fresh nonces,
+timestamps and HMAC proofs; the token is never sent to a stale/reused TCP port.
+Neither listener is an exposed backend API. The
+reservation is separate from health traffic so a retained supervisor handle
+cannot swallow health requests. A conflicting service is never killed or adopted.
+An unrelated UDP reservation on the ownership port still requires intervention;
+it is never treated as permission to start a second database owner.
+The backend itself uses the private Unix socket through the opt-in
+`ELEVENEX_DESKTOP_SOCKET` setting. Existing launchers continue to use TCP.
+This requires a backend release containing this change; the earlier local-only
+lifecycle release is not a remote-socket-compatible runtime.
+
+The existing backend process-tree supervisor is reused. It must acquire the
+daemon's kernel lock handle **before** spawning a backend, and retains it until
+cleanup completes if the daemon dies. This prevents a replacement daemon from
+racing an orphan database owner. Exit code 75 and unexpected backend exits get
+bounded daemon-owned restart attempts. Daemon and connection recovery own
+different resources and never launch a second backend over a live lock.
+
+**SSH loss, sleep, window closure, intentional disconnect and application quit
+leave remote backend work running.** Tasks, sessions and active agent runs belong
+to the remote backend, not the tunnel. Forwarded-agent access is a short-lived
+lease refreshed by bridge health checks and removed on disconnect/expiry; it
+is not permanently captured by the daemon. After all clients disconnect,
+operations that need a client-provided agent must wait for a new client whose
+SSH configuration or remote account environment supplies a socket.
+An account's explicit `SSH_AUTH_SOCK` in its shell startup files takes precedence
+over the managed proxy in backend subprocess environments. This keeps agents and
+Git aligned with the account's interactive terminal configuration; accounts
+without that setting retain the stable forwarded-agent proxy. Explicit
+launcher/application sockets and local/legacy runtime precedence are preserved.
+The stable agent proxy tries another live lease if an agent socket has died,
+before consuming any authentication/signing bytes. It never retries a signing
+request after connecting. Revoking one lease closes only that lease's clients;
+agent connection attempts and idle time are bounded.
+Backend/daemon crashes or host reboots can interrupt agents; this layer does not
+invent automatic agent-run resumption.
+
+### Updating a remote backend
+
+Explicitly opening a server or choosing Retry prepares this desktop's backend
+revision. If another revision has active Elevenex connections, the desktop shows
+the count and checks again over the existing SSH connection until the last one
+closes. **Force update** can interrupt those connections and their agents and
+terminals. **Cancel connection** stops waiting. The count covers Elevenex
+transports. Other SSH sessions and background work after disconnect are outside
+this count. An engine that supports handoff but cannot report connections requires
+an explicit force. The daemon rechecks active leases before accepting a normal
+handoff so a connection opened during preparation can keep using the engine.
+Download, checksum, extraction and bundled Node checks finish before shutdown.
+The authenticated handoff is bound to the exact
+daemon instance, source revision and target revision. The daemon accepts only
+an already installed runtime and uploaded shim beneath its own root. No process
+discovery, PID file, broad kill command or public shutdown API is involved.
+
+The old daemon gracefully stops its supervised backend tree, with the existing
+forced cleanup for processes that ignore termination. It cleans its sockets,
+then launches the prepared replacement using its bundled Node and transfers the
+same UDP ownership reservation. The reservation remains held throughout the
+handoff, so an older desktop cannot reclaim the database in between versions.
+The new daemon adopts it before publishing health or starting a backend.
+An accepted handoff finishes independently of the requesting SSH connection.
+User data and previous version caches remain in place. Agents and terminals
+are interrupted; this does not migrate or automatically resume live processes.
+
+Concurrent requests for the same target join the accepted handoff. A competing
+target pauses instead of stopping the replacement, and background restoration
+or reconnects never initiate cross-revision replacement. An older desktop that
+finds a different revision pauses and offers explicit Retry. Use matching
+desktop builds when sharing a server. An explicit Retry can intentionally select
+an older revision; database schema compatibility still depends on that release.
+
+The bridge pins the backend's instance-specific socket and health identity, so
+retired bridges cannot send requests to a replacement, even at the same revision.
+Existing scoped clients invalidate their generations and reconcile on reconnect.
+Startup verifies the exact revision end to end. Failure is bounded and reported;
+there is no automatic fallback to old code after possible database migrations.
+A lost shutdown reply is reconciled through health/ownership without replaying
+the destructive request.
+
+**One-time migration for older daemons:** a daemon without the handoff capability
+cannot safely be stopped through its health-only protocol. The desktop reports
+this specifically and leaves it running. Finish remote work, identify the exact
+`runtime.js daemon <root> <installation> <revision>` process with
+`ps -ax -o pid,command`, send **that verified process** SIGTERM, then Retry.
+Never use a stale PID file or kill all Node processes. Subsequent revision changes
+use automatic handoff. This migration also applies to older development daemons.
+
+## IPC integration
+
+All methods are on the existing `window.elevenex` bridge. Main-frame/origin
+validation, strict argument counts, field validation and sender-derived window
+ownership apply to every operation. Events carry no Electron objects and return
+unsubscribe functions. Environment events and challenges go only to their
+owning window. Saved hosts are shared; editing/removing a host requires releasing
+its active leases in every window.
+
+```ts
+const stop = window.elevenex.onEnvironmentChanged(snapshot => {
+  // Render setup/recovery, context and this window's challenge/forwards.
+});
+const initial = await window.elevenex.environmentStatus();
+const configFile = await window.elevenex.chooseRemoteSshFile('config');
+const host = await window.elevenex.saveRemoteHost({
+  name: 'Development', host: 'my-ssh-alias',
+  ...(configFile ? { configFile } : {}),
+}, null);
+await window.elevenex.selectEnvironment({ kind: 'remote', hostId: host.id });
+// Operations return snapshots promptly; setup progress is asynchronous.
+await window.elevenex.retryRemote();
+await window.elevenex.pauseRemoteRecovery();
+await window.elevenex.disconnectRemote();
+await window.elevenex.selectEnvironment({ kind: 'local' });
+stop();
+```
+
+`environmentBackendStatus()` resolves the selected environment's existing backend
+endpoint; `backendStatus/retryBackend/restartBackend` retain their local-only
+compatibility. The tunnel transparently carries the existing HTTP/WebSocket
+backend protocols, so files, Git and agent execution stay on the remote host.
+The privileged local backend tunnel also requires a fresh capability header,
+available only to main-process adapters through `RemoteManager.backendAccess`.
+An untrusted website probing loopback receives 403; IPC snapshots never contain
+this header. Explicit development-service forwards do not inject this backend
+credential. Normal backend HTTP connections close after their authenticated
+request; an authenticated WebSocket upgrade retains its stream.
+Production CSP still disallows arbitrary loopback HTTP/WebSocket access. The
+[scoped backend client](../../docs/backend-client-architecture.md) uses this
+system transport from main through focused typed domain adapters; its first
+operation is backend info. Extend that boundary for future frontend features;
+do not loosen CSP or expose a generic shell/HTTP IPC method.
+
+Subscribe before reading a snapshot. Save selection context with
+`saveEnvironmentContext(context, expectedEnvironment)` (project/task/session IDs,
+draft and last event cursor). Main rejects a late update from an old environment.
+Each environment has its own context. Drafts are bounded to 100,000 characters
+and saved atomically in the desktop's private `remote-settings.json`. Rapid
+updates coalesce to one active write and one latest pending snapshot rather than
+queuing every keystroke. This is a
+local recovery copy, not an offline mutation queue. Window slots are restored
+in creation order on launch; a recreated connected slot reconnects without
+interactive prompts. Intentional disconnect and pause persist until explicit
+connect/retry. Closing a window retains its saved restore intent.
+
+The connection snapshot distinguishes authentication, setup stage, transport
+health and application readiness. `ready` requires a bridge health reply **and**
+an end-to-end `/api/info` response at the exact expected revision. Neither a live
+SSH process nor an open listener qualifies. Health checks also run immediately
+after native resume/unlock notifications. Timeouts bound SSH authentication,
+setup stages, downloads, bridge requests and application health.
+Health replies share the SSH stream with forwarded data, so on a slow link they
+can queue behind a transcript or media transfer. While a connected transport
+keeps delivering bytes, a delayed health reply logs `delayed` and keeps the
+transport for up to 60 seconds; a silent transport or a longer delay reconnects.
+Intentional pause/disconnect publishes the owning window's state before socket
+cleanup or settings writes finish. That window reports no authenticated transport
+and its saved forwards report `stopped`; another window sharing the host can
+remain ready. Connecting windows report forwards as `waiting` until restored.
+
+One retry coordinator uses exponential backoff with jitter capped at 30 seconds.
+Transient failures retry automatically; authentication, trust, configuration and
+compatibility failures pause. Only explicit connect/retry can present a challenge.
+Unsupported SSH algorithms, expired/restricted accounts, denied shell execution
+and invalid config environment references pause with an actionable error.
+Retry now cancels stalled background authentication and queues one interactive
+attempt after its owned processes finish cleanup. Setup already past
+authentication can finish without restarting a download; repeated retries never connect twice.
+Host trust follows the configured OpenSSH policy; the app does not force ask,
+disable DNS verification or override automatic host-key updates. Trust and
+confirmation replies require `yes`, null declines, challenges expire after two minutes,
+and only the owning window can answer their current ID. Each attempt allows a
+bounded number of interactive prompts. Passwords/passphrases pass through a fresh
+authenticated loopback askpass broker, never disk, argv, diagnostics or settings.
+The broker supports SHA-256/MD5 fingerprint prompts, confirmations such as
+AddKeysToAgent ask, and informational agent/security-key notifications. A PIN
+prompt can coexist with a notification. Closing an SSH helper cancels its stale
+challenge; informational notifications require no credential response.
+
+Every successful reconnection increments `generation`; a restarted daemon also
+changes `instanceId`. Consumers must discard asynchronous results from an older
+selection/generation and reconcile selected task/session IDs and incremental
+cursors before resuming interaction. Reconnect never recreates a task/session,
+replays a command or resubmits an agent prompt. A lost reply to a mutation has an
+**unknown outcome**: query remote state first. Existing task creation supports
+its requestId deduplication; do not assume all session/agent operations do.
+Large directory, branch and history data stays behind existing bounded domain
+queries; connecting/recovering performs no repository or history rescan.
+
+`remoteDiagnostics()` returns at most 100 structured stage/code/timestamp/revision
+entries. Raw SSH/agent/backend output and credentials are deliberately excluded.
+OpenSSH's bounded stderr tail is classified in memory; its configured LogLevel
+is retained. QUIET logging can therefore reduce available failure detail. Raw
+messages never enter IPC or saved logs.
+For compatibility errors, verify the installed bundled Node with `--version`,
+remote Git and the selected release's platform prerequisites in a terminal.
+
+## Verification and limits
+
+`pnpm desktop:test` includes server download retries, checksum/path rejection,
+retry cancellation, native shell direct-install/client-transfer fallback, and
+native subprocess bootstrap/cache reuse, interrupted
+upload cleanup, binary tunneling/backpressure, OpenSSH config evaluation,
+authentication/trust failure classification, stale replies, cancellation,
+concurrent-window leases/challenges, forward conflicts and restore/draft tests.
+Manager race tests cover rapid A → local → A switches, host edits while a
+selection is saving, retired-connection cleanup, shutdown and failed settings
+writes. Stream tests cover 2 MiB responses after EOF, oversized prefetched
+chunks, full channel capacity, stalled peers, shared output backpressure and
+delayed acknowledgements.
+The existing backend tests continue to check process-tree cleanup and revision
+readiness. IPC tests cover sender ownership, runtime validation, event cleanup
+and negative TypeScript contracts. The native Electron smoke verifies the real
+sandboxed preload and multiple-window isolation using an isolated backend and
+protocol fixture, not a packaged or fully rendered product.
+
+Where `/usr/sbin/sshd` is available for a non-root listener, a permanent native
+test uses disposable keys, an isolated known_hosts file and an owned ssh-agent.
+It covers real host trust, changed keys, wrong passphrases, background agent
+authentication, jump aliases, custom agent sockets, conflicting configured
+local/remote/SOCKS forwards, forward conflicts, LocalCommand, MD5 fingerprints,
+configured trust and password-prompt policies, literal config/identity paths,
+explicit user/port/key overrides, incompatible cipher rejection, full runtime
+bootstrap with server TCP forwarding disabled, the authenticated backend tunnel,
+and the persistent backend's agent access/revocation. Forwarding regressions cover
+yes/no/unset settings, custom sockets, environment references, Match final and
+different rules on the jump and target.
+Native tests also verify existing master reuse and survival after app cleanup,
+AddKeysToAgent confirmations and native default config discovery. Hardware-key
+notifications and overlapping PIN requests have broker-level regression tests;
+no physical security key or privileged tunnel/X11 server is certified by them.
+It never uses personal SSH credentials or writes its runtime into the real home
+directory.
+
+On the development macOS host, that loopback SSH fixture with one jump and
+programmatic encrypted-key unlocks measured approximately **0.7–1.1 seconds**
+for a new daemon and **0.5–0.6 seconds** for a warm reconnect. The fixture backend
+is small and its runtime is already cached; these figures exclude a real release
+download and human input. A separate 4 MiB stream fixture with 40 ms ACK delay
+took approximately **0.3 seconds**, demonstrating pipelining rather than WAN
+throughput. These are diagnostic measurements, not performance promises.
+
+No live customer SSH server, real MFA provider, Windows/Linux client launch, or
+download of a newly published socket-capable runtime is asserted by these tests.
+Release CI must publish and certify the matching platform archives. Packaging
+and the product renderer build also still need the separately documented design
+token inputs. No UI, dependency upgrades, SSH library, remote package manager,
+or frontend network permission is added by this implementation.

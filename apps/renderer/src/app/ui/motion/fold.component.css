@@ -1,0 +1,62 @@
+:host {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-base) var(--ease-in-out);
+}
+:host(.open) {
+  grid-template-rows: 1fr;
+  transition-duration: var(--dur-slow);
+}
+.clip {
+  margin: 0 -6px;
+  padding: 0 6px;
+  min-height: 0;
+  overflow: clip;
+}
+:host(.open.settled) > .clip {
+  overflow: visible;
+}
+.content {
+  opacity: 0;
+  transform: translateY(calc(-1 * var(--space-1)));
+  transition:
+    opacity var(--dur-fast) var(--ease-in),
+    transform var(--dur-base) var(--ease-in-out);
+}
+:host(.open) > .clip > .content {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--dur-base) var(--ease-out) 40ms,
+    transform var(--dur-slow) var(--ease-in-out) 40ms;
+}
+:host(.unroll) { transition: grid-template-rows 460ms cubic-bezier(0.32, 0.72, 0, 1); }
+:host(.unroll.open) { transition-duration: 520ms; }
+:host(.unroll) > .clip > .content { transform: translateY(10px); transition: opacity var(--dur-base) var(--ease-in) var(--fold-exit-delay), transform var(--dur-base) var(--ease-in) var(--fold-exit-delay); }
+:host(.unroll.open) > .clip > .content { transform: none; transition: opacity 460ms cubic-bezier(0.32, 0.72, 0, 1) var(--fold-enter-delay), transform 460ms cubic-bezier(0.32, 0.72, 0, 1) var(--fold-enter-delay); }
+@starting-style {
+  :host(.open.animate-open-on-mount) {
+    grid-template-rows: 0fr;
+  }
+  :host(.open.animate-open-on-mount) > .clip > .content {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--space-1)));
+  }
+  :host(.unroll.open.animate-open-on-mount) > .clip > .content {
+    transform: translateY(10px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :host,
+  :host(.unroll),
+  :host(.unroll) > .clip > .content,
+  :host(.unroll.open) > .clip > .content,
+  :host(.open) > .clip > .content,
+  .content {
+    transition: none;
+  }
+  .content {
+    transform: none;
+  }
+}

@@ -1,0 +1,52 @@
+:host {
+  display: block;
+}
+.notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--attention-soft);
+  color: var(--ink);
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+}
+.notice.danger {
+  background: var(--danger-soft);
+}
+ex-icon {
+  flex: none;
+  color: var(--attention);
+}
+.danger ex-icon {
+  color: var(--danger);
+}
+strong {
+  font-weight: var(--text-title-weight);
+}
+.notice > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.notice-enter {
+  animation: notice-enter var(--dur-base) var(--ease-out);
+}
+.notice-leave {
+  animation: notice-enter var(--dur-fast) var(--ease-in) reverse;
+  pointer-events: none;
+}
+@keyframes notice-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-1));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notice-enter,
+  .notice-leave {
+    animation: none;
+  }
+}

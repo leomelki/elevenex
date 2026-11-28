@@ -1,0 +1,51 @@
+:host {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+}
+button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  height: 26px;
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  font: var(--text-caption-size)/var(--text-caption-line) var(--font-sans);
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: background-color var(--dur-instant) var(--ease-out);
+}
+button:hover {
+  background: var(--surface-sunken);
+}
+button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.name {
+  color: var(--ink);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.folder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.add,
+.del {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-meta-size);
+  white-space: nowrap;
+}
+.add {
+  color: var(--diff-add);
+}
+.del {
+  color: var(--diff-del);
+}

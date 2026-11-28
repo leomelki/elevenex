@@ -1,0 +1,13 @@
+<div class="demo">
+  <aside class="sidebar" aria-label="Tasks">
+    <ex-task-list [tasks]="tasks()" selected="" />
+  </aside>
+  <main class="setup">
+    <div class="controls" role="group" aria-label="Setup moment">
+      @for (item of moments; track item) {
+        <button exButton size="sm" [variant]="moment() === item ? 'primary' : 'secondary'" [attr.aria-pressed]="moment() === item" (click)="moment.set(item)">{{ item }}</button>
+      }
+    </div>
+    <ex-workspace-task-setup [task]="task()" [paused]="moment() === 'paused'" />
+  </main>
+</div>

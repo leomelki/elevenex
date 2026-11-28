@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { SessionEventSubscriptions } from '../session-event-subscriptions.js';
 import { DeltaCursorStore } from '../tool-registry/delta-cursor.store.js';
 import { DeepLinkBuilder } from '../deep-link/deep-link.builder.js';
 import type { ToolContext } from '../tool-registry/tool.types.js';
@@ -9,7 +10,6 @@ import { textSearchTool } from '../tools/observe/text-search.tool.js';
 import { readFileTool } from '../tools/observe/read-file.tool.js';
 import { changeReviewTool } from '../tools/observe/change-review.tool.js';
 import { awaitSessionEventTool } from '../tools/observe/await-session-event.tool.js';
-import { pollSessionStatusTool } from '../tools/observe/poll-session-status.tool.js';
 import { getFocusedSessionTool } from '../tools/observe/get-focused-session.tool.js';
 import { grepSessionTool } from '../tools/observe/grep-session.tool.js';
 import { readSessionRangeTool } from '../tools/observe/read-session-range.tool.js';
@@ -24,7 +24,7 @@ function makeCtx(
   overrides: Partial<ToolContext> = {},
 ): ToolContext {
   return {
-    services,
+    services: { sessionEvents: new SessionEventSubscriptions(), ...services as object },
     agentSessionId: 42,
     caps: {
       isAgent: true,
@@ -70,10 +70,10 @@ describe('observe tool group', () => {
     expect(names).toEqual(
       expect.arrayContaining([
         'get_current_session',
+        'list_agent_harnesses',
         'project_overview',
         'find_sessions',
         'session_status',
-        'poll_session_status',
         'read_session',
         'grep_session',
         'read_session_range',
@@ -86,7 +86,7 @@ describe('observe tool group', () => {
         'await_session_event',
       ]),
     );
-    expect(OBSERVE_TOOLS).toHaveLength(20);
+    expect(names).not.toContain('poll_session_status');
   });
 
   describe('session_status', () => {
@@ -281,99 +281,6 @@ describe('observe tool group', () => {
         runtimeState: 'idle',
         hasQueuedWork: false,
       });
-    });
-  });
-
-  describe('poll_session_status', () => {
-    function makePollServices(
-      runtimeState: Record<string, unknown> = {},
-      sessionStatus = 'active',
-    ) {
-      const sessions = new EventEmitter() as EventEmitter & {
-        findOne: jest.Mock;
-      };
-      sessions.findOne = jest.fn(async (id: number) => ({
-        ...baseSession,
-        id,
-        status: sessionStatus,
-      }));
-      const runtimeEmitter = new EventEmitter();
-      const agentRuntime = {
-        getProvider: jest.fn(() => ({
-          getRuntimeState: jest.fn().mockResolvedValue(runtimeState),
-          on: runtimeEmitter.on.bind(runtimeEmitter),
-          off: runtimeEmitter.off.bind(runtimeEmitter),
-        })),
-      };
-      return { sessions, agentRuntime, runtimeEmitter };
-    }
-
-    it('resolves immediately when the session is already settled', async () => {
-      const { sessions, agentRuntime } = makePollServices({
-        sessionState: 'idle',
-        runPhase: 'idle',
-      });
-      const res = await pollSessionStatusTool.handler(
-        { sessionId: 7 },
-        makeCtx({ sessions, agentRuntime }),
-      );
-      expect(res.data).toMatchObject({ sessionId: 7, status: 'completed' });
-    });
-
-    it('does not resolve completed on a bare complete event while background work is live', async () => {
-      const runtimeState: Record<string, unknown> = {
-        sessionState: 'idle',
-        runPhase: 'idle',
-        backgroundWork: [{ id: 'task:1', kind: 'task', label: 'run tests' }],
-      };
-      const { sessions, agentRuntime, runtimeEmitter } =
-        makePollServices(runtimeState);
-      const ctx = makeCtx({ sessions, agentRuntime });
-
-      const pending = pollSessionStatusTool.handler({ sessionId: 7 }, ctx);
-      await new Promise((r) => setTimeout(r, 10));
-      runtimeEmitter.emit('event', {
-        type: 'complete',
-        payload: { sessionId: 7 },
-      });
-      await new Promise((r) => setTimeout(r, 10));
-
-      let settledEarly = false;
-      void pending.then(() => {
-        settledEarly = true;
-      });
-      await new Promise((r) => setTimeout(r, 10));
-      expect(settledEarly).toBe(false);
-
-      runtimeState.backgroundWork = [];
-      runtimeEmitter.emit('event', {
-        type: 'background_work',
-        payload: { sessionId: 7, backgroundWork: [] },
-      });
-
-      const res = await pending;
-      expect(res.data).toMatchObject({ sessionId: 7, status: 'completed' });
-    });
-
-    it('resolves with timeout and leaks no listeners', async () => {
-      const { sessions, agentRuntime, runtimeEmitter } = makePollServices();
-      const ctx = makeCtx({ sessions, agentRuntime });
-
-      // Access the private-ish timeout path via a very small window: the tool
-      // itself caps at 170s, so simulate a quick abort instead to exercise the
-      // same cleanup path without waiting on the real timer.
-      const controller = new AbortController();
-      const pending = pollSessionStatusTool.handler(
-        { sessionId: 7 },
-        makeCtx({ sessions, agentRuntime }, { signal: controller.signal }),
-      );
-      await new Promise((r) => setTimeout(r, 10));
-      controller.abort();
-
-      const res = await pending;
-      expect(res.data).toMatchObject({ sessionId: 7, stillRunning: true });
-      expect(sessions.listenerCount('session-status-changed')).toBe(0);
-      expect(runtimeEmitter.listenerCount('event')).toBe(0);
     });
   });
 
@@ -992,26 +899,25 @@ describe('observe tool group', () => {
   });
 
   describe('await_session_event', () => {
+    it('rejects a wait that includes the caller', async () => {
+      await expect(awaitSessionEventTool.handler(
+        { sessionIds: [7, 42], timeoutMs: 5_000 }, makeCtx({}),
+      )).rejects.toMatchObject({ code: 'cannot_wait_for_current_session' });
+    });
+
     function makeAwaitServices(
       runtimeState: Record<string, unknown> = {},
       sessionStatus = 'active',
     ) {
-      const sessions = new EventEmitter() as EventEmitter & {
-        findOne: jest.Mock;
-      };
-      sessions.findOne = jest.fn(async (id: number) => ({
-        ...baseSession,
-        id,
-        status: sessionStatus,
-      }));
-      const runtimeEmitter = new EventEmitter();
-      const agentRuntime = {
-        getProvider: jest.fn(() => ({
-          getRuntimeState: jest.fn().mockResolvedValue(runtimeState),
-          on: runtimeEmitter.on.bind(runtimeEmitter),
-          off: runtimeEmitter.off.bind(runtimeEmitter),
-        })),
-      };
+      const sessions = Object.assign(new EventEmitter(), {
+        getSessionLaunchDelivery: jest.fn().mockReturnValue(null),
+        findOne: jest.fn(async (id: number) => ({ ...baseSession, id, status: sessionStatus })),
+      });
+      const runtimeEmitter = Object.assign(new EventEmitter(), {
+        getRuntimeState: jest.fn().mockResolvedValue(runtimeState),
+        getHistory: jest.fn().mockResolvedValue([]),
+      });
+      const agentRuntime = { getProvider: jest.fn(() => runtimeEmitter) };
       return { sessions, agentRuntime, runtimeEmitter };
     }
 
@@ -1206,6 +1112,70 @@ describe('observe tool group', () => {
       expect(sessions.listenerCount('session-status-changed')).toBe(0);
       expect(runtimeEmitter.listenerCount('event')).toBe(0);
     });
+    it('returns the first cross-harness result and caps the reply without reading other sessions', async () => {
+      const { sessions, agentRuntime, runtimeEmitter } = makeAwaitServices();
+      const other = Object.assign(new EventEmitter(), {
+        getRuntimeState: jest.fn().mockResolvedValue({ sessionState: 'running', runPhase: 'running' }),
+        getHistory: jest.fn(),
+      });
+      const findOne = sessions.findOne.getMockImplementation()!;
+      sessions.findOne.mockImplementation(async id => ({
+        ...await findOne(id),
+        activeAgentProvider: id === 8 ? 'codex' : 'claude',
+      }));
+      agentRuntime.getProvider.mockImplementation((provider: string = 'claude') =>
+        provider === 'codex' ? other : runtimeEmitter,
+      );
+      runtimeEmitter.getHistory.mockResolvedValue([
+        { id: 'prompt', kind: 'user', content: 'Review' },
+        { id: 'result', kind: 'assistant', content: 'x'.repeat(8_050), assistantPhase: 'final' },
+        { id: 'progress', kind: 'assistant', content: 'Check', assistantPhase: 'commentary' },
+      ]);
+      const pending = awaitSessionEventTool.handler(
+        { sessionIds: [7, 8, 7], timeoutMs: 2_000 },
+        makeCtx({ sessions, agentRuntime }),
+      );
+      await new Promise<void>(resolve => setImmediate(resolve));
+      const result = jest.fn();
+      void pending.then(result);
+      other.emit('event', { type: 'run_state', payload: {
+        sessionId: 8, sessionState: 'idle', runPhase: 'idle', dispatchingPrompts: [{ id: 'queued' }],
+      } });
+      expect(result).not.toHaveBeenCalled();
+      runtimeEmitter.emit('event', { type: 'run_state', payload: {
+        sessionId: 7, sessionState: 'idle', runPhase: 'idle',
+      } });
+      expect(await pending).toMatchObject({
+        data: { sessionId: 7, event: 'completed', reply: { id: 'result', text: 'x'.repeat(8_000), truncated: true } },
+        truncated: true,
+      });
+      expect(other.getHistory).not.toHaveBeenCalled();
+      expect(other.listenerCount('event')).toBe(0);
+      expect(runtimeEmitter.listenerCount('event')).toBe(0);
+    });
+
+    it('shares listeners and keeps an idle child pending until its first prompt is accepted', async () => {
+      const { sessions, agentRuntime, runtimeEmitter } = makeAwaitServices({
+        sessionState: 'idle', runPhase: 'idle',
+      });
+      sessions.getSessionLaunchDelivery.mockReturnValue('dispatching');
+      const hub = new SessionEventSubscriptions();
+      const ctx = () => makeCtx({ sessions, agentRuntime, sessionEvents: hub });
+      const controller = new AbortController();
+      const cancelled = awaitSessionEventTool.handler({ sessionId: 7, timeoutMs: 2_000 }, { ...ctx(), signal: controller.signal });
+      const waiting = awaitSessionEventTool.handler({ sessionId: 7, timeoutMs: 2_000 }, ctx());
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(runtimeEmitter.listenerCount('event')).toBe(1);
+      expect(sessions.listenerCount('session-status-changed')).toBe(1);
+      controller.abort();
+      expect((await cancelled).data).toMatchObject({ event: 'aborted' });
+      expect(runtimeEmitter.listenerCount('event')).toBe(1);
+      sessions.emit('session-launch-delivery', { sessionId: 7, delivery: 'accepted' });
+      expect((await waiting).data).toMatchObject({ event: 'completed' });
+      expect(runtimeEmitter.listenerCount('event')).toBe(0);
+      expect(sessions.listenerCount('session-launch-delivery')).toBe(0);
+    });
+
   });
 
   describe('get_focused_session', () => {

@@ -1,0 +1,31 @@
+name: Desktop CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-scripts:
+    name: Release orchestration tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.3
+      - run: node --test .github/scripts/*.test.cjs
+
+  desktop:
+    name: Build and smoke-test desktop
+    uses: ./.github/workflows/reusable-build-desktop.yml
+    with:
+      source-sha: ${{ github.sha }}

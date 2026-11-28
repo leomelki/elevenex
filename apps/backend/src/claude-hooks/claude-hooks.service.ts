@@ -18,15 +18,22 @@ export interface ClaudeSessionActivity {
    * sidebar reports only the blocked turn and the session reads as stalled.
    */
   backgroundActive: boolean;
+  /** Terminal turn failure; optional for older status consumers. */
+  failed?: boolean;
 }
 
 interface StatusEntry {
   status: ClaudeActivityStatus;
   updatedAt: number;
+  actionKind: ClaudeActivityActionKind;
+  failed: boolean;
 }
 
 interface UpdateStatusOptions {
   markCompletion?: boolean;
+  requireRunning?: boolean;
+  actionKind?: ClaudeActivityActionKind;
+  failed?: boolean;
 }
 
 interface ClaudeHookPayload {
@@ -58,6 +65,7 @@ interface HandleHookEventOptions {
 export class ClaudeHooksService extends EventEmitter {
   private readonly logger = new Logger('ClaudeHooksService');
   private statuses = new Map<number, StatusEntry>();
+  private readonly terminalAgents = new Map<number, Set<string>>();
   private runtimeActivities = new Map<number, ClaudeSessionActivity>();
   private readonly invalidatedSessions = new Set<number>();
   private readonly sessionGenerations = new Map<number, number>();
@@ -92,15 +100,30 @@ export class ClaudeHooksService extends EventEmitter {
     // Only transition to 'waiting' from 'running'. A Notification that
     // arrives while idle (or after a fresh restart with no prior status) is
     // just Claude's idle-prompt notification, not a real permission request.
-    if (status === 'waiting' && prev?.status !== 'running') {
+    if (
+      status === 'waiting' &&
+      options.requireRunning !== false &&
+      prev?.status !== 'running'
+    ) {
       return;
     }
 
-    if (prev?.status === status) return; // No change
+    const actionKind =
+      status === 'waiting' ? (options.actionKind ?? null) : null;
+    const failed = options.failed === true;
+    if (
+      prev?.status === status &&
+      prev.actionKind === actionKind &&
+      prev.failed === failed
+    )
+      return;
 
     const changedAt = new Date().toISOString();
-    const entry = { status, updatedAt: Date.now() };
+    const entry = { status, updatedAt: Date.now(), actionKind, failed };
     this.statuses.set(sessionId, entry);
+    // Publish live activity before persistence: slow metadata writes must not
+    // delay status delivery. A failed write below clears this provisional state.
+    this.emitStatusChanged(sessionId);
     try {
       await this.sessionsService.markLastStateChange(sessionId, changedAt);
     } catch (error) {
@@ -123,11 +146,11 @@ export class ClaudeHooksService extends EventEmitter {
     this.logger.debug(
       `Session ${sessionId}: ${prev?.status ?? 'unknown'} → ${status}`,
     );
-    this.emitStatusChanged(sessionId);
 
     if (
       this.ownsSession(sessionId, generation) &&
       markCompletion &&
+      !failed &&
       status === 'idle' &&
       (prev?.status === 'running' || prev?.status === 'waiting')
     ) {
@@ -156,23 +179,36 @@ export class ClaudeHooksService extends EventEmitter {
 
     // An idle runtime activity is still retained when it carries background
     // work, so let the hook-driven status win while keeping that flag.
+    const hook = this.statuses.get(sessionId);
     return {
-      activityStatus: this.statuses.get(sessionId)?.status ?? 'idle',
-      actionKind: null,
-      actionLabel: null,
-      backgroundActive: runtimeActivity?.backgroundActive ?? false,
+      activityStatus: hook?.status ?? 'idle',
+      actionKind: hook?.actionKind ?? null,
+      actionLabel:
+        hook?.actionKind === 'permission'
+          ? 'Permission needed'
+          : hook?.actionKind === 'user_input'
+            ? 'Input needed'
+            : null,
+      ...(hook?.failed ? { failed: true } : {}),
+      backgroundActive:
+        (runtimeActivity?.backgroundActive ?? false) ||
+        !!this.terminalAgents.get(sessionId)?.size,
     };
   }
 
   updateRuntimeActivity(
     sessionId: number,
     activity: ClaudeSessionActivity,
-    options: { authoritative?: boolean } = {},
+    options: { authoritative?: boolean; provider?: string } = {},
   ): void {
+    if (this.invalidatedSessions.has(sessionId)) return;
     const previous = this.getActivity(sessionId);
     // Native providers own their turn state. A leftover TUI hook must not
     // revive a running indicator after their runtime has returned to idle.
-    if (options.authoritative) this.statuses.delete(sessionId);
+    if (options.authoritative) {
+      this.statuses.delete(sessionId);
+      this.terminalAgents.delete(sessionId);
+    }
     if (activity.activityStatus === 'idle' && !activity.backgroundActive) {
       this.runtimeActivities.delete(sessionId);
     } else {
@@ -184,12 +220,13 @@ export class ClaudeHooksService extends EventEmitter {
       previous.activityStatus === current.activityStatus &&
       previous.actionKind === current.actionKind &&
       previous.actionLabel === current.actionLabel &&
-      previous.backgroundActive === current.backgroundActive
+      previous.backgroundActive === current.backgroundActive &&
+      previous.failed === current.failed
     ) {
       return;
     }
 
-    this.emitStatusChanged(sessionId);
+    this.emitStatusChanged(sessionId, options.provider);
   }
 
   async handleHookEvent(
@@ -243,29 +280,88 @@ export class ClaudeHooksService extends EventEmitter {
     const event = payload.hook_event_name;
     let status: ClaudeActivityStatus | null = null;
 
+    // Terminal children can outlive the main turn. Track only the TUI bridge;
+    // native harnesses supply their own authoritative background-work snapshot.
+    if (
+      options.origin === 'tui' &&
+      (event === 'SubagentStart' || event === 'SubagentStop')
+    ) {
+      const agentId = payload.agent_id;
+      if (
+        typeof agentId === 'string' &&
+        agentId.length > 0 &&
+        agentId.length <= 256
+      ) {
+        const before = this.getActivity(sessionId).backgroundActive;
+        const agents = this.terminalAgents.get(sessionId) ?? new Set<string>();
+        if (event === 'SubagentStart') agents.add(agentId);
+        else agents.delete(agentId);
+        if (agents.size) this.terminalAgents.set(sessionId, agents);
+        else this.terminalAgents.delete(sessionId);
+        if (this.getActivity(sessionId).backgroundActive !== before)
+          this.emitStatusChanged(sessionId);
+      }
+    }
+    if (event === 'SessionEnd' && this.terminalAgents.delete(sessionId))
+      this.emitStatusChanged(sessionId);
+    const statusOptions: UpdateStatusOptions = {};
     switch (event) {
       case 'PreToolUse':
+        status =
+          payload['tool_name'] === 'AskUserQuestion' ? 'waiting' : 'running';
+        if (status === 'waiting') {
+          statusOptions.requireRunning = false;
+          statusOptions.actionKind = 'user_input';
+        }
+        break;
       case 'UserPromptSubmit':
-      case 'SubagentStart':
+      case 'PostToolUse':
+      case 'PostToolUseFailure':
+      case 'ElicitationResult':
       case 'TaskCreated':
         status = 'running';
         break;
       case 'PermissionRequest':
       case 'Elicitation':
-      case 'Notification':
         status = 'waiting';
+        statusOptions.requireRunning = false;
+        statusOptions.actionKind =
+          event === 'PermissionRequest' ? 'permission' : 'user_input';
         break;
-      case 'ElicitationResult':
-      case 'TaskCompleted':
+      case 'Notification':
+        // Authentication, idle reminders and informational notices are not
+        // pending decisions. Keep untyped notifications for older hook bridges.
+        if (
+          !payload.notification_type ||
+          payload.notification_type === 'permission_prompt' ||
+          payload.notification_type === 'elicitation_dialog'
+        ) {
+          status = 'waiting';
+          statusOptions.actionKind =
+            payload.notification_type === 'elicitation_dialog'
+              ? 'user_input'
+              : 'permission';
+        }
+        break;
+      case 'StopFailure':
+        status = 'idle';
+        statusOptions.failed = true;
+        statusOptions.markCompletion = false;
+        break;
+      case 'SessionEnd':
+        statusOptions.markCompletion = false;
+        status = 'idle';
+        break;
       case 'Stop':
         status = 'idle';
         break;
+      // Task/subagent lifecycle events do not end or resume the main turn.
       default:
         break;
     }
 
     if (status) {
-      await this.updateStatus(sessionId, status);
+      await this.updateStatus(sessionId, status, statusOptions);
     }
     if (!this.ownsSession(sessionId, generation))
       return this.emptyHookResponse();
@@ -296,6 +392,7 @@ export class ClaudeHooksService extends EventEmitter {
     const ids = new Set([
       ...this.statuses.keys(),
       ...this.runtimeActivities.keys(),
+      ...this.terminalAgents.keys(),
     ]);
     for (const id of ids) {
       result[id] = this.getActivity(id).activityStatus;
@@ -308,6 +405,7 @@ export class ClaudeHooksService extends EventEmitter {
     const ids = new Set([
       ...this.statuses.keys(),
       ...this.runtimeActivities.keys(),
+      ...this.terminalAgents.keys(),
     ]);
     for (const id of ids) {
       result[id] = this.getActivity(id);
@@ -325,6 +423,7 @@ export class ClaudeHooksService extends EventEmitter {
     this.sessionTitleInFlight.delete(sessionId);
     this.statuses.delete(sessionId);
     this.runtimeActivities.delete(sessionId);
+    this.terminalAgents.delete(sessionId);
     this.emitStatusChanged(sessionId);
   }
 
@@ -344,12 +443,13 @@ export class ClaudeHooksService extends EventEmitter {
     );
   }
 
-  private emitStatusChanged(sessionId: number): void {
+  private emitStatusChanged(sessionId: number, provider?: string): void {
     const activity = this.getActivity(sessionId);
     this.emit('status-changed', {
       sessionId,
       status: activity.activityStatus,
       ...activity,
+      ...(provider ? { provider } : {}),
     });
   }
 

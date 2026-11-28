@@ -2,10 +2,14 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ChildProcess, spawn } from 'child_process';
 import { createInterface } from 'readline';
 import {
-  buildAugmentedEnv,
+  buildAugmentedEnvAsync,
   buildSpawnCommand,
+  clearBinaryPathCache,
 } from '../config/system-paths.js';
-import { codexBinaryIdentity, resolveCodexBinary } from './codex-binary.js';
+import {
+  codexBinaryIdentity,
+  resolveCodexBinaryAsync,
+} from './codex-binary.js';
 
 const CLIENT_INFO = {
   name: 'elevenex',
@@ -20,6 +24,7 @@ const IDLE_SHUTDOWN_MS = 5 * 60_000;
 
 const INITIALIZE_TIMEOUT_MS = 15_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+const MAX_CODEX_CONTEXT_TOKENS = 1_000_000;
 
 interface PendingRequest {
   resolve(value: unknown): void;
@@ -46,6 +51,13 @@ export interface CodexAppServerRequest {
 export type AppServerRequestListener = (
   request: CodexAppServerRequest,
 ) => boolean | Promise<boolean>;
+
+/** An explicit server rejection, distinct from a transport failure or timeout. */
+export class CodexAppServerResponseError extends Error {
+  constructor(message: string, readonly code: number | undefined) {
+    super(message);
+  }
+}
 
 /**
  * Manages a single long-lived `codex app-server` process that serves all
@@ -101,7 +113,9 @@ export class CodexAppServerClient implements OnModuleDestroy {
     if (child && !child.killed) child.kill('SIGTERM');
   }
 
-  get isRunning(): boolean { return !!this.child && this.child.exitCode === null; }
+  get isRunning(): boolean {
+    return !!this.child && this.child.exitCode === null;
+  }
 
   onModuleDestroy(): void {
     this.shuttingDown = true;
@@ -173,12 +187,19 @@ export class CodexAppServerClient implements OnModuleDestroy {
     if (this.shuttingDown) {
       throw new Error('codex app-server client is shutting down');
     }
-    const binary = resolveCodexBinary();
+    // Startup model discovery runs in onModuleInit, before ShellEnvService's
+    // bootstrap hook. Wait for the coalesced shell capture before resolving
+    // the CLI or spawning it with PATH, tool homes and credentials.
+    const env = await buildAugmentedEnvAsync();
+    if (this.shuttingDown) {
+      throw new Error('codex app-server client is shutting down');
+    }
+    const binary = await resolveCodexBinaryAsync();
     const identity = await codexBinaryIdentity(binary);
     if (this.shuttingDown) {
       throw new Error('codex app-server client is shutting down');
     }
-    this.spawnChild(binary);
+    this.spawnChild(binary, env);
     this.binaryIdentity = identity;
     try {
       await this.sendRequest<unknown>(
@@ -283,14 +304,21 @@ export class CodexAppServerClient implements OnModuleDestroy {
     });
   }
 
-  private spawnChild(codexBin: string): void {
+  private spawnChild(codexBin: string, env: NodeJS.ProcessEnv): void {
     this.logger.log(`Spawning codex app-server (${codexBin})`);
     const { command, shell } = buildSpawnCommand(codexBin);
-    const child = spawn(command, ['app-server', '--listen', 'stdio://'], {
-      env: buildAugmentedEnv(),
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell,
-    });
+    const child = spawn(
+      command,
+      [
+        'app-server',
+        '--listen',
+        'stdio://',
+        // Codex clamps this override to the model's advertised maximum.
+        '-c',
+        `model_context_window=${MAX_CODEX_CONTEXT_TOKENS}`,
+      ],
+      { env, stdio: ['pipe', 'pipe', 'pipe'], shell },
+    );
     this.child = child;
 
     const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
@@ -316,8 +344,15 @@ export class CodexAppServerClient implements OnModuleDestroy {
       // Only tear down if this is still the active child — a stale handler
       // from a previously-killed instance shouldn't disrupt the new one.
       if (this.child !== child) return;
+      if ('code' in error && error.code === 'ENOENT') clearBinaryPathCache();
       this.logger.error(`codex app-server spawn error: ${String(error)}`);
-      this.tearDown(error);
+      this.tearDown(
+        'code' in error && error.code === 'ENOENT'
+          ? new Error(
+              `${error.message}. Codex must be installed on the backend machine (the remote host for SSH). Check its PATH or set ELEVENEX_CODEX_BIN to its executable path, then refresh the agent models.`,
+            )
+          : error,
+      );
     });
 
     child.once('exit', (code, signal) => {
@@ -366,7 +401,10 @@ export class CodexAppServerClient implements OnModuleDestroy {
         if (message.error) {
           const errMessage =
             (message.error?.message as string | undefined) ?? 'Unknown error';
-          pending.reject(new Error(errMessage));
+          pending.reject(new CodexAppServerResponseError(
+            errMessage,
+            typeof message.error.code === 'number' ? message.error.code : undefined,
+          ));
         } else {
           pending.resolve(message.result);
         }

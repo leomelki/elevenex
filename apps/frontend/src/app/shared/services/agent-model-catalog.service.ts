@@ -1,10 +1,13 @@
-import { computed, inject, Injectable, signal } from '@angular/core';
+import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, timeout } from 'rxjs';
 import { AgentProviderModelCatalog } from '@/shared/models/agent-model-catalog.model';
 import { getBackendOrigin } from '@/shared/runtime/runtime-config';
 
 const CATALOG_TTL_MS = 60_000;
+const UNAVAILABLE_RETRY_MS = 3_000;
+const BACKGROUND_RETRY_MS = 15_000;
+const MAX_BACKGROUND_RETRY_MS = 5 * 60_000;
 const ALL_PROVIDERS = '*';
 
 /** Bounded per-backend cache shared by settings and session pickers. */
@@ -27,10 +30,72 @@ export class AgentModelCatalogService {
   private readonly loads = new Map<string, Promise<AgentProviderModelCatalog[]>>();
   private readonly refreshes = new Map<string, Promise<AgentProviderModelCatalog[]>>();
 
+  private readonly codexPickers = new Set<symbol>();
+  private codexRetryNeeded = false;
+  private codexRetryDelay = BACKGROUND_RETRY_MS;
+  private codexRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private destroyed = false;
+
+  constructor() {
+    inject(DestroyRef).onDestroy(() => {
+      this.destroyed = true;
+      this.clearCodexRetry();
+      this.codexPickers.clear();
+    });
+  }
+
+  /** Read current backend data without restarting the CLI or using the browser cache. */
+  check(provider?: string): Promise<AgentProviderModelCatalog[]> {
+    return this.requestCatalogs(false, provider, true);
+  }
+
+  /** A visible Codex picker temporarily accelerates the shared recovery loop. */
+  watch(provider?: string): () => void {
+    if (provider !== 'codex') return () => undefined;
+    const picker = Symbol();
+    this.codexPickers.add(picker);
+    this.clearCodexRetry();
+    void this.check(provider).catch(() => undefined);
+    return () => {
+      if (!this.codexPickers.delete(picker)) return;
+      if (!this.codexPickers.size) this.codexRetryDelay = BACKGROUND_RETRY_MS;
+      this.scheduleCodexRetry();
+    };
+  }
+
+  private clearCodexRetry(): void {
+    if (this.codexRetryTimer !== null) clearTimeout(this.codexRetryTimer);
+    this.codexRetryTimer = null;
+  }
+
+  private scheduleCodexRetry(): void {
+    this.clearCodexRetry();
+    if (
+      this.destroyed ||
+      !this.codexRetryNeeded ||
+      this.loads.has('codex') ||
+      this.refreshes.has('codex') ||
+      this.refreshes.has(ALL_PROVIDERS)
+    )
+      return;
+    const foreground = this.codexPickers.size > 0;
+    const delay = foreground ? UNAVAILABLE_RETRY_MS : this.codexRetryDelay;
+    this.codexRetryTimer = setTimeout(() => {
+      this.codexRetryTimer = null;
+      if (!foreground) {
+        this.codexRetryDelay =
+          this.codexRetryDelay >= 120_000 ? MAX_BACKGROUND_RETRY_MS : this.codexRetryDelay * 2;
+      }
+      void this.check('codex').catch(() => undefined);
+    }, delay);
+  }
+
   isLoading(provider?: string): boolean {
     const pending = this.pendingProviders();
     return provider
-      ? pending.includes(ALL_PROVIDERS) || pending.includes(provider)
+      ? pending.includes(provider) ||
+          (pending.includes(ALL_PROVIDERS) &&
+            (!this.loadedAt.has(provider) || this.refreshes.has(ALL_PROVIDERS)))
       : pending.length > 0;
   }
 
@@ -55,6 +120,9 @@ export class AgentModelCatalogService {
     if (this.origin !== origin) {
       this.origin = origin;
       this.generation++;
+      this.clearCodexRetry();
+      this.codexRetryNeeded = false;
+      this.codexRetryDelay = BACKGROUND_RETRY_MS;
       this.loadedAt.clear();
       this.appliedRevision.clear();
       this.loads.clear();
@@ -70,7 +138,9 @@ export class AgentModelCatalogService {
   private requestCatalogs(
     refresh: boolean,
     provider?: string,
+    check = false,
   ): Promise<AgentProviderModelCatalog[]> {
+    if (this.destroyed) return Promise.resolve([]);
     const generation = this.syncOrigin();
     const key = provider ?? ALL_PROVIDERS;
     const forced = this.refreshes.get(ALL_PROVIDERS) ?? this.refreshes.get(key);
@@ -79,7 +149,10 @@ export class AgentModelCatalogService {
     const existing = requests.get(key);
     if (existing) return existing;
     const loadedAt = this.loadedAt.get(key);
-    if (!refresh && loadedAt !== undefined && Date.now() - loadedAt < CATALOG_TTL_MS) {
+    const ttl = this.catalogsFor(provider).some((catalog) => catalog.unavailableReason)
+      ? UNAVAILABLE_RETRY_MS
+      : CATALOG_TTL_MS;
+    if (!refresh && !check && loadedAt !== undefined && Date.now() - loadedAt < ttl) {
       return Promise.resolve(this.catalogsFor(provider));
     }
 
@@ -87,19 +160,28 @@ export class AgentModelCatalogService {
     // A full request follows any narrower forced refreshes. Provider reads
     // remain independent, even when an unrelated provider is slow.
     const priorRefreshes = provider ? [] : [...this.refreshes.values()];
+    let requestRevision = 0;
     const fetchCatalogs = () => {
       if (!this.isCurrent(generation)) return Promise.resolve([]);
       const revision = ++this.revision;
+      requestRevision = revision;
       const url = provider
         ? `/api/agent-providers/${encodeURIComponent(provider)}/models`
         : '/api/agent-providers/models';
       const response = refresh
         ? this.http.post<AgentProviderModelCatalog[]>(`${url}/refresh`, {})
         : this.http.get<AgentProviderModelCatalog[]>(url);
-      return firstValueFrom(response).then((catalogs) => {
+      const boundedResponse =
+        provider === 'codex' ? response.pipe(timeout(refresh ? 45_000 : 30_000)) : response;
+      return firstValueFrom(boundedResponse).then((catalogs) => {
         if (!this.isCurrent(generation)) return [];
         const normalized = this.normalizeAll(catalogs);
         this.applyCatalogs(normalized, revision, provider);
+        if (!provider || provider === 'codex') {
+          const codex = this.catalogs().find((catalog) => catalog.provider === 'codex');
+          this.codexRetryNeeded = !!codex && (!codex.models.length || !!codex.unavailableReason);
+          if (!this.codexRetryNeeded) this.codexRetryDelay = BACKGROUND_RETRY_MS;
+        }
         return normalized;
       });
     };
@@ -111,7 +193,9 @@ export class AgentModelCatalogService {
         : fetchCatalogs();
     const request = pending
       .catch((error) => {
-        if (this.isCurrent(generation)) {
+        const superseded = provider && (this.appliedRevision.get(provider) ?? 0) > requestRevision;
+        if (this.isCurrent(generation) && !superseded) {
+          if (!provider || provider === 'codex') this.codexRetryNeeded = true;
           this.error.set(
             refresh
               ? 'Could not refresh models. Your previous list is still available.'
@@ -124,6 +208,9 @@ export class AgentModelCatalogService {
         if (requests.get(key) === request) {
           requests.delete(key);
           this.updateLoading();
+          if (this.isCurrent(generation) && (!provider || provider === 'codex')) {
+            this.scheduleCodexRetry();
+          }
         }
       });
     requests.set(key, request);
@@ -173,7 +260,7 @@ export class AgentModelCatalogService {
   }
 
   private isCurrent(generation: number): boolean {
-    return generation === this.generation && this.origin === getBackendOrigin();
+    return !this.destroyed && generation === this.generation && this.origin === getBackendOrigin();
   }
 
   private normalizeAll(catalogs: AgentProviderModelCatalog[]): AgentProviderModelCatalog[] {

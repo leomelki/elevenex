@@ -1,0 +1,625 @@
+const appMethods = ['taskAppsRead', 'taskAppApprove', 'taskAppOpenSetupSettings', 'taskAppRevealSetupHelper', 'taskAppOutput', 'taskAppStop', 'taskAppWatch', 'taskAppUnwatch', 'taskAppFrameAck', 'taskAppInput', 'taskAppReleaseInput', 'taskAppPopOut', 'taskAppWindowContext', 'onTaskAppFrame', 'onTaskAppClosed'];
+const terminalMethods = ['taskTerminalAttach', 'taskTerminalDetach', 'taskTerminalStreamWrite', 'taskTerminalStreamResize', 'taskTerminalStreamFocus', 'taskTerminalStreamAcknowledge', 'taskTerminalContext', 'onTaskTerminalStream', 'taskTerminalPreferences', 'taskTerminalSavePreferences', 'taskTerminalList', 'taskTerminalCreate', 'taskTerminalRead', 'taskTerminalCommands', 'taskTerminalInput', 'taskTerminalResize', 'taskTerminalAction', 'taskTerminalClose', 'taskTerminalOpenPort'];
+// Run with Electron after building. This exercises the real sandboxed preload
+// and app:// handler, rather than Node mocks. Not part of the headless unit suite.
+const { app, BrowserWindow, Menu, nativeTheme, nativeImage, clipboard, ClipboardItem } = require('electron');
+terminalMethods.push('taskTerminalCopyPort');
+const assert = require('node:assert/strict');
+process.on('uncaughtException', error => { console.error('Uncaught smoke error:', error); app.exit(1); });
+const { mkdtempSync } = require('node:fs');
+const { rm } = require('node:fs/promises');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
+const { createServer } = require('node:http');
+const { WebSocketServer } = require('../../backend/node_modules/ws');
+const { URL } = require('node:url');
+const { BackendManager } = require('../dist/backend/manager');
+const { backendRelease } = require('../dist/backend/release');
+const remoteContract = require('./remote-contract.cjs');
+const machineContract = require('./machine-contract.cjs');
+const workspaceContract = require('./workspace-contract.cjs');
+const outputRow = {
+  id: 'output', kind: 'tool_result', text: '', timestamp: '', toolId: 'command',
+  toolKind: null, toolName: null, input: '', error: false, truncated: false,
+};
+const chatTool = {
+  taskId: 1, sessionId: 2,
+  item: { id: 'command', revision: 'b'.repeat(64), record: {
+    id: 'command', kind: 'tool_use', text: '', timestamp: '', toolId: 'command',
+    toolKind: 'bash', toolName: 'Command', input: '{"command":"pnpm test"}', error: false, truncated: false,
+  } },
+  result: { id: 'output', revision: 'c'.repeat(64), record: {
+    ...outputRow, text: 'Tests passed', execution: { exitCode: 0 },
+  } },
+};
+const chatWork = {
+  taskId: 1, sessionId: 2, turnId: 'prompt', revision: 'a'.repeat(64), offset: 1, total: 2, nextOffset: null,
+  items: [{ ...outputRow, toolDetails: { revision: chatTool.result.revision },
+    invocation: { id: chatTool.item.id, toolKind: 'bash', toolDetails: { revision: chatTool.item.revision, summary: 'pnpm test' } } }],
+};
+const chatTimeline = {
+  taskId: chatWork.taskId, sessionId: chatWork.sessionId, turnId: chatWork.turnId, revision: chatWork.revision,
+  offset: 0, total: 2, nextOffset: null, timeline: [
+    { id: 'command', kind: 'call', toolKind: 'bash', label: 'pnpm test', resultId: 'output' }, null,
+  ],
+};
+const savedChatTool = {
+  ...chatTool, turnId: chatWork.turnId,
+  item: { ...chatTool.item, revision: chatWork.revision },
+  result: { ...chatTool.result, revision: chatWork.revision },
+};
+const chatStreamMethods = ['sessionChatWatch', 'sessionChatUnwatch', 'sessionChatAcknowledge', 'onSessionChatStream'];
+const chatStreamCursor = 'a'.repeat(36) + ':1:0';
+const chatPromptEdit = { taskId: 1, sessionId: 2, itemId: 'saved-prompt', text: 'Original text',
+  revision: 'd'.repeat(64), laterPrompts: 1, keepsContext: false };
+const chatDelivery = { taskId: 1, sessionId: 2, deliveryId: '12345678-1234-4234-8234-123456789abc', status: 'accepted' };
+const editActions = [];
+const testAppRun = { runId: '50cbfe13-ccf4-4920-864b-b3a14cde5593', taskId: 1, name: 'Electron', startedAt: 12, mode: 'stream', status: 'requested', setupIssue: 'macos-screen-recording', pendingLaunch: { executable: 'pnpm', args: ['desktop:dev'] } };
+let approvedApps = 0;
+let settingsOpened = 0;
+let helperReveals = 0;
+
+// Replace only the composition boundary in this test process. Native IPC and
+// preload are real; download/process behavior has separate integration tests.
+// No test hooks, fixture paths or switches enter the production bridge.
+const backendRoot = mkdtempSync(join(tmpdir(), 'elevenex-electron-backend-'));
+app.setPath('appData', backendRoot);
+const revision = 'a'.repeat(40);
+let backendUrl;
+const deletedUnusedSessions = [];
+let taskKeptOpen = false;
+const terminalRows = new Map();
+const terminalOwners = [];
+let terminalCleanupCount = 0;
+require('../dist/backend/application').createApplicationBackend = () => new BackendManager({
+  root: backendRoot,
+  release: async () => backendRelease({ version: revision, tag: `runtime-${revision}` }, process.platform, process.arch),
+  install: async () => ({ directory: backendRoot, entry: '', executable: '' }),
+  start: async () => {
+    let holdBrowserAuthorization = false;
+    const browserAuthorizations = new Set();
+    let holdBrowserTask = false;
+    let browserTaskThreeClosed = false;
+    const browserTaskReads = new Set();
+    const browserTask = response => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ id: 1, repoId: 1, state: 'ready', identity: 'c'.repeat(64) }));
+    };
+    const authorizeBrowser = response => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ taskId: 1, sessionId: 2, available: true }));
+    };
+    const http = createServer((request, response) => {
+      const { pathname, searchParams } = new URL(request.url, 'http://127.0.0.1');
+      if (pathname === '/api/task-apps/1/' + testAppRun.runId + '/setup-settings') {
+        assert.equal(request.method, 'POST');
+        settingsOpened++;
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ opened: true }));
+        return;
+      }
+      if (pathname === '/api/task-apps/1/' + testAppRun.runId + '/setup-helper') {
+        assert.equal(request.method, 'POST');
+        helperReveals++;
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ path: '/runtime/bin/Elevenex Agent.app', revealed: true }));
+        return;
+      }
+      if (pathname === '/api/task-apps/1/' + testAppRun.runId + '/approve') {
+        assert.equal(request.method, 'POST');
+        approvedApps++;
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ approved: true })); return;
+      }
+      if (pathname === '/api/desktop-workspace/tasks/1/sessions/2/delete') {
+        assert.equal(request.method, 'POST');
+        request.resume(); deletedUnusedSessions.push(2);
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ accepted: true })); return;
+      }
+      if (pathname === '/api/desktop-workspace/tasks/1/keep-open') {
+        assert.equal(request.method, 'POST');
+        taskKeptOpen = true;
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({
+          id: 1, projectId: 1, repoId: 1, name: 'Review', branchName: 'review',
+          stage: 'active', state: 'ready', archivedAt: null, updatedAt: new Date().toISOString(),
+        }));
+        return;
+      }
+      if (pathname === '/hold-browser-task') { holdBrowserTask = true; response.end(); return; }
+      if (pathname === '/browser-task-pending') { response.end(String(browserTaskReads.size)); return; }
+      if (pathname === '/release-browser-task') {
+        holdBrowserTask = false;
+        for (const pending of browserTaskReads) browserTask(pending);
+        browserTaskReads.clear(); response.end(); return;
+      }
+      if (pathname === '/api/desktop-browser/tasks/1' && !searchParams.has('lifecycle') && holdBrowserTask) {
+        browserTaskReads.add(response);
+        response.once('close', () => browserTaskReads.delete(response));
+        return;
+      }
+      if (pathname === '/close-browser-task-three') { browserTaskThreeClosed = true; response.end(); return; }
+      if (pathname === '/api/desktop-browser/tasks/3' && browserTaskThreeClosed) {
+        response.writeHead(400, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ message: 'Task is not active' }));
+        return;
+      }
+      if (pathname === '/hold-browser-authorization') { holdBrowserAuthorization = true; response.end(); return; }
+      if (pathname === '/browser-authorization-pending') { response.end(String(browserAuthorizations.size)); return; }
+      if (pathname === '/release-browser-authorization') {
+        holdBrowserAuthorization = false;
+        for (const pending of browserAuthorizations) authorizeBrowser(pending);
+        browserAuthorizations.clear(); response.end(); return;
+      }
+      if (pathname === '/browser-test') {
+        response.writeHead(200, { 'content-type': 'text/html', 'access-control-allow-origin': '*' });
+        response.end('<!doctype html><html><body style="margin:20px"><h1>Task browser native test</h1><div id="scroll-target" style="height:80px;overflow:auto"><div style="height:500px">Nested scroll area</div></div><button style="margin:60px" onclick="window.clicks++">Pick this</button><input type="password"><input autocomplete="cc-number"><iframe src="about:blank"></iframe><script>window.clicks=0</script></body></html>'); return;
+      }
+      if (request.method === 'POST' && pathname === '/api/desktop-browser/authorize') {
+        request.resume();
+        if (holdBrowserAuthorization) {
+          browserAuthorizations.add(response);
+          response.once('close', () => browserAuthorizations.delete(response));
+        } else authorizeBrowser(response);
+        return;
+      }
+      if (request.method === 'POST' && pathname === '/api/desktop-browser/poll') {
+        request.resume(); response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ command: null, ports: [] })); return;
+      }
+      if (pathname === '/api/desktop-workspace/tasks/1/terminals') {
+        response.setHeader('content-type', 'application/json');
+        if (request.method === 'GET') {
+          response.end(JSON.stringify({ taskId: 1, terminals: [...terminalRows.values()], scripts: [], limit: 16 }));
+        } else {
+          assert.equal(request.method, 'POST');
+          let body = '';
+          request.on('data', chunk => { body += chunk; });
+          request.on('end', () => {
+            const { owner } = JSON.parse(body);
+            assert.match(owner, /^[a-f\d-]{36}$/);
+            terminalOwners.push(owner);
+            const terminal = { id: terminalOwners.length, taskId: 1, title: 'shell', cwd: '/task', branch: 'work', generation: owner, sequence: 0, alive: true, status: 'idle', command: '', exitCode: null, port: null, canRerun: false };
+            terminalRows.set(terminal.id, terminal);
+            response.end(JSON.stringify(terminal));
+          });
+        }
+        return;
+      }
+      if (pathname.startsWith('/api/desktop-workspace/terminal-owners/')) {
+        assert.equal(request.method, 'DELETE');
+        const owner = pathname.split('/').at(-1);
+        assert.equal(owner, terminalOwners.at(-1));
+        terminalCleanupCount++;
+        terminalRows.clear();
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ accepted: true }));
+        return;
+      }
+      if (request.method === 'POST' && pathname === '/api/desktop-workspace/tasks/1/sessions/2/chat/attachments') {
+        request.resume();
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ id: '11111111-1111-4111-8111-111111111111', offset: 3, path: '/private/chat-attachments/2/11111111-1111-4111-8111-111111111111/notes.txt' }));
+        return;
+      }
+      if (request.method === 'POST' && pathname === '/api/desktop-workspace/tasks/1/sessions/2/chat') {
+        let body = '';
+        request.on('data', chunk => { body += chunk; });
+        request.on('end', () => {
+          editActions.push(JSON.parse(body));
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ accepted: true }));
+        });
+        return;
+      }
+      if (pathname === '/api/desktop-workspace/tasks/1/sessions/2/chat/events') {
+        assert.equal(request.headers.accept, 'text/event-stream');
+        assert.equal(searchParams.get('loadingMode'), 'progressive');
+        const page = {
+          taskId: 1, sessionId: 2, cursor: chatStreamCursor, reset: true, before: null, next: null, items: [], events: [],
+          state: {
+            provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [],
+            reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null,
+            queue: [], queuePaused: false, permission: null, question: null, activity: [],
+          },
+        };
+        response.writeHead(200, { 'content-type': 'text/event-stream' });
+        response.write(`id: ${chatStreamCursor}\nevent: chat\ndata: ${JSON.stringify({ after: null, page })}\n\n`);
+        return;
+      }
+      const responses = {
+        '/api/info': { backendSha: revision },
+        '/api/task-apps/1': [testAppRun],
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/agent': { agentId: 'child', label: 'Reviewer', status: 'waiting', prompt: '', model: null, context: null, items: [], before: null, availability: 'starting', message: 'Waiting for the first message' },
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/media': { itemId: 'image', mediaId: '0', source: 'data:image/png;base64,iVBORw0KGgo=' },
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/catalog': { provider: 'claude', label: 'Claude Code', models: [{ id: 'sonnet', label: 'Sonnet', reasoningEfforts: ['high'], supportsFastMode: false }], model: 'sonnet', reasoning: 'high', fast: false, reasoningAvailable: true, fastAvailable: false, error: null },
+        '/api/desktop-workspace/revision': { revision: 0, version: 1 },
+        '/api/desktop-workspace/projects': { items: [], nextCursor: null },
+        '/api/desktop-workspace/tasks': { items: [], nextCursor: null },
+        '/api/desktop-browser/tasks/1': { id: 1, repoId: 1, state: 'ready', identity: 'c'.repeat(64) },
+        '/api/desktop-browser/tasks/3': { id: 3, repoId: 1, state: 'ready', identity: 'd'.repeat(64) },
+        '/api/desktop-browser/tasks/4': { id: 4, repoId: 1, state: 'ready', identity: 'e'.repeat(64) },
+        '/api/desktop-browser/tasks/5': { id: 5, repoId: 1, state: 'ready', identity: 'f'.repeat(64) },
+        '/api/desktop-browser/tasks/6': { id: 6, repoId: 1, state: 'ready', identity: 'a'.repeat(64) },
+        '/api/desktop-workspace/tasks/1/git': { taskId: 1, branch: 'work', upstream: null, ahead: 0, behind: 0, files: 1, additions: 3, deletions: 1, conflicted: false, changesRevision: 'b'.repeat(64) },
+        '/api/desktop-workspace/folders': [],
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/changes': { turnId: 'reply', revision: 'a'.repeat(64), offset: 0, files: [], total: 0, nextOffset: null, content: null },
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/turn-work': searchParams.has('timeline') ? chatTimeline : chatWork,
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/tool-details': searchParams.has('turnId') ? savedChatTool : chatTool,
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/prompt-edit': chatPromptEdit,
+        ['/api/desktop-workspace/tasks/1/sessions/2/chat/delivery/' + chatDelivery.deliveryId]: chatDelivery,
+      };
+      assert.equal(request.method, 'GET');
+      assert.ok(Object.hasOwn(responses, pathname), `Unexpected smoke endpoint: ${pathname}`);
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(responses[pathname]));
+    });
+    const browserSocket = new WebSocketServer({ noServer: true, maxPayload: 1024, perMessageDeflate: false });
+    http.on('upgrade', (request, socket, head) => {
+      if (request.url !== '/browser-socket') { socket.destroy(); return; }
+      browserSocket.handleUpgrade(request, socket, head, peer => peer.on('message', (message, binary) => peer.send(message, { binary })));
+    });
+    await new Promise(resolve => http.listen(0, '127.0.0.1', resolve));
+    backendUrl = `http://127.0.0.1:${http.address().port}`;
+    let stopped;
+    const exited = new Promise(resolve => { stopped = resolve; });
+    return { url: backendUrl, exited, stop: async () => {
+      for (const socket of browserSocket.clients) socket.terminate();
+      await new Promise(resolve => browserSocket.close(resolve));
+      assert.equal(terminalRows.size, 0, 'terminal cleanup must precede engine shutdown');
+      await new Promise(resolve => { http.close(resolve); http.closeAllConnections(); });
+      stopped({ code: 0, signal: null });
+    } };
+  },
+});
+
+const timeout = setTimeout(() => { console.error('Electron smoke test timed out'); for(const window of BrowserWindow.getAllWindows())window.destroy(); app.exit(1); }, 60000);
+function nextWindow() {
+  return new Promise((resolve, reject) => {
+    app.once('browser-window-created', (_event, window) => {
+      window.webContents.once('did-finish-load', () => resolve(window));
+      window.webContents.once('did-fail-load', (_event, code, message) => reject(new Error(`${code}: ${message}`)));
+    });
+  });
+}
+const firstWindow = nextWindow();
+require('../dist/main.js');
+
+void (async () => {
+  const window = await firstWindow;
+  assert.equal(app.name, 'Elevenex Desktop Development');
+  assert.equal(app.getPath('userData'), join(backendRoot, 'Elevenex Desktop Development'));
+  assert.equal(app.getPath('sessionData'), app.getPath('userData'));
+  assert.equal(app.hasSingleInstanceLock(), true);
+  for (const [file, size] of [['icon.png', 512], ['trayTemplate.png', 22], ['trayTemplate@2x.png', 22]]) {
+    const icon = nativeImage.createFromPath(require.resolve(`../assets/icons/${file}`));
+    assert.equal(icon.isEmpty(), false);
+    assert.deepEqual(icon.getSize(), { width: size, height: size });
+  }
+  const prefs = window.webContents.getLastWebPreferences();
+  assert.equal(prefs.contextIsolation, true);
+  assert.equal(prefs.nodeIntegration, false);
+  assert.equal(prefs.sandbox, true);
+  if (process.platform === 'win32') assert.equal(window.isWindowMessageHooked(0x00a1), true); // WM_NCLBUTTONDOWN
+  // Real app:// + sandboxed preload + native clipboard, with browser clipboard
+  // permissions denied. Native formats that Electron cannot read cannot be
+  // restored, so leave that clipboard untouched and skip only the round-trip.
+  const clipboardItems = await clipboard.read();
+  if (clipboardItems.every(item => item.types.length > 0)) {
+    const savedClipboard = await Promise.all(clipboardItems.map(async item =>
+      new ClipboardItem(Object.fromEntries(await Promise.all(item.types.map(async type => [type, await item.getType(type)]))))));
+    try {
+      for (const text of ['fix/clipboard', '  café 👩🏽‍💻\n\t代码\n', 'first\r\nsecond\r\n', '', 'large output\n'.repeat(10000)]) {
+        await window.webContents.executeJavaScript(`window.elevenex.writeClipboardText(${JSON.stringify(text)})`);
+        const copied = await clipboard.readText();
+        // Windows normalizes plain-text newlines to CRLF for native applications.
+        assert.equal(copied.replaceAll('\r\n', '\n'), text.replaceAll('\r\n', '\n'));
+      }
+    } finally {
+      await clipboard.write(savedClipboard);
+    }
+  } else {
+    console.warn('Skipping native clipboard round-trip: clipboard contains unreadable formats.');
+  }
+  assert.equal(await window.webContents.executeJavaScript('window.elevenex.writeClipboardText({html:"bad"}).then(()=>false,()=>true)'), true);
+  const bridge = await window.webContents.executeJavaScript(`(async () => ({
+    node: typeof require,
+    keys: Object.keys(window.elevenex).sort(),
+    version: await window.elevenex.appVersion(),
+    status: await window.elevenex.gitStatus('/mock/workspace'),
+    invalidRejected: await window.elevenex.gitStatus('').then(() => false, () => true),
+    backend: await window.elevenex.retryBackend(),
+  }))()`);
+  assert.equal(bridge.node, 'undefined');
+  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'onTitleBarPressed', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, ...terminalMethods, ...appMethods, ...chatStreamMethods, 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatTurnWork', 'sessionChatToolDetails', 'sessionChatDelivery', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatPromptEdit', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserConfigure', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'].sort());
+  assert.equal(typeof bridge.version, 'string');
+  assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
+  assert.equal(bridge.invalidRejected, true);
+  assert.deepEqual(bridge.backend, { phase: 'ready', version: revision, url: backendUrl });
+  const machine = await window.webContents.executeJavaScript('window.elevenex.machineState()');
+  assert.equal(machine.hasOpenedMachine, false);
+  assert.equal(machine.localBackend.phase, 'ready');
+  const opened = await window.webContents.executeJavaScript('window.elevenex.markMachineOpened({kind:"local"})');
+  assert.equal(opened.hasOpenedMachine, true);
+  assert.ok(opened.revision > machine.revision);
+  const edited = await window.webContents.executeJavaScript('window.elevenex.editMachine({kind:"local"},{name:"My Mac",hue:"rose"})');
+  assert.deepEqual(edited.localAppearance, { name: 'My Mac', hue: 'rose' });
+  assert.equal(await window.webContents.executeJavaScript('window.elevenex.editMachine({kind:"local"},{name:"bad",hue:"rose",host:"evil"}).then(()=>false,()=>true)'), true);
+  const undo = await window.webContents.executeJavaScript(`(async () => {
+    const host = await window.elevenex.saveRemoteHost({name:'Saved test machine',host:'unused-test-host',hue:'plum'},null);
+    const removed = await window.elevenex.removeMachine(host.id,false);
+    const restored = await window.elevenex.undoRemoveMachine(removed.undoToken);
+    const again = await window.elevenex.removeMachine(host.id,false);
+    await window.elevenex.dismissMachineRemoval(again.undoToken);
+    return {id:host.id,removed:removed.state.hosts.length,restored:restored.hosts[0]};
+  })()`);
+  assert.equal(undo.removed, 0); assert.equal(undo.restored.id, undo.id); assert.equal(undo.restored.hue, 'plum');
+  assert.equal(await window.webContents.executeJavaScript('window.elevenex.openMachineWindow({kind:"remote",hostId:"unknown"}).then(()=>false,()=>true)'), true);
+  const firstScope = await window.webContents.executeJavaScript('window.elevenex.backendClientState()');
+  assert.equal(firstScope.scope.environment.kind, 'local');
+  const chatStream = await window.webContents.executeJavaScript(`(async () => {
+    const scope = ${JSON.stringify(firstScope.scope.id)};
+    const watch = { taskId: 1, sessionId: 2, watchId: 'native-stream', loadingMode: 'progressive' };
+    let stop;
+    let timer;
+    const first = new Promise((resolve, reject) => {
+      stop = window.elevenex.onSessionChatStream(event => { if (event.type === 'page') resolve(event); });
+      timer = setTimeout(() => reject(new Error('Chat stream smoke timed out')), 5000);
+    });
+    try {
+      const rejected = await window.elevenex.sessionChatWatch(scope, { ...watch, after: 'bad cursor' }).then(() => false, () => true);
+      const stale = await window.elevenex.sessionChatWatch('b'.repeat(36), watch);
+      const started = await window.elevenex.sessionChatWatch(scope, watch);
+      const event = await first;
+      await window.elevenex.sessionChatAcknowledge(scope, watch.watchId, event.delivery);
+      return { rejected, stale: stale.error?.code, started, event };
+    } finally {
+      clearTimeout(timer);
+      stop();
+      await window.elevenex.sessionChatUnwatch(scope, watch.watchId);
+    }
+  })()`);
+  assert.equal(chatStream.rejected, true);
+  assert.equal(chatStream.stale, 'stale-scope');
+  assert.equal(chatStream.started.ok, true);
+  assert.equal(chatStream.event.watchId, 'native-stream');
+  assert.equal(chatStream.event.page.cursor, chatStreamCursor);
+  assert.equal(chatStream.event.page.sessionId, 2);
+  const { taskId, sessionId, turnId, revision: turnRevision, offset } = chatWork;
+  const workRequest = { taskId, sessionId, turnId, revision: turnRevision, offset, requestId: 'activity', deferToolDetails: true, limit: 512 };
+  assert.deepEqual(await window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatTurnWork(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(workRequest)})`),
+  { ok: true, value: chatWork });
+  const toolRequest = { taskId, sessionId, item: { id: chatTool.item.id, revision: chatTool.item.revision },
+    result: { id: chatTool.result.id, revision: chatTool.result.revision }, requestId: 'tool-details' };
+  assert.deepEqual(await window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatToolDetails(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(toolRequest)})`),
+  { ok: true, value: chatTool });
+  const timelineRequest = { ...workRequest, requestId: 'timeline', offset: 0, timeline: true };
+  assert.deepEqual(await window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatTurnWork(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(timelineRequest)})`),
+  { ok: true, value: chatTimeline });
+  const savedToolRequest = { ...toolRequest, turnId, item: { id: 'command', revision: turnRevision }, result: { id: 'output', revision: turnRevision } };
+  assert.deepEqual(await window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatToolDetails(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(savedToolRequest)})`),
+  { ok: true, value: savedChatTool });
+  const deliveryRead = { taskId, sessionId, deliveryId: chatDelivery.deliveryId, requestId: 'receipt' };
+  assert.deepEqual(await window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatDelivery(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(deliveryRead)})`),
+  { ok: true, value: chatDelivery });
+  const editRead = { taskId, sessionId, itemId: chatPromptEdit.itemId, requestId: 'read-edit' };
+  const editAction = { type: 'edit-prompt', itemId: chatPromptEdit.itemId, revision: chatPromptEdit.revision, text: 'Revised text' };
+  assert.deepEqual(await window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatPromptEdit(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(editRead)})`),
+  { ok: true, value: chatPromptEdit });
+  assert.deepEqual(await window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatCommand(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify({ taskId, sessionId, action: editAction })})`),
+  { ok: true, value: { accepted: true } });
+  assert.deepEqual(editActions, [editAction]);
+  const deletedUnused = await window.webContents.executeJavaScript(`window.elevenex.workspaceDeleteSession('${firstScope.scope.id}', {taskId:1,sessionId:2})`);
+  assert.deepEqual(deletedUnused, {ok:true,value:{accepted:true}});
+  assert.deepEqual(deletedUnusedSessions, [2]);
+  const kept = await window.webContents.executeJavaScript(`window.elevenex.workspaceKeepTaskOpen('${firstScope.scope.id}', 1)`);
+  assert.equal(kept.ok, true);
+  assert.equal(kept.value.temporary, undefined);
+  assert.equal(taskKeptOpen, true);
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.workspaceDeleteSession('${firstScope.scope.id}', {taskId:1,sessionId:0}).then(()=>false,()=>true)`), true);
+  console.log('Unstarted session deletion passed through the sandboxed preload and scoped HTTP adapter');
+  const appRuns = await window.webContents.executeJavaScript(`window.elevenex.taskAppsRead('${firstScope.scope.id}', 1)`);
+  assert.deepEqual(appRuns, { ok: true, value: [testAppRun] });
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.taskAppOpenSetupSettings('stale',1,'${testAppRun.runId}').then(r => r.error.code)`), 'stale-scope');
+  assert.equal(settingsOpened, 0);
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.taskAppOpenSetupSettings('${firstScope.scope.id}',1,'${testAppRun.runId}').then(r => r.ok)`), true);
+  assert.equal(settingsOpened, 1);
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.taskAppRevealSetupHelper('stale',1,'${testAppRun.runId}').then(r => r.error.code)`), 'stale-scope');
+  assert.equal(helperReveals, 0);
+  assert.deepEqual(await window.webContents.executeJavaScript(`window.elevenex.taskAppRevealSetupHelper('${firstScope.scope.id}',1,'${testAppRun.runId}').then(r => r.value)`),
+    { path: '/runtime/bin/Elevenex Agent.app', revealed: true });
+  assert.equal(helperReveals, 1);
+  assert.equal(approvedApps, 0);
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.taskAppApprove('stale',1,'${testAppRun.runId}').then(r => r.error.code)`), 'stale-scope');
+  assert.equal(approvedApps, 0);
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.taskAppApprove('${firstScope.scope.id}',1,'${testAppRun.runId}').then(r => r.ok)`), true);
+  assert.equal(approvedApps, 1);
+  console.log('Task Apps run metadata, stale-scope rejection and explicit launch approval passed through native IPC.');
+  await require('./browser-picker-native.cjs')();
+  await require('./browser-order-native.cjs')();
+  await require('./browser-machine-native.cjs')();
+  await require('./browser-local-native.cjs')();
+  const browserSite = await require('./browser-site.cjs')();
+  window.once('closed', () => { void browserSite.close(); });
+  await require('./browser-code-native.cjs')();
+  await require('./browser-playwright-native.cjs')();
+  const reconnectingBrowserPage = await require('./browser-native.cjs')(window, firstScope.scope.id, browserSite.url, backendUrl);
+  const gitSummary = await window.webContents.executeJavaScript(`window.elevenex.workspaceGit('${firstScope.scope.id}', 1)`);
+  assert.equal(gitSummary.ok, true); assert.equal(gitSummary.value.changesRevision, 'b'.repeat(64));
+  assert.deepEqual(await window.webContents.executeJavaScript(`window.elevenex.backendInfo('${firstScope.scope.id}')`), {
+    ok: true, value: { backendSha: revision },
+  });
+  const childAgent = await window.webContents.executeJavaScript(`window.elevenex.sessionChatAgent('${firstScope.scope.id}', { taskId: 1, sessionId: 2, agentId: 'child', requestId: 'smoke-agent' })`);
+  assert.equal(childAgent.ok, true); assert.equal(childAgent.value.status, 'waiting');
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.sessionChatAgent('${firstScope.scope.id}', { taskId: 1, sessionId: 2, agentId: '../escape', requestId: 'smoke-agent-invalid' }).then(() => false, () => true)`), true);
+  const uploadedFile = await window.webContents.executeJavaScript(`window.elevenex.sessionChatUpload('${firstScope.scope.id}', { taskId: 1, sessionId: 2, requestId: 'smoke-upload', id: '11111111-1111-4111-8111-111111111111', name: 'notes.txt', size: 3, offset: 0, data: 'YWJj' })`);
+  assert.equal(uploadedFile.ok, true);
+  assert.equal(uploadedFile.value.offset, 3);
+  const chatImage = await window.webContents.executeJavaScript(`window.elevenex.sessionChatMedia('${firstScope.scope.id}', { taskId: 1, sessionId: 2, itemId: 'image', mediaId: '0', requestId: 'smoke-media' })`);
+  assert.equal(chatImage.ok, true); assert.equal(chatImage.value.source, 'data:image/png;base64,iVBORw0KGgo=');
+  const presetCatalog = await window.webContents.executeJavaScript(`window.elevenex.sessionChatCatalog('${firstScope.scope.id}', { taskId: 1, sessionId: 2, requestId: 'smoke-catalog', provider: 'claude' })`);
+  assert.equal(presetCatalog.ok, true);
+  assert.equal(presetCatalog.value.models[0].id, 'sonnet');
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.backendInfo('').then(() => false, () => true)`), true);
+  const changes = await window.webContents.executeJavaScript(`window.elevenex.sessionChatChanges('${firstScope.scope.id}', { taskId: 1, sessionId: 2, requestId: 'smoke-review', turnId: 'reply', offset: 0 })`);
+  assert.equal(changes.ok, true); assert.equal(changes.value.turnId, 'reply'); assert.equal(changes.value.total, 0);
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.sessionChatChanges('${firstScope.scope.id}', { taskId: 1, sessionId: 2, requestId: 'invalid-review', turnId: 'reply', offset: -1 }).then(() => false, () => true)`), true);
+  // Exercise the production deferred workspace through app://, real IPC and HTTP.
+  // This also catches missing style nonces when its lazy components are mounted.
+  await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+    const until = Date.now() + 10000;
+    const open = () => {
+      const card = document.querySelector('[data-machine="local"]');
+      if (card && !card.disabled) { card.click(); resolve(); }
+      else if (Date.now() > until) reject(new Error('Machine Home did not render'));
+      else setTimeout(open, 25);
+    };
+    open();
+  })`);
+  const workspace = await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+    const until = Date.now() + 10000;
+    const inspect = () => {
+      const project = document.querySelector('ex-workspace-onboarding ex-new-project');
+      const shell = document.querySelector('ex-machine-workspace ex-app-shell');
+      const opened = document.querySelector('ex-machine-launch .launch.open ex-machine-workspace:not([inert])');
+      if (project && shell && opened) resolve({ titles: document.querySelectorAll('ex-title-bar').length,
+        display: getComputedStyle(shell).display, cardDisplay: getComputedStyle(project).display,
+        inert: document.querySelector('.workspace-frame').hasAttribute('inert') });
+      else if (Date.now() > until) reject(new Error('Connected workspace did not render'));
+      else setTimeout(inspect, 25);
+    };
+    inspect();
+  })`);
+  assert.deepEqual(workspace, { titles: 1, display: 'flex', cardDisplay: 'block', inert: true });
+  await window.webContents.executeJavaScript(`window.smokeClientEvents = [];
+    window.smokeStopClient = window.elevenex.onBackendClientChanged(state => window.smokeClientEvents.push(state)); void 0;`);
+  const remote = await window.webContents.executeJavaScript(`(async () => {
+    const hosts = await window.elevenex.remoteHosts();
+    const state = await window.elevenex.environmentStatus();
+    const invalid = await window.elevenex.saveRemoteHost({name:'bad',host:'-oProxyCommand=evil'},null).then(()=>false,()=>true);
+    const workspace = {panel:'browser',panelOpen:true,wideReview:false,closed:false,focused:false,filter:null,projectCursor:null,taskCursor:null};
+    await window.elevenex.saveEnvironmentContext({projectId:null,taskId:null,sessionId:null,draft:'unsent',cursor:'cursor',workspace}, {kind:'local'});
+    const saved = await window.elevenex.environmentStatus();
+    const invalidLayout = await window.elevenex.saveEnvironmentContext({...saved.context,workspace:{...workspace,panel:'invalid'}}, {kind:'local'}).then(()=>false,()=>true);
+    return {hosts,state,invalid,saved,invalidLayout};
+  })()`);
+  assert.deepEqual(remote.hosts, []); assert.equal(remote.state.selection.kind, 'local'); assert.equal(remote.invalid, true);
+  assert.equal(remote.saved.context.workspace.panel, 'browser'); assert.equal(remote.saved.context.workspace.panelOpen, true);
+  assert.equal(remote.invalidLayout, true);
+  await window.webContents.executeJavaScript(`window.smokeBackendReady = new Promise(resolve => {
+    window.smokeBackendUnsubscribe = window.elevenex.onBackendChanged(status => { if (status.phase === 'ready') resolve(status); });
+  }); void 0;`);
+  await window.webContents.executeJavaScript('window.elevenex.restartBackend()');
+  assert.equal((await window.webContents.executeJavaScript('window.smokeBackendReady')).phase, 'ready');
+  await window.webContents.executeJavaScript('window.smokeBackendUnsubscribe()');
+  const restartedScope = await window.webContents.executeJavaScript('window.elevenex.backendClientState()');
+  assert.notEqual(restartedScope.scope.id, firstScope.scope.id);
+  const browserUntil = Date.now() + 3000;
+  while (!reconnectingBrowserPage.isDestroyed() && Date.now() < browserUntil) await new Promise(resolve => setTimeout(resolve, 25));
+  assert.equal(reconnectingBrowserPage.isDestroyed(), true, 'Scope change must destroy native pages and release observations');
+  const restoredBrowser = await window.webContents.executeJavaScript(`window.elevenex.taskBrowserRead('${restartedScope.scope.id}', 1)`);
+  assert.equal(restoredBrowser.ok, true);
+  assert.equal(restoredBrowser.value.tabs.length, 1);
+  assert.equal(restoredBrowser.value.tabs[0].driver, 'you');
+  assert.equal(restoredBrowser.value.tabs[0].url.includes('private-query'), false);
+  await window.webContents.executeJavaScript(`window.elevenex.taskBrowserHide('${restartedScope.scope.id}', 1)`);
+  assert.equal((await window.webContents.executeJavaScript(`window.elevenex.backendInfo('${firstScope.scope.id}')`)).error.code, 'stale-scope');
+  const clientEvents = await window.webContents.executeJavaScript('window.smokeClientEvents');
+  assert.ok(clientEvents.some(state => state.scope === null));
+  assert.equal(clientEvents.at(-1).scope.id, restartedScope.scope.id);
+  await window.webContents.executeJavaScript('window.smokeStopClient()');
+
+  await window.webContents.executeJavaScript('window.smokeThemeReady = new Promise(resolve => { window.smokeUnsubscribe = window.elevenex.onThemeChanged(resolve); }); void 0;');
+  const theme = nativeTheme.shouldUseDarkColors ? 'light' : 'dark';
+  const updated = new Promise((resolve) => nativeTheme.once('updated', resolve));
+  nativeTheme.themeSource = theme;
+  await updated;
+  assert.equal(await window.webContents.executeJavaScript('window.smokeThemeReady'), theme);
+  await window.webContents.executeJavaScript('window.smokeUnsubscribe()');
+  nativeTheme.themeSource = 'system';
+
+  const secondWindow = nextWindow();
+  const newWindow = Menu.getApplicationMenu().items.find(item => item.label === 'File').submenu.items.find(item => item.label === 'New Window');
+  assert.equal(newWindow.accelerator, 'CmdOrCtrl+Shift+N');
+  newWindow.click();
+  const second = await secondWindow;
+  assert.equal(BrowserWindow.getAllWindows().length, 2);
+  assert.equal((await second.webContents.executeJavaScript('window.elevenex.environmentStatus()')).context.draft, '');
+  assert.equal((await window.webContents.executeJavaScript('window.elevenex.environmentStatus()')).context.draft, 'unsent');
+  assert.equal((await second.webContents.executeJavaScript(`window.elevenex.backendInfo('${restartedScope.scope.id}')`)).error.code, 'stale-scope');
+  assert.equal((await window.webContents.executeJavaScript(`window.elevenex.taskTerminalCreate('${restartedScope.scope.id}', {taskId:1})`)).ok, true);
+  second.destroy();
+  assert.equal(terminalCleanupCount, 0, 'closing one of several windows must retain shells');
+
+  const journal = await window.webContents.executeJavaScript('window.elevenex.workspaceWaitingRead({kind:"local"})');
+  assert.match(journal.identity, /^[a-f0-9]{64}$/);
+  await window.webContents.executeJavaScript(`window.elevenex.workspaceWaitingSave({kind:"local"}, '${journal.identity}', { chat: [{ id: 'smoke-waiting', taskId: 1, sessionId: 2, action: { type: 'send', text: 'Saved, not sent', queue: false }, label: 'Saved, not sent', turnId: null, status: 'waiting' }], tasks: [] })`);
+  assert.equal((await window.webContents.executeJavaScript('window.elevenex.workspaceWaitingRead({kind:"local"})')).chat[0].status, 'waiting');
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.workspaceWaitingSave({kind:"local"}, '${journal.identity}', { chat: [{ id: 'bad', taskId: 1, sessionId: 2, action: { type: 'credential', answer: 'forbidden' }, label: '', turnId: null, status: 'waiting' }], tasks: [] }).then(() => false, () => true)`), true);
+  await window.webContents.executeJavaScript(`window.elevenex.workspaceWaitingSave({kind:"local"}, '${journal.identity}', { chat: [], tasks: [] })`);
+
+  const draftTarget = { taskId: 1, sessionId: 2 };
+  const draftText = '  A local draft\nwith café and 👩🏽‍💻  ';
+  const readDraft = (target) => window.webContents.executeJavaScript(`window.elevenex.sessionChatDraftRead({kind:"local"}, ${JSON.stringify(target)})`);
+  const { identity: draftIdentity } = await readDraft(draftTarget);
+  const edit = { target: draftTarget, draft: { text: draftText } };
+  const saveDraft = (identity, edit) => window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatDraftSave({kind:"local"}, ${JSON.stringify(identity)}, ${JSON.stringify(edit)})`);
+  await assert.rejects(saveDraft('stale-identity', edit), /machine changed/);
+  await saveDraft(draftIdentity, edit);
+  assert.deepEqual((await readDraft({ ...draftTarget, sessionId: 3 })).draft, { text: '' });
+
+  await window.loadURL('app://elevenex/smoke/history');
+  assert.equal(window.webContents.getURL(), 'app://elevenex/smoke/history');
+  assert.equal(await window.webContents.executeJavaScript('typeof window.elevenex.gitStatus'), 'function');
+  assert.notEqual((await window.webContents.executeJavaScript('window.elevenex.backendClientState()')).scope.id, restartedScope.scope.id);
+  assert.deepEqual((await readDraft(draftTarget)).draft, { text: draftText });
+  await saveDraft(draftIdentity, { target: draftTarget, draft: { text: '' } });
+  assert.deepEqual((await readDraft(draftTarget)).draft, { text: '' });
+  const assets = await window.webContents.executeJavaScript(`(async () => {
+    const index = await fetch('/');
+    const missing = await fetch('/missing-asset.js');
+    const icon = await fetch('/icons/icon.svg');
+    const favicon = await fetch('/icons/favicon.ico');
+    return { csp: index.headers.get('Content-Security-Policy'), missing: missing.status,
+      icon: icon.status, iconType: icon.headers.get('Content-Type'), favicon: favicon.status };
+  })()`);
+  assert.ok(assets.csp.includes("script-src 'self'"));
+  assert.ok(!assets.csp.includes('unsafe-inline'));
+  assert.equal(assets.missing, 404);
+  assert.equal(assets.icon, 200);
+  assert.equal(assets.iconType, 'image/svg+xml');
+  assert.equal(assets.favicon, 200);
+  if (process.platform === 'darwin') {
+    const closed = new Promise(resolve => window.once('closed', resolve));
+    window.close();
+    await closed;
+    assert.equal(terminalCleanupCount, 1);
+    assert.equal(terminalRows.size, 0);
+    const reopened = nextWindow();
+    newWindow.click();
+    const freshWindow = await reopened;
+    const freshScope = await freshWindow.webContents.executeJavaScript('window.elevenex.backendClientState()');
+    const freshList = await freshWindow.webContents.executeJavaScript(`window.elevenex.taskTerminalList('${freshScope.scope.id}', 1)`);
+    assert.deepEqual(freshList.value.terminals, []);
+    assert.equal((await freshWindow.webContents.executeJavaScript(`window.elevenex.taskTerminalCreate('${freshScope.scope.id}', {taskId:1})`)).ok, true);
+    assert.notEqual(terminalOwners[0], terminalOwners[1]);
+  }
+  app.once('will-quit', () => assert.equal(terminalCleanupCount, process.platform === 'darwin' ? 2 : 1));
+  console.log('Electron smoke passed: sandbox, connected deferred workspace, scoped backend HTTP client/lifecycle IPC/events, runtime validation, native theme, multiple windows and app:// history/CSP. Backend runtime is a test fixture.');
+  await rm(backendRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  clearTimeout(timeout);
+  app.quit();
+})().catch((error) => {
+  console.error(error);
+  clearTimeout(timeout);
+  for(const window of BrowserWindow.getAllWindows())window.destroy();
+  app.exit(1);
+});

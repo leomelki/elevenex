@@ -1,0 +1,52 @@
+<span class="glyph" aria-hidden="true">
+  <ex-icon [name]="view().icon" [size]="14" />
+</span>
+<div class="title-line">
+  @if (view().event.agentId || view().session) {
+    <button
+      #eventTitle
+      type="button"
+      class="inspect"
+      [attr.aria-label]="(view().session ? 'Open ' : 'Inspect ') + view().event.title"
+      [disabled]="!!view().session && sessionsDisabled()" (click)="inspect(eventTitle)"
+    >
+      <ex-agent-mark [harness]="view().session?.selection?.provider ?? harness()" mark="A" />
+      <span class="title">{{ view().event.title }}</span>
+    </button>
+  } @else {
+    <span class="title">{{ view().event.title }}</span>
+  }
+</div>
+@if (ago()) {
+  <div class="end">
+    <time class="time" [attr.datetime]="view().event.at">{{ ago() }}</time>
+  </div>
+}
+@if (view().event.detail) {
+  @if (view().output) {
+    <div class="output above" exAutoHeight>
+      <div>
+        <pre
+          [id]="outputId"
+          [class.clamped]="view().long && !expanded()"
+          >{{ view().event.detail }}</pre
+        >
+        @if (view().long) {
+          <button
+            type="button"
+            class="more"
+            [attr.aria-expanded]="expanded()"
+            [attr.aria-controls]="outputId"
+            (click)="expanded.set(!expanded())"
+          >
+            {{ expanded() ? "Show less" : "Show more" }}
+          </button>
+        }
+      </div>
+    </div>
+  } @else {
+    <p class="sub">
+      <span class="detail">{{ view().event.detail }}</span>
+    </p>
+  }
+}

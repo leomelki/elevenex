@@ -2,8 +2,234 @@ import { CodexHistoryService } from './codex-history.service.js';
 import { appendFile, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { chatWindow } from '../desktop-workspace/desktop-chat-window.js';
 
 describe('CodexHistoryService', () => {
+  it('restores commentary and final phases from saved assistant receipts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-assistant-phase-'));
+    try {
+      const timestamp = '2026-11-22T16:04:13.647Z';
+      await writeFile(join(root, 'phased.jsonl'), [
+        { type: 'session_meta', payload: { id: 'phased', cwd: '/repo' } },
+        { type: 'response_item', timestamp, payload: {
+          type: 'message', role: 'assistant', id: 'progress', phase: 'commentary',
+          content: [{ type: 'output_text', text: 'Still checking.' }],
+        } },
+        { type: 'event_msg', timestamp, payload: { type: 'item_completed', item: {
+          type: 'AgentMessage', id: 'final', phase: 'final_answer', content: [{ text: 'Passed.' }],
+        } } },
+      ].map(entry => JSON.stringify(entry)).join('\n') + '\n');
+
+      const history = await new CodexHistoryService(root).getHistory('phased');
+      expect(history).toMatchObject([
+        { id: 'progress', kind: 'assistant', assistantPhase: 'commentary', content: 'Still checking.' },
+        { id: 'final', kind: 'assistant', assistantPhase: 'final', content: 'Passed.' },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('uses native starts to place a patch before prose that completed first', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-native-chronology-'));
+    try {
+      const base = Date.parse('2026-11-22T16:00:00Z');
+      const record = (type: string, at: number, payload: Record<string, unknown>) =>
+        ({ type, timestamp: new Date(base + at).toISOString(), payload });
+      const completed = (start: number, end: number, item: Record<string, unknown>) =>
+        record('event_msg', end, { type: 'item_completed', turn_id: 'turn', started_at_ms: base + start, item });
+      const commentary = { id: 'progress', phase: 'commentary', content: [{ text: 'Checking the edit.' }] };
+      const patch = { type: 'FileChange', id: 'patch', status: 'completed',
+        changes: { 'readme.txt': { type: 'add', content: 'Notes\n' } } };
+      await writeFile(join(root, 'chronology.jsonl'), [
+        record('session_meta', 0, { id: 'chronology', cwd: '/repo' }),
+        record('event_msg', 1, { type: 'task_started', turn_id: 'turn' }),
+        completed(2, 3, { type: 'UserMessage', id: 'prompt', content: [{ text: 'Update the notes.' }] }),
+        completed(8, 12, { ...commentary, type: 'AgentMessage' }),
+        record('response_item', 13, { item: { ...commentary, type: 'message', role: 'assistant' } }),
+        completed(6, 18, patch),
+        completed(6, 19, patch),
+        completed(20, 21, { type: 'Reasoning', id: 'thinking', summary_text: ['Check the resulting file.'] }),
+        completed(22, 24, { type: 'AgentMessage', id: 'final', phase: 'final_answer', content: [{ text: 'Notes added.' }] }),
+      ].map(entry => JSON.stringify(entry)).join('\n') + '\n');
+
+      const history = await new CodexHistoryService(root).getHistory('chronology');
+      expect(history.map(item => item.id)).toEqual([
+        'prompt', 'patch:tool_use', 'progress', 'patch:tool_result', 'thinking', 'final',
+      ]);
+      expect(history[1]).toMatchObject({ kind: 'tool_use', toolUseId: 'patch' });
+      expect(history[2]).toMatchObject({ content: 'Checking the edit.', assistantPhase: 'commentary' });
+      expect(history[4]).toMatchObject({ kind: 'thinking', content: 'Check the resulting file.' });
+      expect(chatWindow(history, [], { following: 'progress' })?.items[0]?.id).toBe('patch:tool_result');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('restores native tools inside exec with stable live IDs, readable output and individual failures', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-native-tools-'));
+    try {
+      const stamp = '2026-10-30T10:00:00Z';
+      const response = (payload: Record<string, unknown>) => ({
+        type: 'response_item',
+        timestamp: stamp,
+        payload,
+      });
+      const completed = (item: Record<string, unknown>) => ({
+        type: 'event_msg',
+        timestamp: stamp,
+        payload: { type: 'item_completed', item },
+      });
+      const read = {
+        type: 'CommandExecution',
+        id: 'read',
+        command: 'cat package.json',
+        parsed_cmd: [
+          { type: 'read', path: 'package.json', cmd: 'cat package.json' },
+        ],
+        status: 'completed',
+        exit_code: 0,
+        cwd: '/repo',
+        aggregated_output: '{"name":"example"}',
+      };
+      await writeFile(
+        join(root, 'native.jsonl'),
+        [
+          { type: 'session_meta', payload: { id: 'native', cwd: '/repo' } },
+          response({
+            type: 'custom_tool_call',
+            call_id: 'wrapper',
+            name: 'exec',
+            input: 'JavaScript wrapper',
+          }),
+          completed(read),
+          completed({
+            type: 'CommandExecution',
+            id: 'test',
+            command: 'pnpm test',
+            status: 'completed',
+            exit_code: 1,
+            aggregated_output: 'FAIL retry.spec.ts',
+          }),
+          completed({
+            type: 'McpToolCall',
+            id: 'mcp',
+            server: 'repo',
+            tool: 'lookup',
+            arguments: { query: 'retry' },
+            status: 'completed',
+            result: {
+              isError: true,
+              content: [{ type: 'text', text: 'Lookup failed' }],
+            },
+          }),
+          completed({
+            type: 'FileChange',
+            id: 'patch',
+            status: 'failed',
+            changes: {
+              'retry.ts': { type: 'update', unified_diff: '-old\n+new' },
+            },
+            stderr: 'Patch rejected',
+          }),
+          completed({
+            type: 'Extension',
+            kind: 'web.search',
+            id: 'search',
+            query: 'retry behavior',
+            results: [],
+          }),
+          response({
+            type: 'custom_tool_call_output',
+            call_id: 'wrapper',
+            output: 'Script completed\n[large duplicate output]',
+          }),
+          // Some versions also save a raw call with the native tool's ID.
+          response({
+            type: 'function_call',
+            call_id: 'read',
+            name: 'exec_command',
+            arguments: '{"cmd":"cat package.json"}',
+          }),
+          response({
+            type: 'function_call_output',
+            call_id: 'read',
+            output: 'duplicate output',
+          }),
+          // Without native receipts the wrapper remains the only evidence.
+          response({
+            type: 'custom_tool_call',
+            call_id: 'fallback',
+            name: 'exec',
+            input: 'text("useful script")',
+          }),
+          response({
+            type: 'custom_tool_call_output',
+            call_id: 'fallback',
+            output: 'useful script',
+          }),
+        ]
+          .map((row) => JSON.stringify(row))
+          .join('\n'),
+      );
+
+      for (let reload = 0; reload < 2; reload++) {
+        const history = await new CodexHistoryService(root).getHistory(
+          'native',
+        );
+        const page = chatWindow(history, []);
+        expect(page?.items).toHaveLength(12);
+        expect(
+          page?.items.find((item) => item.id === 'read:tool_use'),
+        ).toMatchObject({
+          toolId: 'read',
+          toolName: 'Read',
+          toolKind: 'read',
+          input: expect.stringContaining('package.json'),
+          execution: { cwd: '/repo' },
+        });
+        expect(
+          page?.items.find((item) => item.id === 'test:tool_result'),
+        ).toMatchObject({
+          text: 'FAIL retry.spec.ts',
+          error: true,
+          execution: { exitCode: 1 },
+        });
+        expect(
+          page?.items.find((item) => item.id === 'mcp:tool_result'),
+        ).toMatchObject({
+          text: 'Lookup failed',
+          error: true,
+        });
+        expect(
+          page?.items.find((item) => item.id === 'patch:tool_use')?.toolKind,
+        ).toBe('file_changes');
+        expect(
+          page?.items.find((item) => item.id === 'patch:tool_result'),
+        ).toMatchObject({
+          text: 'update: retry.ts\nPatch rejected',
+          error: true,
+        });
+        expect(
+          page?.items.find((item) => item.id === 'search:tool_use')?.toolKind,
+        ).toBe('web_search');
+        expect(history.some((item) => item.toolUseId === 'wrapper')).toBe(
+          false,
+        );
+        expect(
+          history.filter((item) => item.toolUseId === 'fallback'),
+        ).toHaveLength(2);
+        expect(
+          history.filter((item) => item.toolUseId === 'read'),
+        ).toHaveLength(2);
+        const live = history.filter((item) => item.toolUseId === 'test');
+        expect(chatWindow(history, live)?.items).toEqual(page?.items);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('restores incoming agent routing and readable bodies after reload', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-agent-messages-'));
     try {
@@ -921,7 +1147,7 @@ describe('CodexHistoryService', () => {
         type: 'function_call',
         name: 'exec_command',
         call_id: 'tool-1',
-        arguments: JSON.stringify({ cmd: 'pnpm test' }),
+        arguments: JSON.stringify({ cmd: 'pnpm test', workdir: '/repo' }),
       },
       '2026-05-22T10:00:00.000Z',
       0,
@@ -934,8 +1160,8 @@ describe('CodexHistoryService', () => {
       providerToolName: 'Bash',
       toolKind: 'bash',
       toolDisplayName: 'Bash',
-      toolInput: { command: 'pnpm test' },
-      providerToolInput: { command: 'pnpm test' },
+      toolInput: { command: 'pnpm test', workdir: '/repo' },
+      providerToolInput: { command: 'pnpm test', workdir: '/repo' },
     });
   });
 
@@ -1072,6 +1298,7 @@ describe('CodexHistoryService', () => {
 
       await expect(service.getHistory('modern-thread')).resolves.toEqual([
         expect.objectContaining({
+          id: 'user-1',
           kind: 'user',
           content: 'visible user prompt',
           sourceMessageId: 'codex-record:2',
@@ -1242,6 +1469,10 @@ describe('CodexHistoryService', () => {
             payload: { type: 'user_message', message: 'edit this' },
           }),
           JSON.stringify({
+            type: 'event_msg',
+            payload: { type: 'user_message', message: 'steering within the same turn' },
+          }),
+          JSON.stringify({
             type: 'response_item',
             payload: {
               item: {
@@ -1265,6 +1496,8 @@ describe('CodexHistoryService', () => {
         threadId: 'source-thread',
         beforeTurnId: 'turn-2',
       });
+      await expect(service.rewindHistory('source-thread', 'codex-record:6')).rejects.toThrow('Only the first prompt');
+      expect((await service.getHistory('source-thread')).find(item => item.content === 'steering within the same turn')?.editUnsupported).toBe(true);
       const raw = await readFile(join(root, 'thread-source.jsonl'), 'utf8');
       expect(raw).toContain('edit this');
       expect(raw).toContain('old answer');

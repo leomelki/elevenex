@@ -1,0 +1,44 @@
+:host {
+  display: contents;
+}
+code {
+  font-family: var(--font-mono);
+  font-size: var(--text-code-size);
+  background: var(--surface-sunken);
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-xs);
+  overflow-wrap: anywhere;
+}
+button {
+  appearance: none;
+  display: inline;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--accent) 40%, transparent);
+  text-underline-offset: 3px;
+}
+button:hover {
+  text-decoration-color: currentColor;
+}
+button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-xs);
+}
+button.file {
+  font-family: var(--font-mono);
+  font-size: var(--text-code-size);
+  background: var(--surface-sunken);
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-xs);
+  text-decoration: none;
+  color: var(--ink);
+}
+span {
+  margin-left: var(--space-1);
+}

@@ -1,0 +1,156 @@
+<ex-modal-layer
+  [open]="open()"
+  (closeRequested)="closeRequested.emit()"
+  (closed)="closed.emit()"
+>
+  <form
+    class="preset-creator"
+    role="dialog"
+    aria-modal="true"
+    [attr.aria-labelledby]="titleId"
+    [attr.aria-busy]="busy()"
+    (submit)="submit($event)"
+  >
+    <header>
+      <h2 [id]="titleId">{{ editing() ? "Edit preset" : "New preset" }}</h2>
+      <ex-icon-button
+        icon="x"
+        [label]="editing() ? 'Close preset editor' : 'Close preset creator'"
+        (pressed)="closeRequested.emit()"
+      />
+    </header>
+    <div class="scroll">
+      <div exAutoHeight>
+        <div class="body">
+          <!-- The name field reads like the composer chip this preset becomes. -->
+          <label
+            class="identity"
+            [class.invalid]="duplicate()"
+            [class.disabled]="busy() || !open()"
+          >
+            @for (identity of identityMark(); track identity.harness) {
+              <span
+                class="identity-mark"
+                [animate.enter]="live() ? 'mark-enter' : ''"
+              >
+                <ex-agent-mark
+                  [mark]="identity.mark"
+                  [harness]="identity.harness"
+                />
+              </span>
+            }
+            <input
+              cdkFocusInitial
+              [id]="nameId"
+              [value]="name()"
+              (input)="updateName($event)"
+              maxlength="48"
+              required
+              placeholder="Name this preset"
+              aria-label="Preset name"
+              autocomplete="off"
+              spellcheck="false"
+              [disabled]="busy() || !open()"
+              [attr.aria-invalid]="duplicate()"
+              [attr.aria-describedby]="duplicate() ? issueId : null"
+            />
+            <span class="identity-sub" aria-hidden="true">
+              <ex-ease-swap [value]="summary()" />
+            </span>
+            @if (draft().fast) {
+              <ex-icon class="identity-fast" name="bolt" [size]="12" />
+            }
+          </label>
+          @if (duplicate()) {
+            <p class="issue" [id]="issueId" role="status">
+              A preset with this name already exists.
+            </p>
+          }
+          <ex-agent-menu
+            [value]="menuValue()"
+            [harnesses]="availableHarnesses()"
+            [locked]="harnessLocked()"
+            lockedHint="fixed for this preset"
+            [disabled]="!open() || blocked()"
+            [busy]="busy()"
+            [modelsLoading]="catalogBusy()"
+            [modelsError]="catalogError()"
+            [modelsRefreshAvailable]="!!catalogError()"
+            [showFork]="false"
+            [showSavePreset]="false"
+            [reasoningAvailable]="canReason()"
+            [fastAvailable]="supportsFast()"
+            (changed)="change($event)"
+            (modelsRefreshRequested)="loadCatalog(true)"
+          />
+          @if (chatSettings() || defaultAvailable()) {
+            <div class="options">
+              @if (chatSettings()) {
+                <div class="option chat-mix">
+                  <span class="option-label">This chat</span>
+                  <span class="option-hint">{{ chatSummary() }}</span>
+                  <button
+                    exButton
+                    variant="ghost"
+                    size="sm"
+                    [attr.aria-label]="
+                      chatApplied()
+                        ? 'This chat’s settings are in use'
+                        : 'Use this chat’s settings'
+                    "
+                    [disabled]="
+                      chatApplied() ||
+                      !open() ||
+                      blocked() ||
+                      busy() ||
+                      catalogBusy()
+                    "
+                    (click)="useChatSettings()"
+                  >
+                    <ex-ease-swap [value]="chatApplied() ? 'In use' : 'Use'" />
+                  </button>
+                </div>
+              }
+              @if (defaultAvailable()) {
+                <div class="option default-choice">
+                  <span class="option-label">Default for new chats</span>
+                  <ex-segmented
+                    size="sm"
+                    label="Default for new chats"
+                    [options]="defaultOptions()"
+                    [value]="useAsDefault() ? 'use' : 'keep'"
+                    (changed)="chooseDefault($event)"
+                  />
+                </div>
+              }
+            </div>
+          }
+          @if (error()) {
+            <p class="issue" role="alert">{{ error() }}</p>
+          }
+        </div>
+      </div>
+    </div>
+    <footer>
+      <button exButton variant="ghost" (click)="closeRequested.emit()">
+        Cancel
+      </button>
+      <button
+        exButton
+        variant="primary"
+        type="submit"
+        [disabled]="
+          busy() ||
+          catalogBusy() ||
+          !!catalogError() ||
+          blocked() ||
+          !open() ||
+          !name().trim() ||
+          duplicate()
+        "
+      >
+        <ex-ease-swap [value]="submitLabel()" />
+      </button>
+    </footer>
+  </form>
+</ex-modal-layer>

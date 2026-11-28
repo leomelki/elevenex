@@ -40,6 +40,9 @@ function createMockQuery() {
     stopTask: jest.fn().mockResolvedValue(undefined),
     backgroundTasks: jest.fn().mockResolvedValue(true),
     supportedModels: jest.fn().mockResolvedValue([]),
+    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: jest
+      .fn()
+      .mockResolvedValue({ rate_limits_available: false }),
     getContextUsage: jest.fn().mockResolvedValue({
       model: 'sonnet',
       totalTokens: 0,
@@ -135,6 +138,31 @@ async function waitForQuery(queries: MockQuery[], count = 1): Promise<void> {
 describe('ClaudeSessionRuntime', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('reads native usage without transcript scanning or starting a cold runtime', async () => {
+    const { runtime, queries } = createRuntime();
+    expect(await runtime.getUsage()).toBeUndefined();
+    expect(queries).toHaveLength(0);
+    await runtime.ensureStarted('prewarm');
+    const read =
+      queries[0].usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+    expect(await runtime.getUsage()).toEqual({ rate_limits_available: false });
+    expect(read).toHaveBeenCalledWith({ skipBehaviors: true });
+    await runtime.close();
+    expect(await runtime.getUsage()).toBeUndefined();
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves usage unavailable when the installed SDK lacks the optional operation', async () => {
+    const { runtime, queries } = createRuntime();
+    await runtime.ensureStarted('prewarm');
+    Reflect.deleteProperty(
+      queries[0],
+      'usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET',
+    );
+    expect(await runtime.getUsage()).toBeUndefined();
+    await runtime.close();
   });
 
   describe('idle shutdown', () => {
@@ -373,6 +401,19 @@ describe('ClaudeSessionRuntime', () => {
     await runtime.close();
   });
 
+  it('starts with a model selected before the query exists', async () => {
+    const { runtime } = createRuntime();
+    await runtime.setModel('fable');
+    expect(query).not.toHaveBeenCalled();
+    await runtime.ensureStarted('prewarm');
+    expect(query).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({ model: 'fable' }),
+      }),
+    );
+    await runtime.close();
+  });
+
   it('never starts a cold or exited query for live context telemetry', async () => {
     const { runtime, queries } = createRuntime();
     await expect(runtime.getContextUsage(false)).rejects.toThrow(
@@ -431,6 +472,10 @@ describe('ClaudeSessionRuntime', () => {
       parent_tool_use_id: null,
       message: { role: 'user', content: 'Guidance' },
     });
+    const prompt = (query as jest.Mock).mock.calls[0][0].prompt as AsyncIterable<unknown>;
+    const inputs = prompt[Symbol.asyncIterator]();
+    await inputs.next();
+    await expect(inputs.next()).resolves.toMatchObject({ value: { uuid: 'guide', priority: 'next' } });
     expect(queries[0].interrupt).not.toHaveBeenCalled();
     queries[0].emit({ type: 'result', user_message_uuid: 'first' });
     await flushAsync();
@@ -439,6 +484,34 @@ describe('ClaudeSessionRuntime', () => {
     await first;
     await runtime.close();
   });
+  it('fences a tracked Claude input at SDK consumption and confirms only the exact native UUID', async () => {
+    const { runtime, queries } = createRuntime();
+    const dispatch = jest.fn(), accepted = jest.fn();
+    const turn = runtime.submitTurn({
+      type: 'user', uuid: 'tracked', parent_tool_use_id: null,
+      message: { role: 'user', content: 'Identical text' },
+    }, accepted, dispatch);
+    try {
+      await flushAsync();
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(accepted).not.toHaveBeenCalled();
+      const prompt = (query as jest.Mock).mock.calls[0][0].prompt as AsyncIterable<unknown>;
+      await expect(prompt[Symbol.asyncIterator]().next()).resolves.toMatchObject({ value: { uuid: 'tracked' } });
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      queries[0].emit({ type: 'user', uuid: 'different', message: { role: 'user', content: 'Identical text' } });
+      await flushAsync();
+      expect(accepted).not.toHaveBeenCalled();
+      queries[0].emit({ type: 'user', uuid: 'tracked', message: { role: 'user', content: 'Identical text' } });
+      await flushAsync();
+      expect(accepted).toHaveBeenCalledTimes(1);
+      queries[0].emit({ type: 'result', user_message_uuid: 'tracked' });
+      await turn;
+      expect(accepted).toHaveBeenCalledTimes(1);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it('does not let an unrelated autonomous result complete a user submission', async () => {
     const { runtime, queries } = createRuntime();
     let finished = false;

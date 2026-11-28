@@ -21,6 +21,8 @@
     (inspectAgent)="inspectAgent.emit($event)"
     (openLocalFile)="openLocalFile.emit($event)"
   />
+} @else if (display().kind === 'bash') {
+  <cw-shell-tool-call [call]="call()" [result]="result()" [isLive]="isLive()" [elapsedSeconds]="runningElapsedSeconds()" />
 } @else {
   <div
     class="cw-tool overflow-hidden rounded-lg border border-border bg-card/95 text-[13px]"
@@ -176,12 +178,6 @@
             />
           } @else {
           @switch (display().kind) {
-            @case ('bash') {
-              <cw-tool-command [command]="bashCommand()" />
-              @if (resultText()) {
-                <cw-tool-output [text]="resultText()" [error]="state() === 'error'" />
-              }
-            }
             @case ('edit') {
               @for (diff of editDiffs(); track $index) {
                 <cw-inline-diff

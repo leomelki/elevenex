@@ -1,0 +1,55 @@
+:host { display: block; }
+.git-status { display: flex; align-items: center; gap: var(--space-2); min-width: 0; height: var(--control-height); font-size: var(--text-caption-size); color: var(--ink-muted); }
+.git-status span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-status button, .pull {
+  flex: none;
+  height: var(--control-height);
+}
+.git-status.error button {
+  width: var(--control-height);
+  padding: 0;
+}
+.pull[data-variant="secondary"].warning {
+  background: var(--attention-soft);
+  color: var(--attention);
+  border-color: color-mix(in oklab, var(--attention) 40%, transparent);
+}
+.pull-count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.pull[aria-disabled="true"], .pull-failure button[aria-disabled="true"] {
+  cursor: default;
+  transform: none;
+  opacity: .65;
+}
+.pull[aria-busy="true"] { cursor: progress; }
+.pull.warning[aria-disabled="true"], .pull[aria-busy="true"] { opacity: 1; }
+.pull-failure-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--danger);
+}
+.pull-failure-label ex-status-glyph { flex: none; }
+@container task-header (width <= 620px) {
+  .pull-copy { display: none; }
+}
+@container task-header (width <= 400px) {
+  .pull[data-size="sm"] {
+    padding-inline: var(--space-1);
+  }
+  .pull-failure {
+    gap: var(--space-1);
+  }
+  .pull-failure button[data-size="sm"] {
+    width: var(--control-height);
+    padding: 0;
+  }
+}
+.git-loading { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-muted); font-size: var(--text-caption-size); }
+.git-dialog { display: flex; flex-direction: column; gap: var(--space-4); width: min(440px, calc(100vw - var(--space-8))); padding: var(--space-6); border-radius: var(--radius-lg); background: var(--surface); color: var(--ink); box-shadow: var(--shadow-pop); }
+h2 { margin: 0; font-size: var(--text-title-size); font-weight: var(--text-title-weight); }
+p { margin: 0; color: var(--ink-muted); font-size: var(--text-ui-size); }
+footer { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.error { color: var(--danger); }

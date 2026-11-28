@@ -13,7 +13,8 @@ export function* turnRenderProjection(
   turn: ConversationExportTurn,
   options: ConversationExportOptions,
 ): Generator<unknown> {
-  for (const item of [turn.user, turn.finalResponse]) {
+  const response = turn.finalResponse ?? (options.precision === 'small' ? turn.progress : undefined);
+  for (const item of [turn.user, response]) {
     if (!item) continue;
     yield item.content;
     if (options.includeIds) yield item.id;

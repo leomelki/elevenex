@@ -1,0 +1,131 @@
+<ng-content select="[chatHeader]" />
+<div class="conversation">
+  <ex-chat-scroll (activeExchange)="active.set($event)"
+    [historyBefore]="historyBefore()" [historyAfter]="historyAfter()"
+    [historyLoading]="historyLoading()" [historyError]="historyError()" [historyRevision]="historyRevision()"
+    [initialHistoryPrefetch]="initialHistoryPrefetch()"
+    (historyRequested)="historyRequested.emit($event)" (historyCancelled)="historyCancelled.emit()"
+    (latestRequested)="latestRequested.emit()">
+    <ng-content select="[chatHistory]" />
+    @for (exchange of exchanges(); track exchange.renderId ?? exchange.id) {
+      @if (exchange.prompt || exchange.attachments?.length || exchange.mentions?.length) {
+        <ng-template #promptBody>
+          <ex-element-prose [text]="exchange.prompt" [resolve]="resolve()" [attachments]="exchange.attachments ?? []" />
+          @if (exchange.mentions?.length) {
+            <div
+              class="message-mentions"
+              role="list"
+              aria-label="Mentioned sessions"
+            >
+              @for (
+                mention of exchange.mentions;
+                track mention.kind + ":" + mention.id
+              ) {
+                <ex-mention role="listitem" [mention]="mention" />
+              }
+            </div>
+          }
+          @if (exchange.attachments?.length) {
+            <ex-attachments
+              [files]="exchange.attachments || []"
+              [mentionedText]="exchange.prompt"
+              [resolve]="resolve()"
+              (copyPath)="copyCode.emit($event)"
+            />
+          }
+
+        </ng-template>
+        @if (exchange.sender?.purpose === 'assignment') {
+          <ex-agent-assignment [attr.data-chat-anchor]="exchange.id + ':prompt'" [sender]="exchange.sender!"
+            [text]="exchange.prompt" [time]="exchange.time || ''"
+            [controlsDisabled]="agentNavigationDisabled()" (requested)="agentRequested.emit($event)">
+            <ng-container [ngTemplateOutlet]="promptBody" />
+          </ex-agent-assignment>
+        } @else {
+          <ex-message [attr.data-chat-anchor]="exchange.id + ':prompt'" role="user"
+            [messageId]="exchange.id" [isNew]="exchange.isNew || false"
+            [revealOnArrival]="exchange.revealOnArrival ?? true" [sendOrigin]="exchange.sendOrigin"
+            [time]="exchange.time || ''" [editable]="promptEditing() && !!exchange.promptEditable"
+            [editDisabledReason]="promptEditDisabledReason()" (editRequested)="promptEditRequested.emit(exchange.id)">
+            @if (exchange.sender; as sender) {
+              <button exButton variant="ghost" size="sm" type="button" class="message-sender"
+                [disabled]="agentNavigationDisabled()" (click)="openSender(sender.session, $event)">
+                <ex-agent-mark [harness]="sender.session.selection?.provider" mark="A" />
+                <span>Message from {{ agentTitle(sender.session) }}</span>
+              </button>
+            }
+            <ng-container [ngTemplateOutlet]="promptBody" />
+          </ex-message>
+        }
+      }
+      <ex-turn
+        [attr.data-chat-anchor]="exchange.id + ':reply'"
+        [reach]="reach()"
+        [isNew]="exchange.isNew || false"
+        [status]="exchange.status"
+        [keepWorkOnCompletion]="active() === exchange.id && scroll()?.atEnd() === false"
+        [actions]="actions()"
+        [stoppable]="stoppable()"
+        [retryable]="retryable()"
+        [steps]="exchange.steps"
+        [agentCards]="exchange.agentCards ?? []"
+        [returnedTo]="exchange.returnedTo ?? []"
+        [agentNavigationDisabled]="agentNavigationDisabled()"
+        (agentRequested)="agentRequested.emit($event)"
+        [deferredWork]="exchange.deferredWork"
+        [answer]="exchange.answer"
+        [answerId]="exchange.answerId"
+        [streaming]="exchange.streaming ?? exchange.status === 'live'"
+        [copiedCode]="copiedCode()"
+        [resolve]="resolve()"
+        [inspectTool]="inspectTool()"
+        [toolImages]="toolImages()"
+        (openLink)="openLink.emit($event)"
+        (openPage)="openPage.emit($event)"
+        (copyCode)="copyCode.emit($event)"
+        (contentRequested)="toolContentRequested.emit($event)"
+        [answerBeforeStepId]="exchange.answerBeforeStepId"
+        [duration]="exchange.duration || 0"
+        [elapsed]="exchange.elapsed || 0"
+        [startedAt]="exchange.startedAt"
+        [files]="exchange.files || []"
+        [filesTotal]="exchange.filesTotal"
+        [reviewAvailable]="exchange.reviewAvailable ?? false"
+        [filesDiff]="exchange.filesDiff"
+        [sharedChanges]="exchange.sharedChanges ?? false"
+        [error]="exchange.error || ''"
+        [author]="exchange.author || 'Agent'"
+        [mark]="exchange.mark || 'EX'"
+        [harness]="exchange.harness"
+        (action)="turnAction.emit({ id: exchange.id, action: $event })"
+        (workToggled)="turnWorkToggled.emit({ id: exchange.id, ...$event })"
+        (workHint)="turnWorkHint.emit(exchange.id)"
+        (workHintEnded)="turnWorkHintEnded.emit(exchange.id)"
+        (workRequested)="turnWorkRequested.emit({ id: exchange.id, action: $event })"
+        (workLayoutChanging)="scroll()?.keepDisclosurePosition($event)"
+        (openFile)="openFile.emit($event)"
+        (fileLink)="fileLink.emit($event)"
+        (reviewFile)="fileReview.emit({ id: exchange.id, path: $event })"
+        (review)="review.emit(exchange.id)"
+        (stop)="stop.emit(exchange.id)"
+        (retry)="retry.emit(exchange.id)"
+      />
+      @for (content of exchange.overflow || []; track content.id) {
+        <button
+          exButton
+          variant="ghost"
+          size="sm"
+          (click)="contentRequested.emit(content.id)"
+        >
+          Read full {{ content.label }}
+        </button>
+      }
+    }
+    <ng-content select="[chatContent]" /></ex-chat-scroll
+  ><ex-turn-nav
+    [turns]="navigation()"
+    [active]="active()"
+    (selected)="scroll()?.scrollToMessage($event)"
+  />
+</div>
+<div class="composer"><ng-content select="[chatComposer]" /></div>

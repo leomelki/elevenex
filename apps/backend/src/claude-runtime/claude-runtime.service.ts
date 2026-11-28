@@ -48,8 +48,8 @@ import {
   type ModelInfo,
   type SDKControlGetContextUsageResponse,
   type CanUseTool,
-  type ElicitationRequest,
   type ElicitationResult,
+  type OnElicitation,
   type HookCallback,
   type PermissionMode,
   type PermissionResult,
@@ -98,13 +98,17 @@ import { TerminalService } from '../terminal/terminal.service.js';
 import { execFileAsync } from '../terminal/async-process.js';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
-import { buildAugmentedEnvAsync, findBinary } from '../config/system-paths.js';
+import {
+  buildAugmentedEnvAsync,
+  findBinaryAsync,
+} from '../config/system-paths.js';
 import {
   getBackendHelperPath,
   getBackendRuntimeRoot,
 } from '../config/runtime-paths.js';
 import { buildManagedPlannotatorEnv } from '../plannotator/plannotator-env.js';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
+import { savedPromptImage } from '../agent-runtime/prompt-image.js';
 import {
   buildMetaAgentPrompt,
   permissionModeForAutonomy,
@@ -172,15 +176,24 @@ import {
   taskSubagent,
 } from './claude-subagents.js';
 import { ClaudeSessionRuntime } from './claude-session-runtime.js';
-import { AGENT_REASONING_EFFORTS } from '../agent-runtime/agent-runtime.types.js';
-import { resolveAgentStartupSelection } from '../agent-runtime/agent-model-defaults.js';
+import { claudeElicitationDecision } from './claude-elicitation.js';
+import {
+  allowsClaudePlanUsage,
+  claudeSubscriptionUsage,
+} from './claude-plan-usage.js';
+import {
+  orderReasoningEfforts,
+  resolveAgentStartupSelection,
+} from '../agent-runtime/agent-model-defaults.js';
 import type {
   AgentAuthStatus,
   AgentForkConversationRequest,
   AgentForkConversationResult,
   AgentPlanUsage,
   AgentProviderModelCatalogPayload,
+  AgentPromptOptions,
 } from '../agent-runtime/agent-runtime.types.js';
+import { QueuedPromptDispatches } from '../agent-runtime/queued-prompt-dispatches.js';
 import { SettingsService } from '../settings/settings.service.js';
 
 type PermissionDecision =
@@ -203,6 +216,8 @@ type HistoryMessage = {
   timestamp?: string;
   parent_tool_use_id?: string | null;
   tool_use_result?: unknown;
+  apiBlockIndex?: number;
+  isSynthetic?: boolean;
 };
 
 interface ActivePermissionRequest {
@@ -315,6 +330,8 @@ interface AgentRuntimeSession {
   worktreePath: string;
   transcriptWorktreePath?: string | null;
   claudeSessionId: string | null;
+  claudeModelSelection?: schema.ClaudeModelSelection | null;
+  agentSelection?: schema.SessionAgentSelection | null;
   surface?: string;
   agentAutonomyMode?: string | null;
 }
@@ -364,6 +381,9 @@ interface RuntimeState {
   liveItems: ClaudeTranscriptItem[];
   lastError: string | null;
   selectedModel: string | null;
+  // Undefined until a session row has been read. Inferred SDK metadata is
+  // separate from the saved choice passed to the next query.
+  modelSelection: schema.ClaudeModelSelection | null | undefined;
   reasoningEffort: ClaudeReasoningEffort | null;
   fastMode: boolean;
   selectedPermissionMode: ClaudePermissionMode | null;
@@ -571,6 +591,12 @@ const CLAUDE_PREWARM_COOLDOWN_MS = 30_000;
 const MAX_IDLE_CLAUDE_RUNTIMES = 2;
 const CLAUDE_MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
 const CLAUDE_MODELS_BACKGROUND_REFRESH_MS = 10 * 60 * 1000;
+const CLAUDE_PLAN_USAGE_TTL_MS = 60_000;
+
+interface PlanUsageRead {
+  at: number;
+  pending: Promise<void> | null;
+}
 
 @Injectable()
 export class ClaudeRuntimeService
@@ -589,7 +615,18 @@ export class ClaudeRuntimeService
   >();
   private readonly transcriptPaths = new Map<string, string>();
   private readonly activeRuns = new Map<number, ActiveRunState>();
+  private readonly rewinding = new Set<number>();
   private readonly sessionRuntimes = new Map<number, ClaudeSessionRuntime>();
+  private readonly modelChanges = new Map<
+    number,
+    Promise<ClaudeRuntimeStatePayload>
+  >();
+  // Runtime-scoped: project settings can select different credentials. Weak
+  // keys release telemetry bookkeeping with the owning process.
+  private readonly planUsageReads = new WeakMap<
+    ClaudeSessionRuntime,
+    PlanUsageRead
+  >();
   private readonly sessionRuntimeCreateInFlight = new Map<
     number,
     Promise<ClaudeSessionRuntime>
@@ -597,6 +634,7 @@ export class ClaudeRuntimeService
   private readonly prewarmInFlight = new Map<number, Promise<void>>();
   private readonly lastPrewarmAt = new Map<number, number>();
   private readonly runtimeStates = new Map<number, RuntimeState>();
+  private readonly queuedDispatches = new QueuedPromptDispatches();
   private readonly invalidatedSessions = new Set<number>();
   private readonly sessionGenerations = new Map<number, number>();
   // Active MCP OAuth flows whose underlying Claude CLI subprocess (and loopback
@@ -643,12 +681,6 @@ export class ClaudeRuntimeService
     @Optional() private readonly turnChanges?: TurnChangesService,
   ) {
     super();
-    if (this.claudeCliOverride) {
-      void this.refreshClaudeCliOverrideVersion();
-    } else {
-      this.logClaudeRuntimeConfiguration();
-    }
-
     this.claudeHooksService.on(
       'hook-event',
       (data: {
@@ -664,6 +696,7 @@ export class ClaudeRuntimeService
   onModuleInit(): void {
     // Warm the model list cache in the background so it is ready before any
     // session runtime needs it, and keep it fresh without any user action.
+    void this.refreshClaudeCliOverrideVersion().catch(() => undefined);
     this.refreshGlobalModels('startup').catch(() => undefined);
     this.modelsRefreshTimer = setInterval(() => {
       this.refreshGlobalModels('interval').catch(() => undefined);
@@ -679,17 +712,17 @@ export class ClaudeRuntimeService
     }
   }
 
-  async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
+  async getHistory(sessionId: number, options?: { changeDetails?: 'summary' }): Promise<ClaudeTranscriptItem[]> {
     const history = await this.loadProviderHistory(sessionId);
     if (!this.turnChanges) return history;
     const session = await this.sessionsService.findOne(sessionId);
-    return this.turnChanges.attachHistory(sessionId, 'claude', session.claudeSessionId, history);
+    return this.turnChanges.attachHistory(sessionId, 'claude', session.claudeSessionId, history, options?.changeDetails);
   }
 
   private async loadProviderHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
     const session = await this.sessionsService.findOne(sessionId);
+    const state = this.ensureSessionState(sessionId, session);
     if (!session.claudeSessionId || session.claudeSessionId === '-1') {
-      const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
       this.recordHistorySnapshot(state, [], null);
       return [];
     }
@@ -720,11 +753,7 @@ export class ClaudeRuntimeService
           messages,
           interactionsByToolUseId,
         );
-        this.recordHistorySnapshot(
-          this.ensureRuntimeState(sessionId, session.claudeSessionId),
-          normalized,
-          'sdk',
-        );
+        this.recordHistorySnapshot(state, normalized, 'sdk');
         return normalized;
       }
     } catch (error) {
@@ -761,9 +790,11 @@ export class ClaudeRuntimeService
 
   async getRuntimeState(sessionId: number): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
 
     await this.recoverSubagents(sessionId, session, state);
+
+    void this.refreshClaudePlanUsage(sessionId);
 
     // No live Claude Code process for this session yet (e.g. before the
     // first prompt is sent): fall back to the globally cached model list
@@ -787,11 +818,14 @@ export class ClaudeRuntimeService
   ): Promise<AgentProviderModelCatalogPayload> {
     if (refresh) await this.refreshGlobalModels('manual', true);
     else this.refreshGlobalModelsIfStale();
+    const models = this.modelsCache?.length
+      ? [...this.modelsCache]
+      : [...FALLBACK_MODELS];
     return {
-      models: this.modelsCache?.length
-        ? [...this.modelsCache]
-        : [...FALLBACK_MODELS],
-      reasoningEfforts: [...AGENT_REASONING_EFFORTS],
+      models,
+      reasoningEfforts: orderReasoningEfforts(
+        models.flatMap((model) => model.reasoningEfforts ?? []),
+      ),
       providerDefaultModelId: null,
       supportsModelSelection: true,
       unavailableReason: this.modelsRefreshError,
@@ -801,8 +835,8 @@ export class ClaudeRuntimeService
   async getCliStatus(): Promise<AgentAuthStatus> {
     const configuredPath = process.env.ELEVENEX_CLAUDE_BIN?.trim();
     const binaryPath = configuredPath
-      ? (findBinary(configuredPath) ?? configuredPath)
-      : findBinary('claude');
+      ? ((await findBinaryAsync(configuredPath)) ?? configuredPath)
+      : await findBinaryAsync('claude');
     if (!binaryPath) {
       const installHint =
         process.platform === 'win32'
@@ -970,7 +1004,7 @@ export class ClaudeRuntimeService
 
   async getSavedSubagents(sessionId: number): Promise<ClaudeSubagentState[]> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
     await this.recoverSubagents(sessionId, session, state);
     return state.subagents.map((agent) => ({
       ...agent,
@@ -983,15 +1017,16 @@ export class ClaudeRuntimeService
   async getSubagentHistory(
     sessionId: number,
     agentId: string,
-    options: { before?: string } = {},
+    options: { before?: string; through?: string } = {},
   ): Promise<ClaudeSubagentHistoryPayload> {
     const id = agentId.trim();
-    if (options.before && !/^[\w:.-]{1,256}$/.test(options.before))
+    const boundary = options.through ?? options.before;
+    if (boundary && !/^[\w:.-]{1,256}$/.test(boundary))
       throw new BadRequestException('A valid history cursor is required.');
     if (!/^[\w-]{1,256}$/.test(id))
       throw new BadRequestException('A valid agentId is required.');
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
     if (!state.subagents.some((agent) => agent.agentId === id))
       await this.recoverSubagents(sessionId, session, state);
     const agent = state.subagents.find((item) => item.agentId === id);
@@ -1017,15 +1052,19 @@ export class ClaudeRuntimeService
         : null;
       let messages: HistoryMessage[];
       let hasEarlier = false;
+      let nativeWindow = false;
       if (path) {
         try {
-          const page = await this.childTranscripts.read(path, options.before);
+          const page = await this.childTranscripts.read(path, boundary, !!options.through);
+          nativeWindow = true;
           hasEarlier = page.hasEarlier;
           messages = page.records.map((record) => ({
             type: record.type as SessionMessage['type'],
             uuid: record.uuid!,
             message: record.message,
             timestamp: record.timestamp,
+            apiBlockIndex: typeof record.apiBlockIndex === 'number' &&
+              Number.isSafeInteger(record.apiBlockIndex) && record.apiBlockIndex >= 0 ? record.apiBlockIndex : undefined,
             tool_use_result: record.toolUseResult ?? record.tool_use_result,
           }));
           const first = page.records[0];
@@ -1050,6 +1089,7 @@ export class ClaudeRuntimeService
       const history = this.normalizeHistory(
         messages,
         await this.getInteractionSummaryMap(sessionId),
+        true,
       ).map((item) => ({
         ...item,
         parentToolUseId:
@@ -1057,7 +1097,7 @@ export class ClaudeRuntimeService
             ? undefined
             : item.parentToolUseId,
       }));
-      if (!subagent.prompt)
+      if (!subagent.prompt && !hasEarlier)
         subagent.prompt = history.find((item) => item.kind === 'user')?.content;
       return {
         subagent,
@@ -1071,6 +1111,7 @@ export class ClaudeRuntimeService
                   : ('unavailable' as const),
             }),
         hasEarlier,
+        ...(nativeWindow ? { nativeWindow: true as const } : {}),
         transcriptAvailable: Boolean(history.length),
         ...(history.length
           ? {}
@@ -1282,6 +1323,12 @@ export class ClaudeRuntimeService
       });
       await run.completionPromise.catch(() => undefined);
     }
+    const state = this.runtimeStates.get(sessionId);
+    if (state) {
+      state.pendingUserInputRequest = null;
+      for (const requestId of state.userInputRequests.keys())
+        this.settleUserInput(sessionId, state, requestId, { action: 'cancel' });
+    }
     const runtime = this.sessionRuntimes.get(sessionId);
     if (runtime) {
       await runtime.close();
@@ -1312,99 +1359,87 @@ export class ClaudeRuntimeService
       throw new BadRequestException('A messageId is required.');
     }
 
-    if (this.activeRuns.has(sessionId)) {
+    if (this.rewinding.has(sessionId))
+      throw new ConflictException('A Claude message edit is already in progress.');
+    const current = this.runtimeStates.get(sessionId);
+    if (this.activeRuns.has(sessionId) || this.initializingRuns.has(sessionId) || this.isBackgroundWorkLive(sessionId)) {
       throw new ConflictException(
         'Cannot edit a message while Claude is actively running.',
       );
     }
+    if (current && (current.pendingPrompts.length || this.queuedDispatches.current(current).length))
+      throw new ConflictException('Resolve queued messages before editing.');
+    this.rewinding.add(sessionId);
+    try {
+      return await this.rewindIdleConversation(sessionId, trimmedMessageId);
+    } finally {
+      this.rewinding.delete(sessionId);
+    }
+  }
 
+  private async rewindIdleConversation(sessionId: number, messageId: string): Promise<ClaudeTranscriptItem[]> {
+    const generation = this.sessionGenerations.get(sessionId);
     const session = await this.sessionsService.findOne(sessionId);
     if (!session.claudeSessionId || session.claudeSessionId === '-1') {
       throw new NotFoundException('Claude session not found.');
     }
 
-    const transcriptPath = await this.findTranscriptPath(
-      session.transcriptWorktreePath ?? session.worktreePath,
-      session.claudeSessionId,
-    );
+    // A prewarmed query retains the old resume ID. Let its startup finish
+    // before replacing it, and prevent new queries from starting during the edit.
+    await this.prewarmInFlight.get(sessionId);
+    await this.sessionRuntimeCreateInFlight.get(sessionId)?.catch(() => undefined);
+    const dir = session.transcriptWorktreePath ?? session.worktreePath;
+    const transcriptPath = await this.findTranscriptPath(dir, session.claudeSessionId);
 
     if (!transcriptPath) {
       throw new NotFoundException('Claude transcript not found.');
     }
 
-    const records = await this.loadTranscriptRecords(transcriptPath);
+    const all = await this.loadTranscriptRecords(transcriptPath);
+    const records = this.selectActiveTranscriptRecords(all);
     const targetIndex = records.findIndex(
-      (record) =>
-        record.type === 'user' &&
-        typeof record.uuid === 'string' &&
-        record.uuid === trimmedMessageId,
+      (record) => record.uuid === messageId && record.type === 'user' &&
+        !!this.extractUserTextFromTranscriptRecord(record)?.trim(),
     );
 
     if (targetIndex === -1) {
       if (
-        records.some(
-          (record) =>
-            typeof record.uuid === 'string' && record.uuid === trimmedMessageId,
-        )
+        all.some((record) => record.uuid === messageId && record.type !== 'user')
       ) {
         throw new BadRequestException('Only user messages can be edited.');
       }
       throw new NotFoundException('Message not found in Claude transcript.');
     }
 
-    let truncateFrom = targetIndex;
-    const previousRecord = records[targetIndex - 1];
-    if (
-      previousRecord?.type === 'file-history-snapshot' &&
-      previousRecord.messageId === trimmedMessageId
-    ) {
-      truncateFrom -= 1;
-    }
-
-    const retainedRecords = records
-      .slice(0, truncateFrom)
-      .filter((record) => record.type !== 'last-prompt');
-
-    await this.persistTranscriptRecords(transcriptPath, retainedRecords);
+    // The SDK copies through an inclusive UUID. Fork the prefix and keep the
+    // original transcript intact, including its file history.
+    const upToMessageId = this.findPreviousTranscriptMessageId(records, targetIndex);
+    const rewound = upToMessageId ? await forkSession(session.claudeSessionId, { dir, upToMessageId, title: session.name ?? undefined }) : null;
+    if (upToMessageId && (!rewound?.sessionId || rewound.sessionId === session.claudeSessionId))
+      throw new Error('Claude did not create the edited conversation.');
 
     const existingRuntime = this.sessionRuntimes.get(sessionId);
     if (existingRuntime) {
-      await existingRuntime.close().catch(() => undefined);
       this.sessionRuntimes.delete(sessionId);
+      await existingRuntime.close();
     }
-    this.sessionRuntimeCreateInFlight.delete(sessionId);
+    if (this.sessionGenerations.get(sessionId) !== generation)
+      throw new ConflictException('The session closed while the message was being edited.');
+    const timestamp = records[targetIndex].timestamp;
+    this.sessionsService.replaceEditedConversation(sessionId, 'claude', session.claudeSessionId,
+      rewound?.sessionId ?? '-1', typeof timestamp === 'string' ? timestamp : undefined);
 
-    // Editing the first message truncates the transcript to nothing, so there is
-    // no conversation left to resume. Resuming with the now-stale claudeSessionId
-    // makes Claude Code return "No conversation found with session ID" and the
-    // edited message is lost. Clear the ID so the next submit starts a fresh
-    // session.
-    const hasRetainedConversation = retainedRecords.some(
-      (record) => record.type === 'user' || record.type === 'assistant',
-    );
-    if (!hasRetainedConversation) {
-      this.logger.log(
-        `Claude rewind emptied transcript, clearing stale session ID session=${sessionId} claudeSessionId=${session.claudeSessionId}`,
-      );
-      await this.sessionsService
-        .updateClaudeSessionId(sessionId, '-1')
-        .catch((e) => {
-          this.logger.warn(
-            `Failed to clear session ID after rewind session=${sessionId}: ${String(e)}`,
-          );
-        });
-    }
-
-    const state = this.ensureRuntimeState(
-      sessionId,
-      hasRetainedConversation ? session.claudeSessionId : '-1',
-    );
-    if (!hasRetainedConversation) {
-      state.claudeSessionId = null;
-      state.lastHistoryItemCount = 0;
-      state.lastHistorySource = null;
-    }
+    const state = this.ensureSessionState(sessionId, session);
+    state.claudeSessionId = rewound?.sessionId ?? null;
+    state.lastHistoryItemCount = null;
+    state.lastHistorySource = null;
     this.resetEphemeralRuntimeState(state);
+    state.queuePaused = false;
+    state.contextUsage = null;
+    state.tasks = [];
+    state.taskLifecycle = [];
+    state.subagents = [];
+    this.emitEvent({ type: 'conversation_rewound', payload: { sessionId } });
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
     void this.claudeHooksService.updateStatus(sessionId, 'idle', {
@@ -1507,15 +1542,60 @@ export class ClaudeRuntimeService
     sessionId: number,
     model: string | null,
   ): Promise<ClaudeRuntimeStatePayload> {
-    const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
-    const selectedModel = model ?? null;
-    state.selectedModel = selectedModel;
+    const generation = this.sessionGenerations.get(sessionId);
+    const previous = this.modelChanges.get(sessionId) ?? Promise.resolve();
+    const change = previous.catch(() => undefined).then(() =>
+      this.applySelectedModel(sessionId, model, generation),
+    );
+    this.modelChanges.set(sessionId, change);
+    try {
+      return await change;
+    } finally {
+      if (this.modelChanges.get(sessionId) === change) {
+        this.modelChanges.delete(sessionId);
+      }
+    }
+  }
 
+  private async applySelectedModel(
+    sessionId: number,
+    model: string | null,
+    generation: number | undefined,
+  ): Promise<ClaudeRuntimeStatePayload> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const creating = this.sessionRuntimeCreateInFlight.get(sessionId);
+    if (creating) await creating.catch(() => undefined);
+    const assertCurrent = () => {
+      if (
+        this.invalidatedSessions.has(sessionId) ||
+        this.sessionGenerations.get(sessionId) !== generation
+      ) {
+        throw new ConflictException(
+          'This session was closed. Reopen its task before continuing.',
+        );
+      }
+    };
+    assertCurrent();
+    const state = this.ensureSessionState(sessionId, session);
     const runtime = this.sessionRuntimes.get(sessionId);
-    if (runtime) {
-      await runtime.setModel(selectedModel ?? undefined);
-      this.restartIdleRuntimeForOptionChange(sessionId);
+    const previousModel = runtime?.model;
+    if (runtime) await runtime.setModel(model ?? undefined);
+    try {
+      assertCurrent();
+      await this.sessionsService.updateClaudeModelSelection(sessionId, model);
+    } catch (error) {
+      if (runtime && this.sessionRuntimes.get(sessionId) === runtime) {
+        await runtime.setModel(previousModel).catch((rollbackError) => {
+          this.logger.warn(
+            `Claude model rollback failed session=${sessionId}: ${String(rollbackError)}`,
+          );
+        });
+      }
+      throw error;
+    }
+    state.modelSelection = { model };
+    state.selectedModel = model;
+    if (runtime && this.sessionRuntimes.get(sessionId) === runtime) {
       // Context/model discovery is optional UI metadata. Publish the accepted
       // selection immediately rather than holding the picker on a CLI probe.
       void this.refreshRuntimeMetadata(sessionId, {
@@ -1526,10 +1606,18 @@ export class ClaudeRuntimeService
           `Model metadata refresh failed session=${sessionId}: ${String(error)}`,
         );
       });
-      this.emitRunState(sessionId);
     }
 
+    this.emitRunState(sessionId);
+
     return this.toRuntimeStatePayload(sessionId, state);
+  }
+
+  nativeAppLaunchPolicy(sessionId: number): import('../agent-runtime/agent-runtime.types.js').NativeAppLaunchPolicy {
+    const state = this.runtimeStates.get(sessionId);
+    if (state?.planMode) return 'plan';
+    if (state?.selectedPermissionMode !== 'bypassPermissions') return 'request';
+    return this.sessionRuntimes.get(sessionId)?.canLaunchNativeApp ? 'launch' : 'request';
   }
 
   async setPermissionMode(
@@ -1537,7 +1625,7 @@ export class ClaudeRuntimeService
     mode: ClaudePermissionMode | null,
   ): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
     const normalized = this.normalizePermissionModeSelection(
       mode,
       state.selectedPermissionMode,
@@ -1570,7 +1658,7 @@ export class ClaudeRuntimeService
     enabled: boolean,
   ): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
     state.planMode = enabled;
 
     const runtime = this.sessionRuntimes.get(sessionId);
@@ -1595,7 +1683,7 @@ export class ClaudeRuntimeService
     mode: string,
   ): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
     const normalized = normalizeAutonomyMode(mode);
     const policy = permissionModeForAutonomy(normalized);
     state.surface = 'agent';
@@ -1650,7 +1738,9 @@ export class ClaudeRuntimeService
     effort: ClaudeReasoningEffort | null,
   ): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
+    if (session.agentSelection?.provider === 'claude')
+      this.sessionsService.updateSessionAgentSelection(sessionId, 'claude', { reasoningEffort: effort });
     state.reasoningEffort = effort;
     this.restartIdleRuntimeForOptionChange(sessionId);
     this.emitRunState(sessionId);
@@ -1662,7 +1752,7 @@ export class ClaudeRuntimeService
     enabled: boolean,
   ): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
     state.fastMode = enabled;
     if (state.sessionMetadata) {
       state.sessionMetadata = {
@@ -1679,7 +1769,7 @@ export class ClaudeRuntimeService
     sessionId: number,
   ): Promise<ClaudeAutocompleteItem[]> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
     const [commandItems, claudeSkillItems, externalSkillItems] =
       await Promise.all([
         this.collectCommandItems(session.worktreePath),
@@ -2020,13 +2110,16 @@ export class ClaudeRuntimeService
   private createOnElicitation(
     sessionId: number,
     state: RuntimeState,
-  ): (request: ElicitationRequest) => Promise<ElicitationResult> {
-    return async (request): Promise<ElicitationResult> => {
+  ): OnElicitation {
+    return async (request, { signal }) => {
+      if (signal.aborted) return { action: 'cancel' };
       const requestId = randomUUID();
+      const decision = claudeElicitationDecision(request);
       const pendingRequest: ClaudeUserInputRequest = {
         requestId,
         serverName: request.serverName,
         message: request.message,
+        ...(decision ? { decision } : {}),
         mode: request.mode,
         url: request.url,
         elicitationId: request.elicitationId,
@@ -2043,16 +2136,25 @@ export class ClaudeRuntimeService
         // run rather than auto-declining just because activeRuns hasn't
         // caught up with a resumed or just-finished turn.
         const run = this.ensureActiveRunForCallback(sessionId, state);
-        if (!run) {
+        if (signal.aborted) {
+          resolve({ action: 'cancel' });
+          return;
+        }
+        if (!run || run.interruptRequested) {
           resolve({ action: 'decline' });
           return;
         }
 
+        const abort = () => this.settleUserInput(sessionId, state, requestId, { action: 'cancel' });
         state.userInputRequests = run.userInputRequests;
         state.userInputRequests.set(requestId, {
           request: pendingRequest,
-          resolve: (decision) => resolve(decision),
+          resolve: (response) => {
+            signal.removeEventListener('abort', abort);
+            resolve(response);
+          },
         });
+        signal.addEventListener('abort', abort, { once: true });
         if (!state.pendingUserInputRequest) {
           state.pendingUserInputRequest = pendingRequest;
           this.emitEvent({
@@ -2078,7 +2180,7 @@ export class ClaudeRuntimeService
   async prewarmSession(sessionId: number): Promise<void> {
     if (
       this.invalidatedSessions.has(sessionId) ||
-      this.activeRuns.has(sessionId)
+      this.activeRuns.has(sessionId) || this.rewinding.has(sessionId)
     ) {
       return;
     }
@@ -2102,13 +2204,14 @@ export class ClaudeRuntimeService
         return;
       }
 
-      const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+      const state = this.ensureSessionState(sessionId, session);
       const runtime = await this.ensureSessionRuntime(
         sessionId,
         session,
         state,
       );
       await runtime.ensureStarted('prewarm');
+      void this.refreshClaudePlanUsage(sessionId);
       this.lastPrewarmAt.set(sessionId, Date.now());
       this.enforceIdleRuntimeLimit(sessionId);
     })()
@@ -2130,6 +2233,10 @@ export class ClaudeRuntimeService
     session: AgentRuntimeSession,
     state: RuntimeState,
   ): Promise<ClaudeSessionRuntime> {
+    // A cold runtime should start with the same model as the accepted picker
+    // change. An already-building runtime is updated in place by that change.
+    const modelChange = this.modelChanges.get(sessionId);
+    if (modelChange) await modelChange.catch(() => undefined);
     const existing = this.sessionRuntimes.get(sessionId);
     if (existing) {
       // A level changed during a turn cannot rebuild the process until that
@@ -2144,6 +2251,9 @@ export class ClaudeRuntimeService
       }
       this.sessionRuntimes.delete(sessionId);
       await existing.close();
+      const modelChangeWhileClosing = this.modelChanges.get(sessionId);
+      if (modelChangeWhileClosing)
+        await modelChangeWhileClosing.catch(() => undefined);
     }
 
     const inFlight = this.sessionRuntimeCreateInFlight.get(sessionId);
@@ -2189,7 +2299,7 @@ export class ClaudeRuntimeService
       sessionId,
       session.worktreePath,
       session.claudeSessionId,
-      state.selectedModel,
+      state.modelSelection ? state.modelSelection.model : state.selectedModel,
       state.reasoningEffort,
       state.fastMode,
       state.selectedPermissionMode,
@@ -2425,7 +2535,7 @@ export class ClaudeRuntimeService
     prompt: string,
     titlePrompt?: string,
     images?: ClaudeImageInput[],
-    options: { human?: boolean; queue?: boolean } = {},
+    options: AgentPromptOptions = {},
   ): Promise<void> {
     let accepted!: () => void;
     const receipt = new Promise<void>((resolve) => {
@@ -2433,7 +2543,10 @@ export class ClaudeRuntimeService
     });
     const completion = this.runPrompt(sessionId, prompt, titlePrompt, images, {
       ...options,
-      onAccepted: accepted,
+      onAccepted: (disposition) => {
+        options.onAccepted?.(disposition);
+        accepted();
+      },
     });
     // The completion rejection stays observed after acceptance, and the worker
     // publishes later failures through its normal error/run-state pipeline.
@@ -2445,8 +2558,10 @@ export class ClaudeRuntimeService
     prompt: string,
     titlePrompt?: string,
     images?: ClaudeImageInput[],
-    options: { human?: boolean; queue?: boolean; onAccepted?: () => void } = {},
+    options: AgentPromptOptions = {},
   ): Promise<void> {
+    if (this.rewinding.has(sessionId))
+      throw new ConflictException('A Claude message edit is already in progress.');
     const generation = this.sessionGenerations.get(sessionId) ?? 0;
     const startedAtMs = Date.now();
     const runId = randomUUID().slice(0, 8);
@@ -2457,25 +2572,31 @@ export class ClaudeRuntimeService
     }
 
     const running = this.activeRuns.get(sessionId);
+    const preserveQueueOrder = options.preferSteering && !options.requireSteering;
     if (
       running &&
       !running.interruptRequested &&
       running.query.canSteer &&
       !options.queue &&
-      !this.runtimeStates.get(sessionId)?.queuePaused
+      !this.runtimeStates.get(sessionId)?.queuePaused &&
+      !(preserveQueueOrder && this.runtimeStates.get(sessionId)?.pendingPrompts.length)
     ) {
       await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
       if (
         this.activeRuns.get(sessionId) !== running ||
-        running.interruptRequested
+        running.interruptRequested ||
+        this.runtimeStates.get(sessionId)?.queuePaused ||
+        (preserveQueueOrder && this.runtimeStates.get(sessionId)?.pendingPrompts.length)
       )
         return this.runPrompt(sessionId, prompt, titlePrompt, images, options);
       running.query.steer(
         this.buildSdkUserMessage(trimmedPrompt, validatedImages, options.human),
       );
-      options.onAccepted?.();
+      options.onAccepted?.('steered');
       return;
     }
+    if (options?.requireSteering)
+      throw new ConflictException('No active turn can accept live steering.');
     if (
       this.activeRuns.has(sessionId) ||
       this.initializingRuns.has(sessionId) ||
@@ -2486,8 +2607,9 @@ export class ClaudeRuntimeService
         trimmedPrompt,
         validatedImages,
         options.human,
+        options.beforeDispatch,
       );
-      options.onAccepted?.();
+      options.onAccepted?.('queued');
       return;
     }
 
@@ -2549,7 +2671,7 @@ export class ClaudeRuntimeService
         hasClaudeSessionId:
           Boolean(session.claudeSessionId) && session.claudeSessionId !== '-1',
       });
-      const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+      const state = this.ensureSessionState(sessionId, session);
       initializationState = state;
       state.liveItems = [];
       state.pendingPermissionRequest = null;
@@ -2648,8 +2770,7 @@ export class ClaudeRuntimeService
           model: state.selectedModel ?? 'default',
           permissionMode: state.selectedPermissionMode ?? 'default',
           warmState: runtime.warmState,
-          claudeBinary:
-            this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude',
+          claudeBinary: this.claudeCliOverride?.path ?? 'claude',
           historyItems: state.lastHistoryItemCount,
           historySource: state.lastHistorySource,
           historyAgeMs:
@@ -2721,14 +2842,15 @@ export class ClaudeRuntimeService
         await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
         const run = this.activeRuns.get(sessionId);
         if (run && run.runId === runId && !run.interruptRequested) {
-          changeCapture = await this.turnChanges?.begin(sessionId, 'claude', session.worktreePath);
+          changeCapture = await this.turnChanges?.begin(sessionId, 'claude', session.worktreePath, state.claudeSessionId);
           if (!run.interruptRequested && this.activeRuns.get(sessionId) === run) await runtime.submitTurn(
             this.buildSdkUserMessage(
               trimmedPrompt,
               validatedImages,
               options.human,
             ),
-            options.onAccepted,
+            () => options.onAccepted?.('running'),
+            options.beforeDispatch,
           );
         }
       } catch (error) {
@@ -2808,12 +2930,16 @@ export class ClaudeRuntimeService
     prompt: string,
     images: ClaudeImageInput[],
     human = false,
+    beforeDispatch?: () => void,
   ): Promise<void> {
+    const generation = this.sessionGenerations.get(sessionId);
     const existingSession = await this.sessionsService.findOne(sessionId);
-    const existingState = this.ensureRuntimeState(
-      sessionId,
-      existingSession.claudeSessionId,
-    );
+    if (this.invalidatedSessions.has(sessionId) ||
+        this.sessionGenerations.get(sessionId) !== generation ||
+        existingSession.status === 'archived')
+      throw new ConflictException('This session was closed. Reopen its task before continuing.');
+    const existingState = this.ensureSessionState(sessionId, existingSession);
+    beforeDispatch?.();
     existingState.pendingPrompts = [
       ...existingState.pendingPrompts,
       {
@@ -2828,6 +2954,8 @@ export class ClaudeRuntimeService
       existingState.queuePaused = true;
     }
     this.emitRunState(sessionId);
+    // The previous turn can finish while the session row is being read.
+    this.drainPendingPrompts(sessionId);
   }
 
   private static readonly IMAGE_MIME_ALLOWLIST: readonly ClaudeImageMediaType[] =
@@ -2933,6 +3061,9 @@ export class ClaudeRuntimeService
     const run = this.activeRuns.get(sessionId);
     if (run?.query.canSteer && !run.interruptRequested) {
       await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
+      if (this.runtimeStates.get(sessionId) !== state || !state.pendingPrompts.includes(selected)) return;
+    }
+    if (run?.query.canSteer && !run.interruptRequested && this.activeRuns.get(sessionId) === run) {
       run.query.steer(
         this.buildSdkUserMessage(
           selected.prompt,
@@ -2943,6 +3074,7 @@ export class ClaudeRuntimeService
       state.pendingPrompts = state.pendingPrompts.filter(
         (prompt) => prompt.id !== id,
       );
+      this.queuedDispatches.begin(state, selected);
       state.queuePaused = false;
       this.emitRunState(sessionId);
       return;
@@ -2951,12 +3083,10 @@ export class ClaudeRuntimeService
       selected,
       ...state.pendingPrompts.filter((prompt) => prompt.id !== id),
     ];
-    state.queuePaused = true;
-    state.lastError = null;
-    this.emitRunState(sessionId);
-
-    await this.interrupt(sessionId);
+    // On older Claude versions the selected input can run next while the
+    // current turn finishes naturally.
     state.queuePaused = false;
+    state.lastError = null;
     this.emitRunState(sessionId);
     this.drainPendingPrompts(sessionId);
   }
@@ -3204,19 +3334,42 @@ export class ClaudeRuntimeService
     requestId: string,
     action: 'accept' | 'decline' | 'cancel' = 'accept',
     content?: UserInputContent,
+    options?: { requirePending: true },
   ): Promise<void> {
-    const run = this.activeRuns.get(sessionId);
-    const stateForRequest = this.ensureRuntimeState(sessionId);
-    const request =
-      run?.userInputRequests.get(requestId) ??
-      stateForRequest.userInputRequests.get(requestId);
-    if (!request) {
+    const state = this.ensureRuntimeState(sessionId);
+    const request = (this.activeRuns.get(sessionId)?.userInputRequests.get(requestId) ??
+      state.userInputRequests.get(requestId))?.request;
+    if (!request || this.invalidatedSessions.has(sessionId) ||
+        (options?.requirePending && state.pendingUserInputRequest?.requestId !== requestId)) {
+      if (options?.requirePending)
+        throw new ConflictException('This request is no longer pending.');
       return;
     }
+    if (action === 'accept' && request.decision === 'unsupported')
+      throw new BadRequestException('This elicitation cannot be answered by this engine.');
+    if (action === 'accept' && request.decision === 'confirm' && content && Object.keys(content).length)
+      throw new BadRequestException('This confirmation does not accept form answers.');
+    this.settleUserInput(sessionId, state, requestId, {
+      action,
+      content: request.decision === 'confirm' ? (action === 'accept' ? {} : undefined) : content,
+    });
+  }
 
+  private settleUserInput(
+    sessionId: number,
+    state: RuntimeState,
+    requestId: string,
+    decision: UserInputDecision,
+  ): void {
+    const run = this.activeRuns.get(sessionId);
+    const request = run?.userInputRequests.get(requestId) ?? state.userInputRequests.get(requestId);
+    if (!request) return;
     run?.userInputRequests.delete(requestId);
-    const state = this.ensureRuntimeState(sessionId);
     state.userInputRequests.delete(requestId);
+    request.resolve(decision);
+    if (this.invalidatedSessions.has(sessionId) || this.runtimeStates.get(sessionId) !== state ||
+        state.pendingUserInputRequest?.requestId !== requestId) return;
+
     state.pendingUserInputRequest =
       state.userInputRequests.values().next().value?.request ?? null;
     if (state.pendingUserInputRequest)
@@ -3224,7 +3377,10 @@ export class ClaudeRuntimeService
         type: 'user_input_request',
         payload: { sessionId, request: state.pendingUserInputRequest },
       });
-    state.runPhase = state.pendingUserInputRequest
+    const permission = state.pendingPermissionRequest;
+    const blockingPermission = permission && !this.childPermissionIsBackground(state, permission) &&
+      (!permission.agentId || !!run);
+    state.runPhase = state.pendingUserInputRequest || blockingPermission
       ? 'waiting'
       : run
         ? 'running'
@@ -3236,7 +3392,6 @@ export class ClaudeRuntimeService
           ? 'running'
           : 'idle';
     this.emitRunState(sessionId);
-    request.resolve({ action, content });
   }
 
   getPendingMcpAuthUrl(sessionId: number, serverName: string): string | null {
@@ -3717,9 +3872,11 @@ export class ClaudeRuntimeService
 
     const [next, ...rest] = state.pendingPrompts;
     state.pendingPrompts = rest;
+    const finishDispatch = this.queuedDispatches.begin(state, next);
     this.emitRunState(sessionId);
     setImmediate(() => {
-      this.submitPrompt(sessionId, next.prompt, undefined, next.images, {
+      if (this.runtimeStates.get(sessionId) !== state || this.invalidatedSessions.has(sessionId)) return;
+      void this.submitPrompt(sessionId, next.prompt, undefined, next.images, {
         human: next.human,
       }).catch((error) => {
         this.logger.error(
@@ -3727,6 +3884,8 @@ export class ClaudeRuntimeService
             error instanceof Error ? error.message : String(error)
           }`,
         );
+        if (finishDispatch() && this.runtimeStates.get(sessionId) === state)
+          this.emitRunState(sessionId);
       });
     });
   }
@@ -3761,6 +3920,16 @@ export class ClaudeRuntimeService
     // system:init arrives after the user stops, we still need to persist the
     // session ID so that getHistory can load it and the next run can resume.
     this.captureClaudeSessionId(sessionId, message);
+    // Native set_model receipts are control traffic, even during the grace
+    // window for background replies. They must never create a user turn/run.
+    if (
+      (message.type === 'user' &&
+        this.isModelChangeOutput(message.message.content)) ||
+      (message.type === 'system' &&
+        message.subtype === 'local_command_output' &&
+        this.isModelChangeOutput(message.content, false))
+    )
+      return;
     if (
       this.activeRuns.get(sessionId)?.interruptRequested &&
       (message.type === 'assistant' ||
@@ -4043,8 +4212,10 @@ export class ClaudeRuntimeService
             payload: { sessionId, itemId: partialId },
           });
         } else {
+          const id = `${streamMessageId}:assistant:${partIndex}`;
+          const previous = this.findLiveItem(sessionId, id);
           const item: ClaudeTranscriptItem = {
-            id: `${streamMessageId}:assistant:${partIndex}`,
+            id: previous && previous.transcriptMessageId !== message.uuid ? `${id}:${message.uuid}` : id,
             kind: 'assistant',
             agentId: message.agent_id,
             content: part.text,
@@ -4089,8 +4260,10 @@ export class ClaudeRuntimeService
             payload: { sessionId, itemId: partialId },
           });
         } else {
+          const id = `${streamMessageId}:thinking:${partIndex}`;
+          const previous = this.findLiveItem(sessionId, id);
           const item: ClaudeTranscriptItem = {
-            id: `${streamMessageId}:thinking:${partIndex}`,
+            id: previous && previous.transcriptMessageId !== message.uuid ? `${id}:${message.uuid}` : id,
             kind: 'thinking',
             agentId: message.agent_id,
             content: part.thinking,
@@ -4118,7 +4291,9 @@ export class ClaudeRuntimeService
           providerToolInput,
         );
         const item: ClaudeTranscriptItem = {
-          id: `${message.uuid}:tool:${part.id}`,
+          // Match normalizeHistory so reopening an active turn replaces the
+          // saved call instead of appending a duplicate beyond its result.
+          id: `${streamMessageId}:tool_use:${part.id ?? partIndex}`,
           kind: 'tool_use',
           agentId: message.agent_id,
           toolUseId: part.id,
@@ -4277,6 +4452,12 @@ export class ClaudeRuntimeService
   }
 
   private handleUserMessage(sessionId: number, message: SDKUserMessage): void {
+    if (
+      message.isSynthetic === true &&
+      isImageSourceNote(message.message.content)
+    ) {
+      return;
+    }
     const content = Array.isArray(message.message.content)
       ? message.message.content
       : typeof message.message.content === 'string'
@@ -4630,7 +4811,7 @@ export class ClaudeRuntimeService
       ?.setCliVersion(metadata.claudeCodeVersion);
     // The SDK only reports plan limits for claude.ai subscription auth. If a
     // session is backed by an API key, never carry a quota card into it.
-    if (metadata.apiKeySource !== 'oauth' && state.planUsage) {
+    if (!allowsClaudePlanUsage(metadata.apiKeySource) && state.planUsage) {
       state.planUsage = null;
       this.emitEvent({
         type: 'plan_usage',
@@ -4640,7 +4821,9 @@ export class ClaudeRuntimeService
     if (message.permissionMode === 'plan') {
       state.planMode = true;
     }
-    state.selectedModel = metadata.model || state.selectedModel;
+    // init/context report the wire ID, which loses custom labels and model
+    // capabilities if it replaces the alias chosen in the catalog.
+    state.selectedModel ??= this.catalogModelId(state, metadata.model);
     this.emitEvent({
       type: 'session_metadata',
       payload: { sessionId, metadata },
@@ -5132,6 +5315,61 @@ export class ClaudeRuntimeService
     });
   }
 
+  private refreshClaudePlanUsage(sessionId: number): Promise<void> {
+    const runtime = this.sessionRuntimes.get(sessionId);
+    const state = this.runtimeStates.get(sessionId);
+    if (
+      !runtime ||
+      !state ||
+      this.modelsRefreshDestroyed ||
+      this.invalidatedSessions.has(sessionId)
+    )
+      return Promise.resolve();
+    const previous = this.planUsageReads.get(runtime);
+    if (previous?.pending) return previous.pending;
+    if (previous && Date.now() - previous.at < CLAUDE_PLAN_USAGE_TTL_MS)
+      return Promise.resolve();
+
+    const usageAtStart = state.planUsage;
+    const read: PlanUsageRead = { at: Date.now(), pending: null };
+    this.planUsageReads.set(runtime, read);
+    read.pending = (async () => {
+      try {
+        const usage = await runtime.getUsage();
+        if (
+          usage === undefined ||
+          this.modelsRefreshDestroyed ||
+          this.invalidatedSessions.has(sessionId) ||
+          this.sessionRuntimes.get(sessionId) !== runtime ||
+          this.runtimeStates.get(sessionId) !== state ||
+          state.planUsage !== usageAtStart
+        )
+          return;
+        // The native availability flag proves subscription auth even before
+        // the first system:init. Explicit API-key metadata still wins.
+        const planUsage = allowsClaudePlanUsage(
+          state.sessionMetadata?.apiKeySource,
+        )
+          ? claudeSubscriptionUsage(usage)
+          : null;
+        if (planUsage === undefined) return;
+        if (!planUsage && !state.planUsage) return;
+        state.planUsage = planUsage;
+        this.emitEvent({
+          type: 'plan_usage',
+          payload: { sessionId, planUsage },
+        });
+      } catch {
+        // Optional UI: old CLIs and transient usage failures must not block
+        // chat or erase the last provider fact. Throttle failures as well.
+      } finally {
+        read.at = Date.now();
+        read.pending = null;
+      }
+    })();
+    return read.pending;
+  }
+
   private handleRateLimitEvent(
     sessionId: number,
     message: SDKRateLimitEvent,
@@ -5152,7 +5390,7 @@ export class ClaudeRuntimeService
     // rate_limit_event is explicitly subscription-only in the Claude Agent
     // SDK. The metadata guard also protects against a stale/malformed event
     // while API-key authentication is active.
-    if (state.sessionMetadata?.apiKeySource === 'oauth') {
+    if (allowsClaudePlanUsage(state.sessionMetadata?.apiKeySource)) {
       state.planUsage = this.toClaudePlanUsage(rateLimit, state.planUsage);
       this.emitEvent({
         type: 'plan_usage',
@@ -5169,29 +5407,18 @@ export class ClaudeRuntimeService
     rateLimit: ClaudeRateLimit,
     previous: AgentPlanUsage | null,
   ): AgentPlanUsage | null {
-    if (typeof rateLimit.utilization !== 'number') {
-      return rateLimit.status === 'rejected'
-        ? {
-            provider: 'claude',
-            planName: null,
-            status: 'exhausted',
-            windows: [
-              {
-                id: rateLimit.rateLimitType ?? 'plan',
-                label: 'Plan usage',
-                remainingPercentage: 0,
-                resetsAt: rateLimit.resetsAt ?? null,
-              },
-            ],
-            credits: null,
-            updatedAt: new Date().toISOString(),
-          }
-        : previous;
-    }
+    const utilization =
+      typeof rateLimit.utilization === 'number' &&
+      Number.isFinite(rateLimit.utilization)
+        ? rateLimit.utilization
+        : rateLimit.status === 'rejected'
+          ? 1
+          : null;
+    if (utilization === null) return previous;
     const id = rateLimit.rateLimitType ?? 'plan';
     const remainingPercentage = Math.max(
       0,
-      Math.min(100, Math.round((1 - rateLimit.utilization) * 100)),
+      Math.min(100, Math.round((1 - utilization) * 100)),
     );
     const labels: Record<string, string> = {
       five_hour: '5-hour limit',
@@ -5232,7 +5459,7 @@ export class ClaudeRuntimeService
 
     return {
       provider: 'claude',
-      planName: null,
+      planName: previous?.planName ?? null,
       status:
         rateLimit.status === 'rejected' || lowestRemaining <= 0
           ? 'exhausted'
@@ -5602,6 +5829,7 @@ export class ClaudeRuntimeService
     state.runPhase = state.lastError ? 'error' : 'idle';
     state.sessionState = 'idle';
     state.canInterrupt = false;
+    this.queuedDispatches.clear(state);
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = null;
     state.liveItems = [];
@@ -5669,6 +5897,7 @@ export class ClaudeRuntimeService
 
     const run = this.activeRuns.get(sessionId);
     const state = this.ensureRuntimeState(sessionId);
+    this.queuedDispatches.clear(state);
     state.runPhase = 'idle';
     state.sessionState = 'idle';
     state.canInterrupt = false;
@@ -5745,11 +5974,21 @@ export class ClaudeRuntimeService
   private ensureRuntimeState(
     sessionId: number,
     claudeSessionId?: string | null,
+    modelSelection?: schema.ClaudeModelSelection | null,
+    agentSelection?: schema.SessionAgentSelection | null,
   ): RuntimeState {
     const existing = this.runtimeStates.get(sessionId);
     if (existing) {
       if (claudeSessionId && claudeSessionId !== '-1') {
         existing.claudeSessionId = claudeSessionId;
+      }
+      if (existing.modelSelection === undefined && modelSelection !== undefined) {
+        existing.modelSelection = modelSelection;
+        if (modelSelection || agentSelection)
+          Object.assign(
+            existing,
+            this.startupModelSettings(existing.availableModels, modelSelection, agentSelection),
+          );
       }
       return existing;
     }
@@ -5757,11 +5996,6 @@ export class ClaudeRuntimeService
     const availableModels = this.modelsCache?.length
       ? [...this.modelsCache]
       : [...FALLBACK_MODELS];
-    const startup = resolveAgentStartupSelection(
-      this.settingsService.getAgentProviderDefaults('claude'),
-      availableModels,
-    );
-
     const state: RuntimeState = {
       claudeSessionId:
         claudeSessionId && claudeSessionId !== '-1' ? claudeSessionId : null,
@@ -5785,13 +6019,8 @@ export class ClaudeRuntimeService
       queuePaused: false,
       liveItems: [],
       lastError: null,
-      selectedModel: startup.selectedModel,
-      reasoningEffort: startup.reasoningEffort,
-      fastMode:
-        this.settingsService.getAgentProviderDefaults('claude').fastMode ===
-          true &&
-        availableModels.find((model) => model.id === startup.selectedModel)
-          ?.supportsFastMode === true,
+      ...this.startupModelSettings(availableModels, modelSelection, agentSelection),
+      modelSelection,
       selectedPermissionMode: 'auto',
       planMode: false,
       availableModels,
@@ -5836,6 +6065,41 @@ export class ClaudeRuntimeService
     return state;
   }
 
+  private ensureSessionState(
+    sessionId: number,
+    session: AgentRuntimeSession,
+  ): RuntimeState {
+    return this.ensureRuntimeState(
+      sessionId,
+      session.claudeSessionId,
+      session.claudeModelSelection ?? null,
+      session.agentSelection,
+    );
+  }
+
+  private startupModelSettings(
+    availableModels: readonly ClaudeModelOption[],
+    selection: schema.ClaudeModelSelection | null | undefined,
+    agentSelection?: schema.SessionAgentSelection | null,
+  ) {
+    const defaults = this.settingsService.getAgentProviderDefaults('claude');
+    const startup = resolveAgentStartupSelection(
+      { ...defaults, ...selection },
+      availableModels,
+      null,
+      agentSelection?.provider === 'claude'
+        ? { reasoningEffort: agentSelection.reasoningEffort }
+        : undefined,
+    );
+    return {
+      ...startup,
+      fastMode:
+        defaults.fastMode === true &&
+        availableModels.find((model) => model.id === startup.selectedModel)
+          ?.supportsFastMode === true,
+    };
+  }
+
   private emitRunState(sessionId: number): void {
     if (this.invalidatedSessions.has(sessionId)) {
       return;
@@ -5845,6 +6109,7 @@ export class ClaudeRuntimeService
     this.claudeHooksService.updateRuntimeActivity(
       sessionId,
       this.toSidebarActivity(state),
+      { authoritative: state.surface === 'session', provider: 'claude' },
     );
     this.emitEvent({
       type: 'run_state',
@@ -5870,6 +6135,7 @@ export class ClaudeRuntimeService
         pendingPermissionRequest: state.pendingPermissionRequest,
         pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
+        dispatchingPrompts: this.queuedDispatches.current(state),
         queuePaused: state.queuePaused,
       },
     });
@@ -6155,7 +6421,10 @@ export class ClaudeRuntimeService
         systemSubtypes: [...run.systemSubtypesBeforeVisible],
       };
     }
-    if (!item.agentId) state.liveItems = [...state.liveItems, item];
+    if (!item.agentId) {
+      const position = state.liveItems.findIndex(existing => existing.id === item.id);
+      state.liveItems = position < 0 ? [...state.liveItems, item] : state.liveItems.with(position, item);
+    }
 
     if (eventType === 'thinking_start') {
       this.emitEvent({ type: 'thinking_start', payload: { sessionId, item } });
@@ -6258,7 +6527,7 @@ export class ClaudeRuntimeService
     selectedPermissionMode: ClaudePermissionMode | null,
     planMode: boolean,
     canUseTool: CanUseTool,
-    onElicitation: (request: ElicitationRequest) => Promise<ElicitationResult>,
+    onElicitation: OnElicitation,
     surface: string = 'session',
     agentAutonomyMode: string | null = null,
   ): Promise<Options> {
@@ -6277,9 +6546,28 @@ export class ClaudeRuntimeService
     // Always use the independently installed Claude Code CLI. Passing the
     // command name even when PATH resolution fails prevents the Agent SDK from
     // silently falling back to its bundled optional executable.
-    const pathToClaudeCodeExecutable =
-      this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude';
+    const environment = await buildAugmentedEnvAsync(process.env, worktreePath);
+    const pathToClaudeCodeExecutable = await this.resolveClaudeBinary();
     const mcpAgentToken = await this.mcpAgentTokens.ensureToken(sessionId);
+    const observeFileTool: HookCallback = async (input) => {
+      if (input.hook_event_name === 'PreToolUse' || input.hook_event_name === 'PostToolUse' ||
+          input.hook_event_name === 'PostToolUseFailure')
+        await this.turnChanges?.claudeTool(sessionId, input).catch(() => undefined);
+      return {};
+    };
+    const hooks: Options['hooks'] = {
+      PreToolUse: [
+        ...(isAgentSession ? [{ hooks: [
+          ...(normalizeAutonomyMode(agentAutonomyMode) === 'review' && effectivePermissionMode === 'auto'
+            ? [askOnDestructiveElevenexTool] : []), constrainOperatorChild,
+        ] }] : []),
+        ...(this.turnChanges ? [{ matcher: 'Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit', hooks: [observeFileTool] }] : []),
+      ],
+      ...(this.turnChanges ? {
+        PostToolUse: [{ matcher: 'Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit', hooks: [observeFileTool] }],
+        PostToolUseFailure: [{ matcher: 'Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit', hooks: [observeFileTool] }],
+      } : {}),
+    };
     const options: Options & {
       fastMode?: boolean;
       fastModePerSessionOptIn?: boolean;
@@ -6297,6 +6585,7 @@ export class ClaudeRuntimeService
           ? claudeSessionId
           : undefined,
       includeHookEvents: true,
+      ...(isAgentSession || this.turnChanges ? { hooks } : {}),
       includePartialMessages: true,
       extraArgs: { 'replay-user-messages': null },
       promptSuggestions: true,
@@ -6343,19 +6632,6 @@ export class ClaudeRuntimeService
                   'You are a delegated Elevenex operator. Follow the assigned task and use the Elevenex MCP tools for workspace and session operations. Application code, builds, tests, and git work belong in separate Elevenex coding sessions. Do not read or change application code directly or use shell commands. Respect the parent mission and autonomy policy; return concise findings to the parent. Do not duplicate another worker’s assignment.',
               },
             },
-            hooks: {
-              PreToolUse: [
-                {
-                  hooks: [
-                    ...(normalizeAutonomyMode(agentAutonomyMode) === 'review' &&
-                    effectivePermissionMode === 'auto'
-                      ? [askOnDestructiveElevenexTool]
-                      : []),
-                    constrainOperatorChild,
-                  ],
-                },
-              ],
-            },
           }
         : {}),
       ...(isAgentSession
@@ -6378,7 +6654,7 @@ export class ClaudeRuntimeService
         ...buildManagedPlannotatorEnv(
           sessionId,
           this.wrapperScriptPath,
-          await buildAugmentedEnvAsync(process.env, worktreePath),
+          environment,
         ),
         ELEVENEX_AGENT_TOKEN: mcpAgentToken,
         // Ask the CLI to report its own turn state (`session_state_changed`:
@@ -6438,8 +6714,8 @@ export class ClaudeRuntimeService
     serverName: string,
     abortController: AbortController,
   ): Promise<Options> {
-    const pathToClaudeCodeExecutable =
-      this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude';
+    const environment = await buildAugmentedEnvAsync(process.env, worktreePath);
+    const pathToClaudeCodeExecutable = await this.resolveClaudeBinary();
 
     return {
       abortController,
@@ -6471,7 +6747,7 @@ export class ClaudeRuntimeService
       env: buildManagedPlannotatorEnv(
         sessionId,
         this.wrapperScriptPath,
-        await buildAugmentedEnvAsync(process.env, worktreePath),
+        environment,
       ),
     };
   }
@@ -6498,27 +6774,43 @@ export class ClaudeRuntimeService
     const configuredPath = process.env.ELEVENEX_CLAUDE_BIN?.trim();
     if (configuredPath) {
       return {
-        path: findBinary(configuredPath) ?? configuredPath,
+        path: configuredPath,
         version: null,
         configured: true,
       };
     }
 
-    const installedPath = findBinary('claude');
-    return installedPath
-      ? { path: installedPath, version: null, configured: false }
-      : null;
+    return null;
+  }
+
+  private async resolveClaudeBinary(): Promise<string> {
+    const configured = process.env.ELEVENEX_CLAUDE_BIN?.trim();
+    const path = (await findBinaryAsync(configured || 'claude')) ?? configured;
+    if (
+      path !== this.claudeCliOverride?.path ||
+      Boolean(configured) !== this.claudeCliOverride?.configured
+    )
+      this.claudeCliOverride = path
+        ? { path, configured: Boolean(configured), version: null }
+        : null;
+    return path ?? 'claude';
   }
 
   private async refreshClaudeCliOverrideVersion(): Promise<void> {
-    if (!this.claudeCliOverride) {
+    await buildAugmentedEnvAsync();
+    if (this.modelsRefreshDestroyed) return;
+    await this.resolveClaudeBinary();
+    if (this.modelsRefreshDestroyed) return;
+    const selected = this.claudeCliOverride;
+    if (!selected) {
+      this.logClaudeRuntimeConfiguration();
       return;
     }
-    const version = await this.readClaudeCliVersion(
-      this.claudeCliOverride.path,
-    );
+    const version = await this.readClaudeCliVersion(selected.path);
+    if (this.modelsRefreshDestroyed || this.claudeCliOverride !== selected)
+      return;
     this.claudeCliOverride = {
-      ...this.claudeCliOverride,
+      ...selected,
       version,
     };
     this.logClaudeRuntimeConfiguration();
@@ -6631,6 +6923,7 @@ export class ClaudeRuntimeService
     sessionId: number,
     state: RuntimeState,
   ): ClaudeRuntimeStatePayload {
+    if (state.runPhase === 'error' && state.lastError) this.queuedDispatches.clear(state);
     return {
       sessionId,
       claudeSessionId: state.claudeSessionId,
@@ -6646,6 +6939,7 @@ export class ClaudeRuntimeService
       pendingPrompts: state.pendingPrompts,
       queuePaused: state.queuePaused,
       liveItems: state.liveItems,
+      dispatchingPrompts: this.queuedDispatches.current(state),
       lastError: state.lastError,
       selectedModel: state.selectedModel,
       reasoningEffort: state.reasoningEffort,
@@ -6709,6 +7003,8 @@ export class ClaudeRuntimeService
     if (!runtime) {
       return;
     }
+
+    void this.refreshClaudePlanUsage(sessionId);
 
     const state = this.ensureRuntimeState(sessionId);
     if (state.metadataRefreshRuntime !== runtime) {
@@ -6775,7 +7071,9 @@ export class ClaudeRuntimeService
         .then((models) => {
           if (!isCurrent()) return;
           const mappedModels = models.map((model) => this.toModelOption(model));
-          state.availableModels = mappedModels;
+          if (mappedModels.length) state.availableModels = mappedModels;
+          if (!state.modelSelection?.model)
+            state.selectedModel = this.catalogModelId(state, state.selectedModel);
           // Warm sessions may still run the previous CLI or have project-only
           // settings. They can seed a cold cache, but cannot replace a probe.
           if (mappedModels.length && !this.modelsCacheFromGlobalProbe) {
@@ -6802,8 +7100,7 @@ export class ClaudeRuntimeService
         if (!isCurrent() || state.selectedModel !== selectedModelAtStart)
           return;
         state.contextUsage = this.toContextUsage(contextUsage);
-        if (options.reason !== 'model_change')
-          state.selectedModel = contextUsage.model || state.selectedModel;
+        state.selectedModel ??= this.catalogModelId(state, contextUsage.model);
         if (state.sessionMetadata && contextUsage.model) {
           state.sessionMetadata = {
             ...state.sessionMetadata,
@@ -6843,13 +7140,31 @@ export class ClaudeRuntimeService
     await Promise.all([refreshPromise, modelsPromise]);
   }
 
+  private catalogModelId(
+    state: RuntimeState,
+    id: string | null | undefined,
+  ): string | null {
+    if (!id) return null;
+    // Match exact selections first: the default and custom aliases may resolve
+    // to the same wire model while representing different user choices.
+    return (
+      state.availableModels.find((model) => model.id === id)?.id ??
+      state.availableModels.find((model) => model.resolvedModel === id)?.id ??
+      id
+    );
+  }
+
   private toModelOption(model: ModelInfo): ClaudeModelOption {
     return {
       id: model.value,
+      ...(model.resolvedModel ? { resolvedModel: model.resolvedModel } : {}),
       displayName: model.displayName,
       description: model.description,
       supportsEffort: model.supportsEffort,
-      reasoningEfforts: model.supportedEffortLevels,
+      reasoningEfforts:
+        model.supportsEffort === false
+          ? []
+          : orderReasoningEfforts(model.supportedEffortLevels ?? []),
       supportsFastMode: model.supportsFastMode,
       supportsAutoMode: model.supportsAutoMode,
     };
@@ -6969,8 +7284,8 @@ export class ClaudeRuntimeService
    */
   private async buildEphemeralModelQueryOptions(): Promise<Options> {
     const cwd = tmpdir();
-    const pathToClaudeCodeExecutable =
-      this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude';
+    const environment = await buildAugmentedEnvAsync(process.env, cwd);
+    const pathToClaudeCodeExecutable = await this.resolveClaudeBinary();
     const denyTool: CanUseTool = () =>
       Promise.resolve({
         behavior: 'deny',
@@ -6985,7 +7300,7 @@ export class ClaudeRuntimeService
       canUseTool: denyTool,
       onElicitation: declineElicitation,
       ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
-      env: await buildAugmentedEnvAsync(process.env, cwd),
+      env: environment,
     };
   }
 
@@ -7093,14 +7408,22 @@ export class ClaudeRuntimeService
   private normalizeHistory(
     messages: HistoryMessage[],
     interactionsByToolUseId: Map<string, ClaudeToolInteractionSummary>,
+    childHistory = false,
   ): ClaudeTranscriptItem[] {
     const normalized: ClaudeTranscriptItem[] = [];
+    const legacyBlocks = new Map<string, string>();
 
     for (const message of messages) {
       const rawPayload = message.message as Record<string, any> | null;
       if (!rawPayload) {
         continue;
       }
+      if (
+        message.type === 'user' &&
+        (this.isModelChangeOutput(rawPayload.content) ||
+          (message.isSynthetic === true && isImageSourceNote(rawPayload.content)))
+      )
+        continue;
       const payload =
         typeof rawPayload.content === 'string'
           ? {
@@ -7118,6 +7441,15 @@ export class ClaudeRuntimeService
           : undefined;
 
       if (message.type === 'user') {
+        const imageBlocks = payload.content.map(asRecord).filter((part) => part?.type === 'image');
+        const images = imageBlocks.flatMap((part) => {
+          const source = asRecord(part?.source);
+          const image = savedPromptImage(source?.media_type, source?.data);
+          return image ? [image] : [];
+        });
+        const unsupported = images.length !== imageBlocks.length ||
+          payload.content.some((part: unknown) => asRecord(part)?.type === 'document');
+        let firstText = true;
         for (const [index, part] of payload.content.entries()) {
           if (
             part.type === 'text' &&
@@ -7130,6 +7462,8 @@ export class ClaudeRuntimeService
               id: `${message.uuid}:user:${index}`,
               kind: agentMessage ? 'system' : 'user',
               content: agentMessage ?? normalizedText,
+              ...(firstText && images.length ? { images } : {}),
+              ...(unsupported ? { editUnsupported: true as const } : {}),
               parentToolUseId,
               isSynthetic:
                 this.isSyntheticUserMessage(normalizedText) || undefined,
@@ -7138,6 +7472,7 @@ export class ClaudeRuntimeService
               timestamp,
               authoredAt: timestamp,
             });
+            firstText = false;
           } else if (part.type === 'tool_result') {
             const normalizedResult = normalizeToolResultContent(part.content);
             normalized.push({
@@ -7168,6 +7503,18 @@ export class ClaudeRuntimeService
           typeof payload.id === 'string' && payload.id
             ? payload.id
             : message.uuid;
+        // Claude saves each streamed block separately. Its array index may
+        // reset to zero; the recorded API index matches the live block ID.
+        const apiBlockIndex = payload.content.length === 1 ? message.apiBlockIndex : undefined;
+        const streamBlockId = apiBlockIndex === undefined ? undefined : `${apiMessageId}:${apiBlockIndex}`;
+        const blockId = (kind: 'assistant' | 'thinking', index: number) => {
+          if (streamBlockId) return streamBlockId;
+          const id = `${childHistory ? message.uuid : apiMessageId}:${kind}:${index}`;
+          const first = legacyBlocks.get(id);
+          if (first !== undefined && first !== message.uuid) return `${id}:${message.uuid}`;
+          legacyBlocks.set(id, message.uuid);
+          return id;
+        };
         for (const [index, part] of payload.content.entries()) {
           if (
             part.type === 'text' &&
@@ -7175,7 +7522,7 @@ export class ClaudeRuntimeService
             part.text.trim()
           ) {
             normalized.push({
-              id: `${apiMessageId}:assistant:${index}`,
+              id: blockId('assistant', index),
               kind: 'assistant',
               content: part.text,
               parentToolUseId,
@@ -7189,7 +7536,7 @@ export class ClaudeRuntimeService
             typeof part.thinking === 'string'
           ) {
             normalized.push({
-              id: `${apiMessageId}:thinking:${index}`,
+              id: blockId('thinking', index),
               kind: 'thinking',
               content: part.thinking,
               parentToolUseId,
@@ -7251,7 +7598,11 @@ export class ClaudeRuntimeService
             ? record.timestamp
             : new Date().toISOString(),
         message: record.message,
+        isSynthetic: record.isMeta === true,
         tool_use_result: record.toolUseResult ?? record.tool_use_result,
+        apiBlockIndex: typeof record.apiBlockIndex === 'number' &&
+          Number.isSafeInteger(record.apiBlockIndex) && record.apiBlockIndex >= 0
+          ? record.apiBlockIndex : undefined,
       }));
 
     return this.normalizeHistory(messages, interactionsByToolUseId);
@@ -7364,6 +7715,7 @@ export class ClaudeRuntimeService
     if (record.isSidechain === true || record.isMeta === true) return false;
 
     const content = (record.message as { content?: unknown }).content;
+    if (this.isModelChangeOutput(content)) return false;
     if (!Array.isArray(content)) return true;
 
     return !content.some(
@@ -7772,6 +8124,26 @@ export class ClaudeRuntimeService
 
   private normalizeToolName(name: string): string {
     return name.toLowerCase().replace(/[_-]/g, '');
+  }
+
+  private isModelChangeOutput(content: unknown, wrapped = true): boolean {
+    const text =
+      typeof content === 'string'
+        ? content
+        : Array.isArray(content) &&
+            content.length > 0 &&
+            content.every((part: unknown) => {
+              const block = asRecord(part);
+              return block?.type === 'text' && typeof block.text === 'string';
+            })
+          ? content.map((part: { text: string }) => part.text).join('\n')
+          : '';
+    return (
+      /^\s*<local-command-stdout>\s*Set model to\b[\s\S]*<\/local-command-stdout>\s*$/.test(
+        text,
+      ) ||
+      (!wrapped && /^\s*Set model to\b/.test(text))
+    );
   }
 
   private isSyntheticUserMessage(text: string): boolean {
@@ -8551,16 +8923,6 @@ export class ClaudeRuntimeService
     return records;
   }
 
-  private async persistTranscriptRecords(
-    transcriptPath: string,
-    records: ClaudeTranscriptRecord[],
-  ): Promise<void> {
-    const serialized =
-      records.map((record) => JSON.stringify(record)).join('\n') +
-      (records.length ? '\n' : '');
-    await writeFile(transcriptPath, serialized, 'utf8');
-  }
-
   private resetEphemeralRuntimeState(state: RuntimeState): void {
     state.runPhase = 'idle';
     state.sessionState = 'idle';
@@ -8604,8 +8966,6 @@ export class ClaudeRuntimeService
     }
 
     const state = this.ensureRuntimeState(sessionId);
-    const pendingUserInputRequest = state.pendingUserInputRequest;
-
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = null;
     state.canInterrupt = false;
@@ -8632,13 +8992,8 @@ export class ClaudeRuntimeService
       run.permissionRequestOrder.filter((id) => run.permissionRequests.has(id));
     this.restorePendingChildPermission(state);
 
-    if (pendingUserInputRequest) {
-      const userInput = run.userInputRequests.get(
-        pendingUserInputRequest.requestId,
-      );
-      userInput?.resolve({ action: 'cancel' });
-      run.userInputRequests.delete(pendingUserInputRequest.requestId);
-    }
+    for (const requestId of run.userInputRequests.keys())
+      this.settleUserInput(sessionId, state, requestId, { action: 'cancel' });
 
     try {
       await run.query.interrupt();
@@ -8742,6 +9097,22 @@ function isSupportedTranscriptImageType(
     value === 'image/jpeg' ||
     value === 'image/gif' ||
     value === 'image/webp'
+  );
+}
+
+// Claude writes image paths and resize details in a separate user-role
+// companion message (isMeta on disk, isSynthetic on the SDK stream).
+function isImageSourceNote(content: unknown): boolean {
+  const matches = (text: unknown) =>
+    typeof text === 'string' && /^\[Image: source: [^\r\n]+\]$/.test(text.trim());
+  if (typeof content === 'string') return matches(content);
+  return (
+    Array.isArray(content) &&
+    content.length > 0 &&
+    content.every((part) => {
+      const block = asRecord(part);
+      return block?.type === 'text' && matches(block.text);
+    })
   );
 }
 

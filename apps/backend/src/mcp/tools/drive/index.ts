@@ -1,6 +1,8 @@
 import type { ToolDefinition } from '../../tool-registry/tool.types.js';
 import { SESSION_LABEL_TOOLS } from './session-label.tools.js';
 import { promptSessionTool } from './prompt-session.tool.js';
+import { sendSessionMessageTool } from './send-session-message.tool.js';
+import { cancelSessionDelegationTool } from './cancel-session-delegation.tool.js';
 import { interruptSessionTool } from './interrupt-session.tool.js';
 import { resumePendingPromptsTool } from './resume-pending-prompts.tool.js';
 import { stopBackgroundTaskTool } from './stop-background-task.tool.js';
@@ -21,7 +23,9 @@ import { setPermissionModeTool } from './set-permission-mode.tool.js';
 export const DRIVE_TOOLS: ToolDefinition[] = [
   ...SESSION_LABEL_TOOLS,
   promptSessionTool,
+  sendSessionMessageTool,
   interruptSessionTool,
+  cancelSessionDelegationTool,
   resumePendingPromptsTool,
   stopBackgroundTaskTool,
   forkSessionTool,

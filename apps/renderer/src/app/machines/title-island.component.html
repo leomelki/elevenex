@@ -1,0 +1,12 @@
+<div class="island" [class.measured]="width() !== undefined" [class.tall]="tall()" [class.open]="open()" [attr.data-tone]="tone()" [style.width.px]="width()" [style.height.px]="height()">
+  <button #trigger class="trigger" type="button" [hidden]="expanded()" [attr.aria-label]="label()" [attr.aria-expanded]="open()" [attr.aria-controls]="controls()" (click)="pressed.emit()"></button>
+  <div #content class="content">
+    <div class="summary" [hidden]="expanded()" [attr.inert]="expanded() ? '' : null" role="status" aria-live="polite"><ng-content /></div>
+    @if (expanded()) {
+      <div class="details" [id]="controls() ?? null" role="dialog" [attr.aria-label]="label()" cdkTrapFocus [cdkTrapFocusAutoCapture]="true">
+        <ng-container [ngTemplateOutlet]="panel() ?? null" />
+      </div>
+    }
+  </div>
+  @if (progress() !== undefined && !expanded()) { <span class="progress" role="progressbar" aria-label="Machine progress" [attr.aria-valuenow]="progressValue() * 100" aria-valuemin="0" aria-valuemax="100" [style.transform]="'scaleX(' + progressValue() + ')'"></span> }
+</div>

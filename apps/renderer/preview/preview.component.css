@@ -1,0 +1,57 @@
+:host {
+  display: block;
+  height: 100%;
+}
+.preview {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+nav {
+  overflow-x: auto;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 48px;
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  -webkit-app-region: drag;
+}
+strong {
+  margin-right: var(--space-4);
+  font-weight: 600;
+  white-space: nowrap;
+}
+strong span {
+  margin-left: var(--space-2);
+  font-weight: 400;
+  color: var(--ink-muted);
+}
+a {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+  text-decoration: none;
+  white-space: nowrap;
+  -webkit-app-region: no-drag;
+}
+a:hover {
+  color: var(--ink);
+  background: var(--surface-sunken);
+}
+a.selected {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.theme {
+  margin-left: auto;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+.preview-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}

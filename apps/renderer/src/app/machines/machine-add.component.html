@@ -1,0 +1,5 @@
+<button #card type="button" class="card add" (click)="requested.emit(card)">
+  <span class="top"><span class="machine-icon"><ex-icon [name]="kind() === 'ssh' ? 'server' : 'peer'" [size]="15" /></span></span>
+  <span class="name">{{ kind() === 'ssh' ? 'A server' : 'Another computer' }}</span>
+  <span class="description">{{ kind() === 'ssh' ? 'Over SSH. Elevenex installs itself there.' : 'A Mac or PC running Elevenex. Pair it once.' }}</span>
+</button>

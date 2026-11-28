@@ -1,0 +1,52 @@
+import assert from 'node:assert/strict';
+
+export default async function* (capture) {
+  await capture.evaluate(() => { location.href = '/connected-workspace'; });
+  await capture.waitFor(() => !!document.querySelector('ex-workspace-navigation ex-task-list'));
+  const select = id => capture.component('ex-machine-workspace', (c, id) => c.store.selectSession({ taskId: '11', sessionId: id }), id);
+  const finish = async () => { await capture.settle(); await capture.waitFor(() => document.getAnimations().every(a => !Number.isFinite(a.effect?.getComputedTiming().endTime) || a.playState !== 'running')); };
+  const choose = async (key, label) => {
+    if (!await capture.evaluate(() => !!document.querySelector('.agent-settings:not(.leaving)')))
+      await capture.click('ex-agent-picker > button');
+    await capture.waitFor(() => document.querySelector('.agent-settings')?.getAttribute('aria-busy') === 'false');
+    await capture.evaluate(() => document.querySelector('.agent-settings [aria-label="Harness"] [aria-checked="true"]').focus());
+    await capture.press(key);
+    await capture.waitFor(label => document.querySelector('ex-agent-picker > button')?.getAttribute('aria-label').includes(label), label);
+    await capture.waitFor(() => document.querySelector('.agent-settings')?.getAttribute('aria-busy') === 'false');
+    assert.equal(await capture.evaluate(() => !!document.querySelector('.agent-settings')?.contains(document.activeElement)), true);
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-composer textarea').value), 'Keep my message while changing agents');
+  };
+  await select('102');
+  for (const theme of ['light', 'dark']) {
+    await capture.theme(theme); await capture.viewport(1440, 960);
+    await capture.waitFor(() => document.querySelector('ex-agent-picker > button')?.disabled === false);
+    await capture.fill('ex-composer textarea', 'Keep my message while changing agents');
+    await capture.click('ex-agent-picker > button');
+    await capture.waitFor(() => !!document.querySelector('.agent-settings [aria-label="Harness"]'));
+    const labels = await capture.evaluate(() => [...document.querySelectorAll('.agent-settings [aria-label="Harness"] [role="radio"]')].map(b => b.getAttribute('aria-label')));
+    assert.deepEqual(labels, ['Claude Code', 'Codex', 'Pi', 'OpenCode']);
+    // Known harnesses show their bundled brand mark instead of a monogram.
+    assert.equal(await capture.evaluate(() => document.querySelectorAll('.agent-settings [aria-label="Harness"] ex-agent-mark svg').length), 4);
+    await finish();
+    yield { name: theme + '-harness-choices', inspect: ['ex-composer', '.agent-settings'] };
+    await capture.press('Escape'); await capture.waitFor(() => !document.querySelector('.agent-settings'));
+    await choose('Home', 'Claude Code');
+    await capture.waitFor(() => !!document.querySelector('.agent-settings [role="option"][aria-selected="true"]'));
+    assert.equal(await capture.evaluate(() => document.querySelector('.agent-settings [role="option"][aria-selected="true"]').textContent.includes('Sonnet')), true);
+    await finish(); yield { name: theme + '-claude-selected', inspect: ['ex-composer', '.agent-settings'] };
+    await choose('End', 'OpenCode'); await choose('ArrowLeft', 'Pi'); await choose('ArrowLeft', 'Codex');
+    await capture.viewport(1000, 760); await capture.reducedMotion(true); await finish();
+    yield { name: theme + '-narrow-harness', inspect: ['ex-composer', 'ex-composer .bar', '.agent-settings'] };
+    await capture.press('Escape'); await capture.waitFor(() => !document.querySelector('.agent-settings'));
+    assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('ex-agent-picker > button')), true);
+    await capture.reducedMotion(false);
+  }
+  await capture.fill('ex-composer textarea', 'Start with Codex'); await capture.press('Enter');
+  await capture.waitFor(() => document.querySelector('ex-agent-picker > button')?.disabled === false);
+  await capture.click('ex-agent-picker > button'); await capture.waitFor(() => !!document.querySelector('.agent-settings .lock'));
+  await finish(); yield { name: 'started-harness-locked', inspect: ['ex-composer', '.agent-settings'] };
+  await capture.press('Escape'); await capture.waitFor(() => !document.querySelector('.agent-settings'));
+  await select('101'); await capture.waitFor(() => document.querySelector('ex-agent-picker > button')?.disabled === false);
+  await capture.click('ex-agent-picker > button'); await capture.waitFor(() => !!document.querySelector('.agent-settings .lock'));
+  await capture.press('Escape'); await capture.waitFor(() => !document.querySelector('.agent-settings'));
+}

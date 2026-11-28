@@ -1,0 +1,30 @@
+<ex-fold [open]="canReveal() || window().batches.length > 0">
+  <div class="earlier">
+    <button type="button" class="outline-action" [class.earlier-more]="canReveal()" [class.earlier-fewer]="!canReveal()"
+      [attr.aria-expanded]="!canReveal()" [attr.aria-label]="actionLabel()" [attr.aria-disabled]="loadingOlder() || null"
+      (click)="canReveal() ? more() : fewer($event)">
+      <ex-icon class="chevron" name="chevron-down" [size]="12" [class.closed]="canReveal()" />
+      <ex-ease-swap [value]="loadingOlder() ? 'loading' : canReveal() ? 'older' : 'fewer'" [content]="hidden()" [contentTemplate]="capLabel" />
+      <ng-template #capLabel let-count>
+        @if (loadingOlder()) { Loading older… }
+        @else if (count) { <span class="older-label"><ex-ticker [value]="count" /> older</span> }
+        @else if (moreAvailable()) { Older }
+        @else { Show fewer }
+      </ng-template>
+    </button>
+    @if (canReveal() && window().batches.length) { <button class="earlier-fewer side" type="button" (click)="fewer($event)">Show fewer</button> }
+  </div>
+</ex-fold>
+@for (entry of outlineRows(); track entry.key) {
+  @if (entry.kind === 'batch') {
+    @let batch = entry.batch;
+    <ex-session-batch [sessions]="batch.sessions" [selected]="selected()" [muted]="window().muted" [open]="batch.open" [initial]="batch.initial" [closingDistance]="closingDistance()"
+      [allowArchive]="allowArchive()" [allowNesting]="allowNesting()" [allSessions]="sessions()" (moveRequested)="moveRequested.emit($event)" (childrenRequested)="childrenRequested.emit($event)" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" (deleteRequested)="deleteRequested.emit($event)" (closed)="settled(batch.key)" />
+  } @else {
+    @let row = entry.row;
+    <ex-fold [open]="row.present && !row.entering" (transitionend)="presence.settled(row.key, $event)">
+      <ex-session-branch [session]="row.value" [selected]="selected()" [muted]="window().muted === row.value.id"
+        [allowArchive]="allowArchive()" [allowNesting]="allowNesting()" [sessions]="sessions()" (moveRequested)="moveRequested.emit($event)" (childrenRequested)="childrenRequested.emit($event)" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" (deleteRequested)="deleteRequested.emit($event)" />
+    </ex-fold>
+  }
+}

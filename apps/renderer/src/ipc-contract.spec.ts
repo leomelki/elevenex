@@ -1,0 +1,208 @@
+import { describe, expectTypeOf, it } from 'vitest';
+import type { BackendStatus, ElevenexBridge, EnvironmentSnapshot, RemoteHost, GitStatus, Invoke, Subscribe, Theme } from '@elevenex/shared';
+import type { BackendClientState, BackendInfo, BackendResult, MachineState } from '@elevenex/shared';
+
+describe('IPC bridge contract', () => {
+  it('keeps the public API arguments and replies typed', () => {
+    expectTypeOf<Parameters<ElevenexBridge['codePresent']>>().toEqualTypeOf<[target: import('@elevenex/shared').CodeTarget, presentation: import('@elevenex/shared').CodePresentation]>();
+    expectTypeOf<Parameters<ElevenexBridge['sessionChatCatalog']>>().toEqualTypeOf<[scopeId: string, input: import('@elevenex/shared').SessionChatCatalogRead]>();
+    expectTypeOf<ReturnType<ElevenexBridge['sessionChatCatalog']>>().toEqualTypeOf<Promise<BackendResult<import('@elevenex/shared').SessionChatCatalog>>>();
+    expectTypeOf<Parameters<ElevenexBridge['gitStatus']>>().toEqualTypeOf<[path: string]>();
+    expectTypeOf<ReturnType<ElevenexBridge['gitStatus']>>().toEqualTypeOf<Promise<GitStatus>>();
+    expectTypeOf<ReturnType<ElevenexBridge['appVersion']>>().toEqualTypeOf<Promise<string>>();
+    expectTypeOf<Parameters<Parameters<ElevenexBridge['onThemeChanged']>[0]>>().toEqualTypeOf<[theme: Theme]>();
+    expectTypeOf<ReturnType<ElevenexBridge['onThemeChanged']>>().toEqualTypeOf<() => void>();
+    expectTypeOf<Window['elevenex']>().toEqualTypeOf<ElevenexBridge>();
+    expectTypeOf<Parameters<ElevenexBridge['workspaceProjectNameAvailability']>>().toEqualTypeOf<[scopeId: string, name: string]>();
+    expectTypeOf<ReturnType<ElevenexBridge['workspaceProjectNameAvailability']>>().toEqualTypeOf<Promise<BackendResult<{ readonly available: boolean }>>>();
+    expectTypeOf<ReturnType<ElevenexBridge['backendStatus']>>().toEqualTypeOf<Promise<BackendStatus>>();
+    expectTypeOf<ReturnType<ElevenexBridge['retryBackend']>>().toEqualTypeOf<Promise<BackendStatus>>();
+    expectTypeOf<ReturnType<ElevenexBridge['restartBackend']>>().toEqualTypeOf<Promise<BackendStatus>>();
+    expectTypeOf<Parameters<Parameters<ElevenexBridge['onBackendChanged']>[0]>>().toEqualTypeOf<[status: BackendStatus]>();
+    expectTypeOf<ReturnType<ElevenexBridge['onBackendChanged']>>().toEqualTypeOf<() => void>();
+    expectTypeOf<ReturnType<ElevenexBridge['remoteHosts']>>().toEqualTypeOf<Promise<readonly RemoteHost[]>>();
+    expectTypeOf<ReturnType<ElevenexBridge['environmentStatus']>>().toEqualTypeOf<Promise<EnvironmentSnapshot>>();
+    expectTypeOf<ReturnType<ElevenexBridge['onEnvironmentChanged']>>().toEqualTypeOf<() => void>();
+    expectTypeOf<ReturnType<ElevenexBridge['backendClientState']>>().toEqualTypeOf<Promise<BackendClientState>>();
+    expectTypeOf<Parameters<ElevenexBridge['backendInfo']>>().toEqualTypeOf<[scopeId: string]>();
+    expectTypeOf<ReturnType<ElevenexBridge['backendInfo']>>().toEqualTypeOf<Promise<BackendResult<BackendInfo>>>();
+    expectTypeOf<ReturnType<ElevenexBridge['onBackendClientChanged']>>().toEqualTypeOf<() => void>();
+    expectTypeOf<ReturnType<ElevenexBridge['machineState']>>().toEqualTypeOf<Promise<MachineState>>();
+    expectTypeOf<ReturnType<ElevenexBridge['onMachineStateChanged']>>().toEqualTypeOf<() => void>();
+  });
+});
+
+// These negative assertions are checked by tsc in pnpm test. Vitest alone only
+// transpiles tests, which would silently miss an accidentally weakened contract.
+function checkContract(invoke: Invoke, subscribe: Subscribe): void {
+  void invoke('session-chat:read', 'scope', { taskId: 1, sessionId: 2, requestId: 'read', loadingMode: 'window' });
+  // @ts-expect-error Loading modes do not permit unbounded history requests.
+  void invoke('session-chat:read', 'scope', { taskId: 1, sessionId: 2, requestId: 'read', loadingMode: 'all' });
+  expectTypeOf(invoke('workspace:wait', 'scope', { after: 1, requestId: 'request' })).toEqualTypeOf<Promise<BackendResult<import('@elevenex/shared').WorkspaceRevision>>>();
+  // @ts-expect-error Navigation waits require a scalar cursor and cancellable request identity.
+  void invoke('workspace:wait', 'scope', { after: '1' });
+  void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'mark-seen', completionAt: '2026-11-14T12:00:00.000Z' } });
+  // @ts-expect-error Seen acknowledgments must identify the observed completion.
+  void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'mark-seen' } });
+  expectTypeOf(invoke('clipboard:write-text', 'copy')).toEqualTypeOf<Promise<void>>();
+  expectTypeOf<ElevenexBridge['writeClipboardText']>().toEqualTypeOf<(text: string) => Promise<void>>();
+  // @ts-expect-error Clipboard writes accept text only.
+  void invoke('clipboard:write-text', { html: '<script>unsafe</script>' });
+  // @ts-expect-error The renderer cannot choose a clipboard or write arbitrary formats.
+  void invoke('clipboard:write-text', 'copy', 'selection');
+  // @ts-expect-error The bridge never exposes clipboard reads.
+  void ({} as ElevenexBridge).readClipboardText();
+  void invoke('code:present', {scopeId:'scope',taskId:1}, {visible:true,compact:false});
+  // @ts-expect-error Frame presentation carries no arbitrary URL or native geometry.
+  void invoke('code:present', {scopeId:'scope',taskId:1}, {url:'https://example.com'});
+  void invoke('task-browser:configure', 'scope', 1, 'desktop-proxy');
+  // @ts-expect-error Engine location cannot inject a proxy address or credentials.
+  void invoke('task-browser:configure', 'scope', 1, { proxy: 'http://evil' });
+  // @ts-expect-error Browser location is a closed set.
+  void invoke('task-browser:configure', 'scope', 1, 'custom-chromium');
+  void invoke('task-browser:read', 'scope', 1);
+  void invoke('task-browser:input', 'scope', 1, 'tab', 1, { kind: 'pointer-relative', deltaX: 1, deltaY: -1, buttons: 0, modifiers: 0, pointerLockEpoch: 2 });
+  // @ts-expect-error Pointer lock identities are numeric host epochs, never arbitrary data.
+  void invoke('task-browser:input', 'scope', 1, 'tab', 1, { kind: 'pointer-unlock', pointerLockEpoch: 'old' });
+  void invoke('task-browser:command', 'scope', 1, { kind: 'handoff', tabId: 'tab', sessionId: 2 });
+  // @ts-expect-error Browser operations must capture the expected backend scope.
+  void invoke('task-browser:read', 1);
+  // @ts-expect-error A handoff must explicitly name the receiving conversation.
+  void invoke('task-browser:command', 'scope', 1, { kind: 'handoff', tabId: 'tab' });
+  // @ts-expect-error Task pages never expose arbitrary JavaScript or generic CDP.
+  void invoke('task-browser:command', 'scope', 1, { kind: 'evaluate', script: 'document.body.innerText' });
+  // @ts-expect-error Agent text entry is not a browser capability.
+  void invoke('task-browser:command', 'scope', 1, { kind: 'type', text: 'secret', tabId: 'tab' });
+
+  void invoke('task-terminal:commands', 'scope', { taskId: 1, terminalId: 2, generation: null, after: 0 });
+  // @ts-expect-error Command metadata reads require an output generation and cursor.
+  void invoke('task-terminal:commands', 'scope', { taskId: 1, terminalId: 2 });
+  // @ts-expect-error Command reads cannot execute arbitrary command text.
+  void invoke('task-terminal:commands', 'scope', { taskId: 1, terminalId: 2, generation: null, after: 0, command: 'echo injected' });
+  void invoke('session-chat:changes', 'scope', { taskId: 1, sessionId: 2, requestId: 'review', turnId: 'reply', offset: 0 });
+  // @ts-expect-error Review reads require the selected task and session, never an arbitrary filesystem path.
+  void invoke('session-chat:changes', 'scope', { path: '/etc/passwd', offset: 0 });
+  // @ts-expect-error Chat reads must identify the expected backend scope.
+  void invoke('session-chat:read', { taskId: 1, sessionId: 2, requestId: 'read' });
+  void invoke('session-chat:watch', 'scope', { taskId: 1, sessionId: 2, watchId: 'chat', loadingMode: 'progressive' });
+  // @ts-expect-error Chat streams bind an expected backend scope.
+  void invoke('session-chat:watch', { taskId: 1, sessionId: 2, watchId: 'chat', loadingMode: 'progressive' });
+  // @ts-expect-error Renderer code cannot send an endpoint or credentials through the bridge.
+  void invoke('session-chat:watch', 'scope', { taskId: 1, sessionId: 2, watchId: 'chat', loadingMode: 'progressive', url: 'https://example.test' });
+  // @ts-expect-error The conversation bridge never accepts generic shell actions.
+  void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'shell', command: 'anything' } });
+  // @ts-expect-error Permission decisions are an explicit union.
+  void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'permission', id: 'request', decision: 'yes' } });
+  // @ts-expect-error Original content is a bounded named read, never an arbitrary path.
+  void invoke('session-chat:content', 'scope', { path: '/private/file' });
+  void invoke('workspace:task-request', 'scope', { repoId: 1, requestId: 'stable' });
+  // @ts-expect-error Creation reconciliation requires a repository identity, never an arbitrary path.
+  void invoke('workspace:task-request', 'scope', { path: '/repo', requestId: 'stable' });
+  // @ts-expect-error Creation reconciliation must identify the expected backend scope.
+  void invoke('workspace:task-request', { repoId: 1, requestId: 'stable' });
+  // @ts-expect-error Name checks must identify the expected backend scope.
+  void invoke('workspace:project-name-availability', 'Project');
+  // @ts-expect-error First-run completion requires an expected selected machine.
+  void invoke('machines:opened');
+  // @ts-expect-error New windows never accept endpoints, commands or credentials.
+  void invoke('machines:new-window', { url: 'http://evil', password: 'secret' });
+  // @ts-expect-error Suggestions use the main-owned SSH config, never an arbitrary path.
+  void invoke('machines:ssh-hosts', 'dev', '/other/file');
+  // @ts-expect-error Machine colors must be one of the supplied token names.
+  void invoke('machines:edit', { kind: 'local' }, { name: 'My Mac', hue: 'pink' });
+  // @ts-expect-error Removal requires an explicit occupied-window confirmation flag.
+  void invoke('machines:remove', 'dev');
+  // @ts-expect-error Undo accepts only a main-owned token, never a host or file path.
+  void invoke('machines:undo-remove', { host: 'dev', identityFile: '/arbitrary/key' });
+  expectTypeOf(invoke('git:status', '/workspace')).toEqualTypeOf<Promise<GitStatus>>();
+  expectTypeOf(invoke('app:version')).toEqualTypeOf<Promise<string>>();
+  expectTypeOf(invoke('backend:status')).toEqualTypeOf<Promise<BackendStatus>>();
+  expectTypeOf(invoke('backend-client:info', 'scope-id')).toEqualTypeOf<Promise<BackendResult<BackendInfo>>>();
+  // @ts-expect-error Workspace reads require the scope that supplied the selected resource.
+  void invoke('workspace:tasks', { projectId: 1 });
+  // @ts-expect-error Resource mutations cannot choose endpoints or HTTP methods.
+  void invoke('workspace:create-task', 'scope', { repoId: 1, name: 'Task', requestId: 'create', url: 'http://evil' });
+  void invoke('workspace:retry-task', 'scope', 1);
+  void invoke('workspace:retry-task', 'scope', 1, 'use-existing');
+  void invoke('workspace:retry-task', 'scope', 1, 'snapshot');
+  void invoke('workspace:retry-task', 'scope', 1, 'exceed-worktree-limit');
+  // @ts-expect-error Recovery is a named domain choice, never an arbitrary setup patch.
+  void invoke('workspace:retry-task', 'scope', 1, { confirmExternal: true });
+  // @ts-expect-error Recovery cannot choose a path or executable.
+  void invoke('workspace:retry-task', 'scope', 1, 'arbitrary');
+  // @ts-expect-error Stages use the supported domain vocabulary.
+  void invoke('workspace:set-stage', 'scope', { taskId: 1, stage: 'unknown' });
+  // @ts-expect-error Backend reads require an explicit current window scope.
+  void invoke('backend-client:info');
+  void invoke('workspace:archive-session', 'scope', {taskId:1,sessionId:2,confirmStop:false});
+  void invoke('workspace:restore-session', 'scope', {taskId:1,sessionId:2});
+  // @ts-expect-error Session archive must carry an explicit stop confirmation.
+  void invoke('workspace:archive-session', 'scope', {taskId:1,sessionId:2});
+  // @ts-expect-error Session restoration is scoped to its owning task.
+  void invoke('workspace:restore-session', 'scope', {sessionId:2});
+  // @ts-expect-error Endpoints, headers and methods cannot be chosen by the renderer.
+  void invoke('backend-client:info', { url: 'http://evil', headers: {} });
+  // @ts-expect-error The public bridge has no generic HTTP operation.
+  void ({} as ElevenexBridge).request('/api/projects');
+  expectTypeOf(invoke('environment:select', { kind: 'remote', hostId: 'host-id' })).toEqualTypeOf<Promise<EnvironmentSnapshot>>();
+  // @ts-expect-error Draft updates must name the environment they belong to.
+  void invoke('environment:context', { projectId: null, taskId: null, sessionId: null, draft: '', cursor: null });
+  // @ts-expect-error Window ownership comes from the sender, never a renderer id.
+  void invoke('remote:disconnect', 42);
+  // @ts-expect-error Trust replies do not accept arbitrary Electron objects.
+  void invoke('remote:answer', 'challenge-id', { sender: 'other-window' });
+  // @ts-expect-error Hosts have no saved credential field.
+  void invoke('remote:save-host', { name: 'dev', host: 'dev', password: 'secret' }, null);
+  // @ts-expect-error Agent forwarding belongs to SSH config, not an app override.
+  void invoke('remote:save-host', { name: 'dev', host: 'dev', forwardAgent: true }, null);
+  // @ts-expect-error Forwarded services cannot select a public bind address.
+  void invoke('remote:add-forward', { remotePort: 8000, localPort: 0, label: 'web', bind: '0.0.0.0' });
+  // @ts-expect-error A renderer cannot choose a runtime URL or executable.
+  void invoke('backend:retry', 'https://untrusted.test/backend');
+  // @ts-expect-error Backend snapshots are serializable domain data.
+  subscribe('backend:changed', (event: { sender: unknown }) => void event);
+  // @ts-expect-error Unknown channels cannot cross the bridge.
+  void invoke('git:delete', '/workspace');
+  // @ts-expect-error git:status requires its path argument.
+  void invoke('git:status');
+  // @ts-expect-error A path must be a string.
+  void invoke('git:status', 123);
+  // @ts-expect-error app:version accepts no arguments.
+  void invoke('app:version', 'extra');
+  // @ts-expect-error Events have their own typed allowlist.
+  subscribe('theme:other', () => undefined);
+  // @ts-expect-error The event payload is a theme, never an Electron event.
+  subscribe('theme:changed', (event: { sender: unknown }) => void event);
+}
+void checkContract;
+function checkUpload(invoke: <K extends keyof import('@elevenex/shared').InvokeContracts>(channel: K, ...args: import('@elevenex/shared').InvokeContracts[K]['args']) => unknown) {
+  // @ts-expect-error File system paths are not accepted as an upload payload.
+  invoke('session-chat:upload', 'scope', '/Users/private/file.png');
+}
+void checkUpload;
+
+function checkTerminals(invoke: import('@elevenex/shared').Invoke) {
+  void invoke('task-terminal:attach', 'scope', { taskId: 1, terminalId: 2, attachmentId: 'attachment', generation: null, after: 0 });
+  // @ts-expect-error Terminal streams require a window-bound attachment, not a socket URL.
+  void invoke('task-terminal:attach', 'scope', { url: 'ws://other-host' });
+  // @ts-expect-error Output credits require an attachment and a committed delivery ID.
+  void invoke('task-terminal:stream-ack', 'scope', { taskId: 1, terminalId: 2, after: 0 });
+  // @ts-expect-error Stream writes distinguish text and binary input explicitly.
+  void invoke('task-terminal:stream-write', 'scope', { taskId: 1, terminalId: 2, attachmentId: 'attachment', generation: 'generation', sequence: 1, data: 'input' });
+  // @ts-expect-error A profile is executable plus literal arguments, never a generic shell command.
+  void invoke('task-terminal:save-preferences', 'scope', { prediction: 'auto', profile: { command: 'anything' } });
+  void invoke('task-terminal:create', 'scope', { taskId: 1, shellIntegration: false });
+  // @ts-expect-error Shell integration is a bounded boolean, not a script or command.
+  void invoke('task-terminal:create', 'scope', { taskId: 1, shellIntegration: 'source ~/.zshrc' });
+  void invoke('task-terminal:read', 'scope', { taskId: 1, terminalId: 2, generation: null, after: 0 });
+  // @ts-expect-error Every keystroke names its backend scope and process generation.
+  void invoke('task-terminal:input', 'scope', { taskId: 1, terminalId: 2, data: 'hello' });
+  // @ts-expect-error A renderer cannot choose an executable or worktree path.
+  void invoke('task-terminal:create', 'scope', { taskId: 1, cwd: '/tmp', shell: 'sh' });
+  // @ts-expect-error Browser handoff is a port intent, never an arbitrary output-supplied URL.
+  void invoke('task-terminal:open-port', 'scope', { taskId: 1, terminalId: 2, url: 'javascript:alert(1)' });
+  void invoke('task-terminal:copy-port', 'scope', { taskId: 1, terminalId: 2, port: 8080 });
+  // @ts-expect-error URL resolution accepts only a scoped terminal port, never arbitrary URLs.
+  void invoke('task-terminal:copy-port', 'scope', { taskId: 1, terminalId: 2, url: 'https://example.com' });
+}
+void checkTerminals;

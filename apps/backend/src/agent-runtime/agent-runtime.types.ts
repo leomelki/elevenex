@@ -18,6 +18,8 @@ export interface AgentRuntimeProviderCapabilities {
   multimodalPrompts: boolean;
   terminalFallback: boolean;
   rewindConversation: boolean;
+  /** Automatic text input can join a live turn without interrupting its work. */
+  nonInterruptingSteering?: boolean;
 }
 
 export interface AgentRuntimeProviderInfo {
@@ -28,16 +30,17 @@ export interface AgentRuntimeProviderInfo {
   permissionModes?: readonly string[];
 }
 
-/**
- * Thinking levels offered when a provider does not publish its own list. Kept
- * in sync with what the per-session picker already offers for every provider.
- */
+/** Known progression for unordered catalogs, never a fallback capability list. */
 export const AGENT_REASONING_EFFORTS = [
+  'off',
+  'none',
+  'minimal',
   'low',
   'medium',
   'high',
   'xhigh',
   'max',
+  'ultra',
 ] as const;
 
 export type AgentCatalogModel =
@@ -54,6 +57,7 @@ export interface AgentProviderModelCatalogPayload {
   reasoningEfforts: string[];
   /** What the provider falls back to when nothing is pinned, if known. */
   providerDefaultModelId: string | null;
+  providerDefaultReasoningEffort?: string | null;
   /** False when a model cannot be chosen ahead of a session. */
   supportsModelSelection: boolean;
   /** Set when the list is empty for a knowable reason (e.g. signed out). */
@@ -65,8 +69,20 @@ export interface AgentProviderModelCatalog extends AgentProviderModelCatalogPayl
   displayName: string;
 }
 
-export interface AgentRuntimeStatePayload {
+export interface AgentRunLifecycle {
+  sessionState?: string | null;
+  runPhase?: string | null;
+  backgroundWork?: readonly unknown[] | null;
+  pendingPrompts?: readonly unknown[] | null;
+  dispatchingPrompts?: readonly unknown[] | null;
+  queuePaused?: boolean | null;
+  /** Provider task history, used to describe live work. */
+  tasks?: readonly unknown[] | null;
+}
+
+export interface AgentRuntimeStatePayload extends AgentRunLifecycle {
   sessionId: number;
+  planMode?: boolean | null;
   reasoningEffort?: AgentReasoningEffort | null;
   fastMode?: boolean;
 }
@@ -97,12 +113,18 @@ export interface AgentRuntimeEvent {
 }
 
 export interface AgentSubagentHistoryPayload {
+  subagent?: import('../claude-runtime/claude-runtime.types.js').ClaudeSubagentState;
+  transcriptState?: 'starting' | 'available' | 'unavailable' | 'error';
+  hasEarlier?: boolean;
+  nativeWindow?: true;
+  transcriptError?: string;
   history: AgentTranscriptItem[];
   transcriptAvailable: boolean;
 }
 
 export type AgentMcpSnapshot = import('../mcp/mcp.types.js').McpSnapshot;
-export type AgentMcpAuthStartResult = import('../mcp/mcp.types.js').McpAuthStartResult;
+export type AgentMcpAuthStartResult =
+  import('../mcp/mcp.types.js').McpAuthStartResult;
 
 export interface AgentAuthStatus {
   isAuthenticating: boolean;
@@ -140,11 +162,38 @@ export interface AgentImageInput {
   data: string;
 }
 
+export type NativeAppLaunchPolicy = 'launch' | 'request' | 'plan';
+export type AgentPromptDisposition = 'running' | 'queued' | 'steered';
+
+export interface AgentPromptOptions {
+  human?: boolean;
+  origin?: InteractivePromptOrigin;
+  queue?: boolean;
+  /** Prefer same-turn delivery for a text follow-up, when the harness can do so. */
+  preferSteering?: boolean;
+  /** Reject before dispatch if no active turn can accept live input. */
+  requireSteering?: boolean;
+  /** Pass false to return once the harness owns this specific prompt. */
+  waitForCompletion?: boolean;
+  /** Desktop persists its dispatch fence immediately before the runtime accepts or writes this prompt. */
+  beforeDispatch?: () => void;
+  onAccepted?: (disposition: AgentPromptDisposition) => void;
+}
+
+/** Set by desktop chat handlers, never copied from prompt request bodies. */
+export type InteractivePromptOrigin = 'desktop-chat';
+
 export interface AgentRuntimeProviderBase extends EventEmitter {
   readonly info: AgentRuntimeProviderInfo;
 
-  getHistory(sessionId: number): Promise<AgentTranscriptItem[]>;
-  getRuntimeState(sessionId: number): Promise<AgentRuntimeStatePayload>;
+  getHistory(sessionId: number, options?: { changeDetails?: 'summary' }): Promise<AgentTranscriptItem[]>;
+  /** initialize=false permits pre-start selection without creating a native conversation. */
+  getRuntimeState(
+    sessionId: number,
+    options?: { initialize?: boolean },
+  ): Promise<AgentRuntimeStatePayload>;
+  /** In-memory authority of the running turn. Reading this must not start a provider. */
+  nativeAppLaunchPolicy?(sessionId: number): NativeAppLaunchPolicy;
   getSnapshot(sessionId: number): Promise<AgentSessionSnapshotPayload>;
   getAutocompleteItems(sessionId: number): Promise<AgentAutocompleteItem[]>;
   setSelectedModel(
@@ -157,12 +206,12 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
-    options?: { human?: boolean; queue?: boolean },
+    options?: AgentPromptOptions,
   ): Promise<void>;
   interrupt(sessionId: number): Promise<void>;
   cancelPendingPrompt(sessionId: number, id: string): Promise<void>;
-  steerPendingPrompt(sessionId: number, id: string): Promise<void>;
-  resumePendingPrompts(sessionId: number): Promise<void>;
+  steerPendingPrompt(sessionId: number, id: string, origin?: InteractivePromptOrigin): Promise<void>;
+  resumePendingPrompts(sessionId: number, origin?: InteractivePromptOrigin): Promise<void>;
   clearPendingPrompts(sessionId: number): Promise<void>;
   cleanupSession(sessionId: number): Promise<void>;
   reactivateSession?(sessionId: number): Promise<void> | void;
@@ -204,7 +253,7 @@ export interface AgentRuntimeProviderFeatures {
   getSubagentHistory(
     sessionId: number,
     agentId: string,
-    options?: { before?: string },
+    options?: { before?: string; through?: string },
   ): Promise<AgentSubagentHistoryPayload>;
   reloadMcpConfiguration(sessionId: number): Promise<void>;
   getMcpSnapshot(
@@ -224,6 +273,7 @@ export interface AgentRuntimeProviderFeatures {
   setPermissionMode(
     sessionId: number,
     mode: AgentPermissionMode | null,
+    origin?: InteractivePromptOrigin,
   ): Promise<AgentRuntimeStatePayload>;
   setPlanMode(
     sessionId: number,
@@ -245,6 +295,7 @@ export interface AgentRuntimeProviderFeatures {
   rewindConversation(
     sessionId: number,
     messageId: string,
+    origin?: InteractivePromptOrigin,
   ): Promise<AgentTranscriptItem[]>;
   approvePermission(
     sessionId: number,
@@ -262,6 +313,7 @@ export interface AgentRuntimeProviderFeatures {
     requestId: string,
     action?: 'accept' | 'decline' | 'cancel',
     content?: Record<string, string | number | boolean | string[]>,
+    options?: { requirePending: true },
   ): Promise<void>;
   onClientAttached(sessionId: number): void;
   onClientDetached(sessionId: number): void;

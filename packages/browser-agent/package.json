@@ -1,0 +1,20 @@
+{
+  "name": "@elevenex/browser-agent",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node build-worker.mjs"
+  },
+  "dependencies": {
+    "@elevenex/shared": "workspace:*",
+    "patchright": "1.64.3",
+    "patchright-core": "1.64.3"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "6.0.3",
+    "esbuild": "0.28.2"
+  }
+}

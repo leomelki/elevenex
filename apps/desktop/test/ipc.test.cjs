@@ -1,0 +1,317 @@
+const { createRequire } = require('node:module');
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const requireWorkspace = createRequire(require.resolve('../dist/backend-client/workspace'));
+const { readFile } = require('node:fs/promises');
+const vm = require('node:vm');
+const { URLSearchParams } = require('node:url');
+
+test('observes the Windows caption press without handling other native controls', async () => {
+  const source = await readFile(require.resolve('../dist/title-bar-press'), 'utf8');
+  const hooks = new Map();
+  const window = { hookWindowMessage: (message, callback) => hooks.set(message, callback) };
+  let presses = 0;
+  for (const platform of ['darwin', 'linux', 'win32']) {
+    const exports = {};
+    vm.runInNewContext(source, { exports, process: { platform } });
+    exports.observeTitleBarPress(window, () => { presses++; });
+    assert.equal(hooks.size, platform === 'win32' ? 1 : 0);
+  }
+  const leftPress = hooks.get(0x00a1);
+  const hitTest = Buffer.alloc(8);
+  for (const control of [1, 9, 12, 20]) { // client, maximize, resize, close
+    hitTest.writeUInt32LE(control);
+    leftPress(hitTest);
+  }
+  assert.equal(presses, 0);
+  hitTest.writeUInt32LE(2);
+  assert.equal(leftPress(hitTest), undefined);
+  assert.equal(presses, 1);
+});
+
+test('clipboard IPC validates trust, arity and UTF-8 bounds, awaits native writes and unregisters', async () => {
+  const handlers = new Map(), writes = [];
+  const ipc = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), {
+    exports: ipc, require: () => ({ ipcMain: {
+      handle: (channel, handler) => handlers.set(channel, handler),
+      removeHandler: channel => handlers.delete(channel),
+    } }),
+  });
+  let complete;
+  const nativeWrite = new Promise(resolve => { complete = resolve; });
+  let failure;
+  const module = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/clipboard'), 'utf8'), {
+    exports: module, Buffer, require: name => name === './ipc' ? ipc : { clipboard: {
+      writeText: text => { writes.push(text); return failure ? Promise.reject(failure) : nativeWrite; },
+    } },
+  });
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  const stop = module.registerClipboardIpc((candidate, contents) => candidate === frame && contents === sender);
+  const write = handlers.get('clipboard:write-text');
+  for (const badEvent of [{ senderFrame: {}, sender }, { senderFrame: null, sender }, { senderFrame: frame, sender: { id: 43 } }]) {
+    assert.throws(() => write(badEvent, 'copy'), /Untrusted/);
+  }
+  const maxBytes = 16 * 1024 * 1024;
+  for (const args of [[], [null], [42], [{}], ['copy', 'selection'], ['x'.repeat(maxBytes + 1)], ['é'.repeat(maxBytes / 2 + 1)]]) {
+    assert.throws(() => write(event, ...args), /Clipboard requires/);
+  }
+  assert.equal(writes.length, 0);
+  let settled = false;
+  const text = '  café 👩🏽‍💻\n\t代码\r\n';
+  const pending = write(event, text).then(() => { settled = true; });
+  await Promise.resolve(); assert.equal(settled, false);
+  complete(); await pending; assert.equal(settled, true);
+  await write(event, ''); // Empty text deliberately clears the text clipboard.
+  const boundary = 'é'.repeat(maxBytes / 2);
+  await write(event, boundary);
+  assert.deepEqual(writes, [text, '', boundary]);
+  failure = new Error('Native clipboard unavailable');
+  await assert.rejects(write(event, 'retry'), /Native clipboard unavailable/);
+  stop(); assert.equal(handlers.size, 0);
+});
+
+test('backend IPC validates the sender and all zero-argument operations, and cleans up events', async () => {
+  const handlers = new Map();
+  const events = [];
+  const window = { isDestroyed: () => false, webContents: { isDestroyed: () => false, send: (...args) => events.push(args) } };
+  const ipcExports = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), {
+    exports: ipcExports,
+    require: name => {
+      assert.equal(name, 'electron');
+      return { ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) }, BrowserWindow: { getAllWindows: () => [window] } };
+    },
+  });
+  const backendExports = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend/ipc'), 'utf8'), {
+    exports: backendExports, require: () => ipcExports,
+  });
+  const status = { phase: 'checking', version: null };
+  let listener;
+  let cleaned = false;
+  const manager = {
+    snapshot: () => status, start: async () => status, restart: async () => status,
+    subscribe: fn => { listener = fn; return () => { cleaned = true; }; },
+  };
+  const frame = {};
+  const sender = {};
+  const stop = backendExports.registerBackendIpc(manager, (candidate, contents) => candidate === frame && contents === sender);
+  for (const handler of handlers.values()) {
+    assert.throws(() => handler({ senderFrame: {}, sender }), /Untrusted/);
+    assert.throws(() => handler({ senderFrame: frame, sender }, 'unexpected'), /no arguments/);
+    assert.deepEqual(await handler({ senderFrame: frame, sender }), status);
+  }
+  listener(status);
+  assert.deepEqual(events, [['backend:changed', status]]);
+  stop();
+  assert.equal(cleaned, true);
+});
+
+test('remote IPC derives window ownership from the trusted sender, validates arity and removes handlers', async () => {
+  const handlers = new Map(); const removed = []; const calls = [];
+  const ipcExports = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), {
+    exports: ipcExports, require: () => ({ ipcMain: {
+      handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => removed.push(channel),
+    } }),
+  });
+  const remoteExports = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/remote/ipc'), 'utf8'), {
+    exports: remoteExports, require: name => {
+      if (name === '../ipc') return ipcExports;
+      if (name === './validation') return require('../dist/remote/validation');
+      if (name === 'electron') return {
+        BrowserWindow: { getAllWindows: () => [{ webContents: { id: 42 }, isDestroyed: () => false }] },
+        dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: ['/chosen/identity'] }) },
+      };
+      return require(name);
+    },
+  });
+  const manager = new Proxy({}, { get: (_target, method) => (...args) => { calls.push([method, ...args]); return 'snapshot'; } });
+  const frame = {}; const sender = { id: 42 };
+  const stop = remoteExports.registerRemoteIpc(manager, { snapshot: () => ({ phase: 'idle', version: null }) }, (candidate, contents) => candidate === frame && contents === sender);
+  for (const [, channel, args] of require('./remote-contract.cjs').calls) {
+    const handler = handlers.get(channel); assert.ok(handler, channel);
+    assert.throws(() => handler({ senderFrame: {}, sender }, ...args), /Untrusted/);
+    assert.throws(() => handler({ senderFrame: frame, sender }, ...args, 'extra'), /Unexpected/);
+    await handler({ senderFrame: frame, sender }, ...args);
+  }
+  assert.ok(calls.some(call => call[0] === 'disconnect' && call[1] === 42));
+  assert.ok(calls.some(call => call[0] === 'answer' && call[1] === 42));
+  assert.ok(calls.some(call => call[0] === 'grantFile' && call[1] === 'identity' && call[2] === '/chosen/identity'));
+  stop(); assert.deepEqual(removed.sort(), [...handlers.keys()].sort());
+});
+
+test('backend client IPC validates scope/arity, isolates window ownership and unregisters handlers', async () => {
+  const handlers = new Map(); const calls = [];
+  const ipcExports = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), {
+    exports: ipcExports, require: () => ({ ipcMain: {
+      handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel),
+    } }),
+  });
+  const clientExports = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/ipc'), 'utf8'), {
+    exports: clientExports, require: name => name === '../ipc' ? ipcExports : {
+      registerWorkspaceIpc: () => () => {}, registerSessionChatIpc: () => () => {}, registerTaskTerminalIpc: () => () => {},
+      registerSessionChatStreamIpc: () => () => {},
+      registerTerminalStreamIpc: () => () => {}, registerTerminalPreferencesIpc: () => () => {}, TerminalPreferences: class {},
+    },
+  });
+  const frame = {}; const sender = { id: 42 };
+  const client = { state: id => calls.push(['state', id]), info: (...args) => calls.push(['info', ...args]) };
+  const stop = clientExports.registerBackendClientIpc(client, (candidate, contents) => candidate === frame && contents === sender);
+  const event = { senderFrame: frame, sender };
+  const state = handlers.get('backend-client:state'); const info = handlers.get('backend-client:info');
+  const scope = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  assert.throws(() => state({ senderFrame: {}, sender }), /Untrusted/);
+  assert.throws(() => info({ senderFrame: {}, sender }, scope), /Untrusted/);
+  assert.throws(() => state(event, 'extra'), /no arguments/);
+  for (const args of [[], [42], [''], [{ url: 'http://evil' }], [scope, 'extra']]) assert.throws(() => info(event, ...args), /scope/);
+  state(event); info(event, scope);
+  assert.deepEqual(calls, [['state', 42], ['info', 42, scope]]);
+  stop(); assert.equal(handlers.size, 0);
+});
+
+test('conversation windows and prompt edits use validated and scope-bound reads', async () => {
+  const handlers = new Map(), requests = [], paths = [];
+  const edit = { taskId: 1, sessionId: 2, itemId: 'saved:prompt', text: 'Original', revision: 'a'.repeat(64), laterPrompts: 1, keepsContext: true };
+  let editReply = edit;
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const ipc = {}, chat = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), {
+    exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }),
+  });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/session-chat'), 'utf8'), {
+    exports: chat, URLSearchParams,
+    require: name => {
+      if (name === '../ipc') return ipc;
+      if (['./session-chat-agents', './session-chat-attachments', './session-chat-media'].includes(name))
+        return { registerChatAgents: () => () => {}, registerChatAttachments: () => () => {}, registerSessionChatMedia: () => () => {} };
+      if (name === './transport') return { requestBackendJson: async (_endpoint, request) => {
+        paths.push(request.path);
+        if (request.path.includes('/prompt-edit?')) return editReply;
+        return { taskId: 1, sessionId: 2, cursor: 'cursor', reset: true, before: null, items: [], events: [], state };
+      } };
+      return require(name.startsWith('./') ? '../dist/backend-client/' + name.slice(2) : name);
+    },
+  });
+  const frame = {}, sender = { id: 42 }, scope = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const target = { taskId: 1, sessionId: 2, requestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' };
+  const client = { execute: async (window, selectedScope, key, write, operation) => {
+    assert.equal(window, 42); assert.equal(selectedScope, scope); assert.equal(write, false);
+    assert.match(key, /session-chat:/);
+    requests.push(key);
+    return operation({}, new AbortController().signal);
+  } };
+  const stop = chat.registerSessionChatIpc(client, (candidate, contents) => candidate === frame && contents === sender);
+  const read = handlers.get('session-chat:read'), event = { senderFrame: frame, sender };
+  assert.throws(() => read({ senderFrame: {}, sender }, scope, { ...target, loadingMode: 'window' }), /Untrusted/);
+  for (const loadingMode of ['all', 320, true, null])
+    assert.throws(() => read(event, scope, { ...target, loadingMode }), /Invalid conversation loading mode/);
+  for (const loadingMode of ['window', 'progressive']) {
+    await read(event, scope, { ...target, loadingMode });
+    assert.ok(requests.at(-1).includes('loadingMode=' + loadingMode));
+    assert.equal(paths.at(-1), '/api/desktop-workspace/tasks/1/sessions/2/chat?loadingMode=' + loadingMode);
+  }
+  await read(event, scope, target);
+  assert.ok(!requests.at(-1).includes('loadingMode'));
+  const promptEdit = handlers.get('session-chat:prompt-edit');
+  assert.throws(() => promptEdit({ senderFrame: {}, sender }, scope, { ...target, itemId: edit.itemId }), /Untrusted/);
+  assert.throws(() => promptEdit(event, scope, { ...target, itemId: '' }), /Invalid prompt ID/);
+  const result = await promptEdit(event, scope, { ...target, itemId: edit.itemId });
+  assert.deepEqual({ ...result }, edit);
+  assert.equal(paths.at(-1), '/api/desktop-workspace/tasks/1/sessions/2/chat/prompt-edit?itemId=saved%3Aprompt');
+  assert.ok(requests.at(-1).includes(target.requestId));
+  for (const invalid of [{ sessionId: 3 }, { revision: '' }, { itemId: 'another' }, { keepsContext: 1 },
+    { laterPrompts: -1 }, { text: 'x'.repeat(64001) }]) {
+    editReply = { ...edit, ...invalid };
+    await assert.rejects(promptEdit(event, scope, { ...target, itemId: edit.itemId }));
+  }
+  stop(); assert.equal(handlers.size, 0);
+});
+
+test('machine IPC verifies main-frame ownership, bounds suggestions and validates new-window selection', async () => {
+  const handlers = new Map(); const calls = [];
+  const ipcExports = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), {
+    exports: ipcExports, require: () => ({ ipcMain: {
+      handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel),
+    } }),
+  });
+  const machineExports = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/machines/ipc'), 'utf8'), {
+    exports: machineExports, require: name => {
+      if (name === '../ipc') return ipcExports;
+      if (name === '../remote/validation') return require('../dist/remote/validation');
+      if (name === './ssh-hosts') return { sshHostSuggestions: (_path, query) => { calls.push(['suggestions', query]); return []; } };
+      return require(name);
+    },
+  });
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  const machines = {
+    edit: (...args) => calls.push(['edit', ...args]), disconnect: (...args) => calls.push(['disconnect', ...args]),
+    remove: (...args) => calls.push(['remove', ...args]), undoRemove: (...args) => calls.push(['undo', ...args]), dismissRemoval: (...args) => calls.push(['dismiss', ...args]),
+    snapshot: id => calls.push(['state', id]), opened: (id, selection) => calls.push(['opened', id, selection]),
+    validateSelection: value => value === null ? null : require('../dist/remote/validation').selection(value),
+  };
+  const stop = machineExports.registerMachineIpc(machines, (candidate, contents) => candidate === frame && contents === sender, selection => calls.push(['window', selection]));
+  for (const [, channel, args] of require('./machine-contract.cjs').calls) {
+    const handler = handlers.get(channel); assert.ok(handler);
+    assert.throws(() => handler({ senderFrame: {}, sender }, ...args), /Untrusted/);
+    assert.throws(() => handler(event, ...args, 'extra'), /Unexpected/);
+    await handler(event, ...args);
+  }
+  assert.ok(calls.some(call => call[0] === 'opened' && call[1] === 42));
+  assert.throws(() => handlers.get('machines:new-window')(event, { kind: 'local', command: 'evil' }), /Invalid/);
+  for (const query of ['x'.repeat(254), '\0', 42]) assert.throws(() => handlers.get('machines:ssh-hosts')(event, query), /Invalid/);
+  stop(); assert.equal(handlers.size, 0);
+});
+
+test('workspace IPC validates resources, page bounds, scopes and request bodies before executing named operations', async () => {
+  const handlers = new Map(); const calls = [];
+  const ipcExports = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipcExports, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  const workspace = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipcExports : requireWorkspace(name) });
+  const client = { execute: (...args) => { calls.push(args); return Promise.resolve({ ok: true, value: {} }); }, cancel: (...args) => calls.push(args) };
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  const finished = [];
+  const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender, (...args) => finished.push(args));
+  const scope = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  for (const [, channel, args] of require('./workspace-contract.cjs').calls) {
+    const handler = handlers.get(channel); assert.ok(handler, channel);
+    assert.throws(() => handler({ senderFrame: {}, sender }, ...args), /Untrusted/);
+    assert.throws(() => handler(event, ...args, 'extra'), /scope/);
+    assert.throws(() => handler(event, ...['', ...args.slice(1)]), /scope/);
+    await handler(event, ...args);
+  }
+  await handlers.get('workspace:retry-task')(event, scope, 1, 'use-existing');
+  await handlers.get('workspace:retry-task')(event, scope, 1, 'snapshot');
+  for (const recovery of ['arbitrary', { confirmExternal: true }, null]) assert.throws(() => handlers.get('workspace:retry-task')(event, scope, 1, recovery));
+  assert.throws(() => handlers.get('workspace:retry-task')(event, scope, 1, 'snapshot', 'extra'));
+  const count = calls.length;
+  const updateProject = handlers.get('workspace:update-project');
+  for (const image of ['https://example.com/icon.png', 'data:image/svg+xml;base64,PHN2Zz4=', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAABQ' + 'A'.repeat(40_000)]) {
+    assert.throws(() => updateProject(event, scope, { projectId: 1, appearance: { image } }));
+  }
+  for (const [channel, input] of [['workspace:projects', { limit: 101 }], ['workspace:tasks', { projectId: -1 }], ['workspace:sessions', null], ['workspace:create-project', { name: 'x', path: '/x', additionalPaths: Array(20).fill('/x') }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [] }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [{ path: '/other', initialize: true }] }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [{ path: '/x', initialize: 'yes' }] }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [{ path: '/x', initialize: true, clone: 'https://example.com/x.git' }] }], ['workspace:commit-preview', { taskId: 1, includeUnstaged: true, excluded: ['../outside'], includedSecrets: [] }], ['workspace:commit-preview', { taskId: 1, includeUnstaged: true, excluded: Array(1001).fill('file'), includedSecrets: [] }], ['workspace:git-action', { taskId: 1, type: 'commit', message: '', selection: { includeUnstaged: true, excluded: [], includedSecrets: [] }, revision: 'invalid' }], ['workspace:git-action', { taskId: 1, type: 'arbitrary-command' }], ['workspace:finish-task', { taskId: 1, confirmStop: 'yes' }]]) assert.throws(() => handlers.get(channel)(event, scope, input));
+  assert.equal(calls.length, count, 'invalid input never reaches the selected backend');
+  const keepOpen = handlers.get('workspace:keep-task-open');
+  assert.throws(() => keepOpen(event, scope, { taskId: 1 }));
+  const finish = handlers.get('workspace:finish-task');
+  client.execute = async () => ({ ok: true, value: { id: 1, state: 'finished' } });
+  await finish(event, scope, { taskId: 1, confirmStop: true });
+  client.execute = async () => ({ ok: true, value: { id: 2, state: 'finished' } });
+  await finish(event, scope, { taskId: 1, confirmStop: true });
+  assert.deepEqual(finished, [[42, scope, 1]]);
+  client.execute = async () => ({ ok: false, error: { code: 'http', status: 400, message: 'private backend detail' } });
+  const rejectedProject = await handlers.get('workspace:create-project')(event, scope, { name: 'Project', path: '/repo' });
+  assert.equal(rejectedProject.ok, false);
+  assert.match(rejectedProject.error.message, /repository folders/);
+  assert.doesNotMatch(rejectedProject.error.message, /private/);
+  assert.ok(calls.every(([windowId, selectedScope]) => windowId === 42 && selectedScope === scope));
+  stop(); assert.equal(handlers.size, 0);
+});

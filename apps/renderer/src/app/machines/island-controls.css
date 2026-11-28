@@ -1,0 +1,31 @@
+/* The island has its own translucent chips, rather than normal surface buttons.
+   Geometry without an exported token follows the design-system reference. */
+.island-action {
+  flex: none;
+  font: inherit;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  padding: var(--space-1) 10px;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--ink-inverse) 16%, transparent);
+  font-size: var(--text-mono-meta-size);
+  font-weight: 600;
+  transition: background-color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+}
+.island-action:hover:not(:disabled), .island-action.highlighted {
+  background: color-mix(in oklab, var(--ink-inverse) 28%, transparent);
+}
+.island-action.highlighted {
+  box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--accent) 60%, var(--ink-inverse));
+}
+.island-action.quiet {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ink-inverse) 28%, transparent);
+}
+.island-action:focus-visible, .new-window:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 60%, var(--ink-inverse));
+  outline-offset: 2px;
+}
+.island-action:disabled, .new-window:disabled { opacity: .45; cursor: default; }
+@media (prefers-reduced-motion: reduce) { .island-action, .new-window { transition: none; } }

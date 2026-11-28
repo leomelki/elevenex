@@ -1,0 +1,5 @@
+:host { display: flex; flex-direction: column; justify-content: flex-end; min-width: 0; }
+.rows { flex: none; min-width: 0; }
+/* Closed rows remain mounted until the owner processes animation completion. */
+:host([inert]) { overflow: clip; }
+:host(.moving) { overflow: hidden; mask-image: linear-gradient(to bottom, transparent, #000 18px); }

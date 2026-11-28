@@ -1,11 +1,11 @@
-const { existsSync, readdirSync, rmSync, statSync } = require('fs');
+const { existsSync, lstatSync, readdirSync, rmSync, statSync } = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
 const path = require('path');
-const { formatSize, getDirectorySize } = require('./prepare-vscode-web-runtime');
+const { formatSize, getDirectorySize } = require('./runtime-stage-utils');
 
 const repoRoot = path.resolve(__dirname, '..');
 const electronAppRoot = path.join(repoRoot, 'apps', 'electron');
-const stageBaseRoot = path.join(repoRoot, 'apps', 'electron', '.stage');
+const stageBaseRoot = process.env.ELEVENEX_BACKEND_STAGE_ROOT || path.join(repoRoot, 'apps', 'electron', '.stage');
 const stageBackendRoot = path.join(stageBaseRoot, 'backend');
 const archivePath = path.join(stageBaseRoot, 'backend.tar.gz');
 const STAGED_NODE_MODULES_ROOT = path.join(stageBackendRoot, 'node_modules');
@@ -77,6 +77,23 @@ const REQUIRED_NATIVE_RUNTIME_ARTIFACTS = [
     : []),
 ];
 const FINAL_RUNTIME_PACKAGE_PLANS = {
+  // The Patchright driver stays external to main.cjs. Keep its loader, browser
+  // registry, installer CLI and platform helpers together; Chromium is
+  // installed later. Staging restores the LICENSE/NOTICE its npm packages omit.
+  'patchright': {
+    files: ['package.json', 'index.js', 'index.mjs', 'test.js', 'test.mjs', 'LICENSE', 'NOTICE', 'ThirdPartyNotices.txt'],
+    directories: ['lib'],
+  },
+  'patchright-core': {
+    files: ['package.json', 'index.js', 'index.mjs', 'cli.js', 'browsers.json', 'LICENSE', 'NOTICE', 'ThirdPartyNotices.txt'],
+    directories: ['lib', 'bin'],
+  },
+  // The backend resolves this executable beside the package manifest. The npm
+  // download helpers are installation-only and can still be pruned.
+  'ffmpeg-static': {
+    files: ['package.json', 'index.js', 'LICENSE', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'],
+    optionalFiles: ['ffmpeg.LICENSE', 'ffmpeg.README'],
+  },
   'better-sqlite3': {
     files: ['package.json', 'LICENSE'],
     directories: ['lib'],
@@ -230,13 +247,13 @@ function pruneToKeep(rootDir, keepPaths, relativeDir = '') {
   }
 }
 
-function pruneStagedNodeModules() {
-  if (!existsSync(STAGED_NODE_MODULES_ROOT)) {
+function pruneStagedNodeModules(nodeModulesRoot = STAGED_NODE_MODULES_ROOT) {
+  if (!existsSync(nodeModulesRoot)) {
     return;
   }
 
-  for (const entry of readdirSync(STAGED_NODE_MODULES_ROOT)) {
-    const packageRoot = path.join(STAGED_NODE_MODULES_ROOT, entry);
+  for (const entry of readdirSync(nodeModulesRoot)) {
+    const packageRoot = path.join(nodeModulesRoot, entry);
     const stats = statSync(packageRoot);
 
     if (!stats.isDirectory()) {
@@ -315,9 +332,6 @@ function logStageSizeSummary() {
   const componentPaths = [
     'main.cjs',
     'node_modules',
-    'vscode-web-dist',
-    'vscode-filesystem-provider',
-    'vscode-scm-extension',
   ];
   const totalSize = getDirectorySize(stageBackendRoot);
 
@@ -372,9 +386,10 @@ function getBundledNodeExecutable() {
   return candidates.find((candidate) => existsSync(candidate)) || null;
 }
 
-function validateNativeRuntimeLoad() {
+function validateRuntimeLoad() {
   const script = [
     "const path = require('path');",
+    "const fs = require('fs');",
     "const root = process.argv[1];",
     "const Database = require(path.join(root, 'node_modules', 'better-sqlite3'));",
     "const db = new Database(':memory:');",
@@ -387,6 +402,21 @@ function validateNativeRuntimeLoad() {
     ...(ONNXRUNTIME_TARGET_SUPPORTED
       ? ["require(path.join(root, 'node_modules', 'onnxruntime-node'));"]
       : []),
+    // These external browser packages must survive final pruning too. Do not
+    // download/launch Chromium here; exercise its registry and installer loader.
+    "const assert = require('node:assert/strict');",
+    "const { execFileSync } = require('node:child_process');",
+    "const driverRoot = path.join(root, 'node_modules', 'patchright-core');",
+    "assert.equal(typeof require(driverRoot).chromium.launch, 'function');",
+    "assert.equal(typeof require(path.join(root, 'node_modules', 'patchright', 'test.js')).expect, 'function');",
+    "for (const name of ['patchright', 'patchright-core']) for (const file of ['LICENSE', 'NOTICE']) fs.accessSync(path.join(root, 'node_modules', name, file));",
+    "execFileSync(process.execPath, [path.join(driverRoot, 'cli.js'), '--version'], { timeout: 10000, stdio: 'pipe' });",
+    // Resolve the managed binary directly, as the backend does, so FFMPEG_BIN
+    // cannot make a missing packaged executable pass validation.
+    "const ffmpegRoot = path.dirname(require.resolve(path.join(root, 'node_modules', 'ffmpeg-static', 'package.json')));",
+    "const ffmpeg = path.join(ffmpegRoot, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');",
+    "const ffmpegEnv = { ...process.env }; delete ffmpegEnv.FFREPORT;",
+    "execFileSync(ffmpeg, ['-version'], { timeout: 10000, stdio: 'pipe', env: ffmpegEnv });",
   ].join('');
   const bundledNode = getBundledNodeExecutable();
   const executable = bundledNode || getElectronExecutable();
@@ -407,14 +437,45 @@ function validateNativeRuntimeLoad() {
   if (result.status !== 0) {
     throw new Error(
       [
-        `Staged backend native smoke test failed with exit code ${result.status ?? 'unknown'}.`,
+        `Staged backend runtime smoke test failed with exit code ${result.status ?? 'unknown'}.`,
         result.stderr.trim(),
         result.stdout.trim(),
       ].filter(Boolean).join('\n'),
     );
   }
 
-  console.log(`Validated staged native modules with ${bundledNode ? 'bundled Node' : 'Electron-as-Node'}`);
+  console.log(`Validated staged native and browser runtimes with ${bundledNode ? 'bundled Node' : 'Electron-as-Node'}`);
+}
+
+/**
+ * Desktop and SSH installers extract only regular files and directories
+ * (apps/desktop/src/backend/archive.ts). tar would encode a symlink, device,
+ * socket or a second name for the same inode as an entry those installers
+ * reject, so refuse it here, where the offending path is still known.
+ */
+function validateArchivableTree(rootDir) {
+  const seen = new Map();
+  const problems = [];
+  const pending = [rootDir];
+  while (pending.length) {
+    const directory = pending.pop();
+    for (const name of readdirSync(directory)) {
+      const entry = path.join(directory, name);
+      const info = lstatSync(entry, { bigint: true });
+      const relative = path.relative(rootDir, entry);
+      if (info.isDirectory()) { pending.push(entry); continue; }
+      if (!info.isFile()) { problems.push(`${relative} (${info.isSymbolicLink() ? 'symlink' : 'special file'})`); continue; }
+      if (info.nlink > 1n) {
+        const identity = `${info.dev}:${info.ino}`;
+        const first = seen.get(identity);
+        if (first) problems.push(`${relative} (hard link to ${first})`);
+        else seen.set(identity, relative);
+      }
+    }
+  }
+  if (problems.length) {
+    throw new Error(`Backend archives may contain only regular files and directories:\n  ${problems.sort().join('\n  ')}`);
+  }
 }
 
 function main() {
@@ -430,20 +491,26 @@ function main() {
   validateNativeRuntimeArtifacts();
   pruneStagedNodeModules();
   validateNoEmbeddedAgentExecutables();
-  validateNativeRuntimeLoad();
+  validateRuntimeLoad();
+  validateArchivableTree(stageBackendRoot);
   logStageSizeSummary();
 
-  execFileSync('tar', ['-czf', archivePath, '-C', stageBaseRoot, 'backend'], {
-    cwd: repoRoot,
+  // GNU tar treats a drive-letter prefix in the archive name as a remote host.
+  execFileSync('tar', ['-czf', path.basename(archivePath), 'backend'], {
+    cwd: path.resolve(repoRoot, stageBaseRoot),
     stdio: 'inherit',
   });
 
   console.log(`Electron backend archive written to ${archivePath}`);
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
+if (require.main === module) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  }
 }
+
+module.exports = { pruneStagedNodeModules, validateArchivableTree };

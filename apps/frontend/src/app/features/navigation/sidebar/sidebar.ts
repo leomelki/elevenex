@@ -9,10 +9,6 @@ import { AgentControlStateService } from '@/features/agent-control/agent-control
 import { PlannotatorStateService } from '@/features/plannotator';
 import { TodosService } from '@/features/productivity/todos.service';
 import { ProjectCreateComponent } from '@/features/projects/project-create/project-create.component';
-import {
-  VSCodeWebStateService,
-  buildVSCodeIframeKey,
-} from '@/features/vscode-web/vscode-web-state.service';
 import { ComposerDraftService } from '@/shared/agent-chat/composer/composer-draft.service';
 import {
   ZardDropdownDirective,
@@ -210,7 +206,6 @@ export class Sidebar implements OnInit, OnDestroy {
   private composerDrafts = inject(ComposerDraftService);
   private tabService = inject(TabService);
   private reviewChatsApi = inject(ReviewChatsService);
-  private vscodeWebState = inject(VSCodeWebStateService);
   private colorService = inject(TabColorService);
   plannotatorState = inject(PlannotatorStateService);
   claudeStatus = inject(ClaudeStatusService);
@@ -378,15 +373,6 @@ export class Sidebar implements OnInit, OnDestroy {
 
   private getProjectIdForSession(sessionId: number): number | null {
     return this.tabService.tabs().find((tab) => tab.sessionId === sessionId)?.projectId ?? null;
-  }
-
-  private getIframeKeyForSession(sessionId: number): string | null {
-    const tab = this.tabService.tabs().find((currentTab) => currentTab.sessionId === sessionId);
-    if (!tab) {
-      return null;
-    }
-
-    return buildVSCodeIframeKey(tab.projectId, tab.worktreePath);
   }
 
   ngOnInit() {
@@ -1348,23 +1334,9 @@ export class Sidebar implements OnInit, OnDestroy {
       next: (result) => {
         const deletedIds = new Set(result.deletedSessionIds);
         const deletedActiveSession = deletedIds.has(this.activeSessionId() ?? -1);
-        const affectedIframes = new Set(
-          this.tabService
-            .tabs()
-            .filter((tab) => deletedIds.has(tab.sessionId))
-            .map((tab) => buildVSCodeIframeKey(tab.projectId, tab.worktreePath)),
-        );
         let nextActiveSessionId: number | null = null;
         for (const sessionId of deletedIds) {
           nextActiveSessionId = this.tabService.closeTab(sessionId);
-        }
-        const remainingIframeKeys = new Set(
-          this.tabService
-            .tabs()
-            .map((tab) => buildVSCodeIframeKey(tab.projectId, tab.worktreePath)),
-        );
-        for (const iframeKey of affectedIframes) {
-          if (!remainingIframeKeys.has(iframeKey)) this.vscodeWebState.destroyIframe(iframeKey);
         }
         this.deleteFolderDialogRef.close();
         this.deleteFolderTarget.set(null);
@@ -1512,10 +1484,6 @@ export class Sidebar implements OnInit, OnDestroy {
 
     for (const tab of openTabs) {
       this.tabService.closeTab(tab.sessionId);
-    }
-
-    if (openTabs.length > 0) {
-      this.vscodeWebState.destroyIframe(buildVSCodeIframeKey(openTabs[0].projectId, worktreePath));
     }
 
     if (activeWasInRemovedWorktree) {
@@ -1715,7 +1683,6 @@ export class Sidebar implements OnInit, OnDestroy {
   private performDeleteSession(sessionId: number) {
     const worktreePath = this.getOpenWorktreePathForSession(sessionId);
     const projectId = this.getProjectIdForSession(sessionId);
-    const iframeKey = this.getIframeKeyForSession(sessionId);
     this.deletingSessionId.set(sessionId);
     this.sessionsService.delete(sessionId).subscribe({
       next: () => {
@@ -1725,16 +1692,6 @@ export class Sidebar implements OnInit, OnDestroy {
         // Close the tab if open and handle navigation
         const wasActive = this.activeSessionId() === sessionId;
         const newActiveId = this.tabService.closeTab(sessionId);
-        if (
-          iframeKey &&
-          worktreePath &&
-          projectId !== null &&
-          this.tabService
-            .tabs()
-            .every((tab) => tab.worktreePath !== worktreePath || tab.projectId !== projectId)
-        ) {
-          this.vscodeWebState.destroyIframe(iframeKey);
-        }
         if (wasActive) {
           if (newActiveId) {
             this.router.navigate(['/sessions', newActiveId], { replaceUrl: true });

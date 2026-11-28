@@ -1,0 +1,116 @@
+<div class="window" [class.ex-offline]="unreachable()" data-modal-window>
+ <div class="window-content" data-modal-background>
+  <ex-title-bar>
+    <ex-title-island [contentKey]="island()?.key ?? (launcher.open() ? (islandMachine()?.id ?? 'home') : backMachine()?.id ? 'back-' + backMachine()!.id : 'home')" [tone]="island()?.tone ?? 'rest'" [tall]="!!reach()?.fresh && (!!challenge() || reach()?.tone === 'danger')" [progress]="island()?.progress" [open]="panelOpen()" [panel]="machinePanel" controls="machine-panel" [label]="island()?.text ?? (launcher.open() ? 'Machine details' : backMachine() ? 'Back to ' + backMachine()!.name : 'Machines')" (pressed)="pressIsland()" (dismissed)="panelOpen.set(false)">
+      @if (island(); as news) { <span class="island-news" role="status"><ex-icon [name]="news.icon" [size]="13" />{{ news.text }}@if (reach()?.fresh && (challenge() || reach()?.tone === 'danger')) { <small>{{ reach()?.detail }}</small> }</span> }
+      @else if (launcher.open() && launcher.current(); as machine) { <ex-island-name [machine]="machine" /> }
+      @else if (backMachine(); as machine) { <ex-island-name [machine]="machine" [back]="true" /> }
+      @else { <span class="island-news"><ex-icon name="grid" [size]="13" />Machines</span> }
+    </ex-title-island>
+    <ng-template #machinePanel>
+      @if (islandMachine(); as machine) { <ex-machine-panel id="machine-panel" [machine]="machine" (changeRequested)="home()" (disconnectRequested)="panelOpen.set(false); launcher.disconnect()" (newWindow)="panelOpen.set(false); launcher.newWindow()">
+        @if (unreachable()) {
+          <div machineRecovery class="reach-panel">
+            @if (!challenge()) { <p role="status">{{ reach()?.detail || 'Reconnecting…' }}</p> }
+            @if (challenge(); as prompt) {
+              @if (prompt.kind === 'trust') { <button exButton size="sm" (click)="reviewTrust.set(true)">Check the host key…</button> }
+              @else { <ex-remote-challenge-dialog [compact]="true" [challenge]="prompt" [machineName]="machine.name" [busy]="challengeBusy()" [error]="challengeError()" (answered)="answer($event)" /> }
+            } @else {
+              @if (connection.state()?.environment.connection?.failure?.code === 'host-trust') { <p>Check the fingerprint with your administrator and repair your OpenSSH known_hosts file. Elevenex cannot safely accept a replacement key here.</p> }
+              <button exButton size="sm" [disabled]="connection.state()?.environment.connection?.phase === 'awaiting-input'" (click)="retry()">{{ connection.state()?.environment.connection?.phase === 'paused' ? 'Try again' : 'Try now' }}</button>
+            }
+          </div>
+        }
+      </ex-machine-panel> }
+    </ng-template>
+  </ex-title-bar>
+  <div class="stage">
+    @if (connection.state(); as state) {
+      <ex-machine-launch [open]="launcher.open()" [machineId]="launcher.currentId()">
+        <div machineHome class="home">
+          @if (state.settingsError) { <p class="settings-error" role="alert">{{ state.settingsError }}</p> }
+          <ex-machine-home [machines]="actions.machines()" [menuOpen]="actions.menu()?.machine?.id ?? null" (menuRequested)="actions.menu.set($event)" [firstRun]="launcher.firstRun()" [pending]="launcher.pendingId()" [ping]="ping()" [(findOpen)]="findOpen" (opened)="launcher.openMachine($event)" (addServer)="ssh.begin($event)" (pairComputer)="pair($event)" />
+        </div>
+        <div machineView class="machine-view">
+         @defer (when launcher.workspace(); prefetch on idle) {
+          @for (machine of [launcher.workspace()]; track machine?.id) { @if (machine) {
+
+            <div class="workspace" [hidden]="!!update()">
+              <ex-machine-workspace [reconnectAction]="recoveryAction()" [machine]="machine" [generation]="launcher.workspaceGeneration()" [active]="launcher.open()" [preparing]="launcher.pendingId() === machine.id" (prepared)="launcher.workspacePrepared($event.machineId, $event.generation)" (changeRequested)="home()" (reconnectRequested)="reconnect()" (desktopSessionRequested)="requestDesktopSession()" />
+            </div>
+            @if (update()) { <div class="update"><ex-getting-ready [icon]="machine.kind === 'local' ? 'laptop' : 'server'" [title]="'Getting ' + machine.name + ' ready'" sub="Your projects and files stay on this machine." [steps]="steps()" /></div> }
+          } }
+         }
+        </div>
+      </ex-machine-launch>
+    } @else {
+      <main class="loading" aria-label="Machines"><p role="status">{{ connection.error() || 'Loading machines…' }}</p>@if (connection.error()) { <button exButton (click)="connection.refresh()">Try again</button> }</main>
+    }
+  </div>
+  @if (launcher.error()) { <ex-toast class="error-toast" title="Machine needs attention" [detail]="launcher.error()" tone="danger" glyph="failed" (dismissed)="launcher.error.set('')" /> }
+ </div>
+<ex-machine-menu-popup [request]="actions.menu()" (closed)="actions.menu.set(null)" (action)="actions.act($event)" />
+<ex-modal-layer [open]="actions.detailsOpen()" [from]="actions.details()?.from ?? null" (closeRequested)="actions.detailsOpen.set(false)">
+  @if (actions.details(); as details) { <ex-machine-error-dialog [name]="details.name" [message]="details.message" [active]="actions.detailsOpen()" [attr.inert]="actions.detailsOpen() ? null : ''" (closed)="actions.detailsOpen.set(false)" /> }
+</ex-modal-layer>
+<ex-toast-stack [notices]="actions.notices()" (actionSelected)="actions.undo($event)" (dismissed)="actions.dismiss($event)" />
+<ex-modal-layer [open]="actions.editOpen()" [from]="actions.draft()?.from ?? null" (closeRequested)="actions.cancel()">
+  @for (draft of actions.draft() ? [actions.draft()!] : []; track draft.id) { <ex-edit-machine [machine]="draft.machine" [step]="draft.step" [disabled]="!actions.editOpen()" [saving]="actions.saving()" [error]="actions.error()" [identityLabel]="actions.identityLabel()" (identityRequested)="actions.chooseIdentity()" (saved)="actions.save($event)" (removeRequested)="actions.removeDraft()" (cancelled)="actions.cancel()" /> }
+</ex-modal-layer>
+<ex-modal-layer [open]="ssh.open()" [from]="ssh.from()" (closeRequested)="ssh.cancel()">
+  <ex-add-machine kind="ssh" [query]="ssh.query()" [picked]="ssh.picked()" [hosts]="ssh.hosts()" [loading]="ssh.saving()" [disabled]="!ssh.open()" [error]="ssh.error()" [notice]="ssh.suggestionError()" (queryChange)="ssh.setQuery($event)" (hostSelected)="ssh.pick($event.name, true)" (hostSubmitted)="ssh.pick($event)" (keyRequested)="ssh.connect()" (cancelled)="ssh.cancel()" />
+</ex-modal-layer>
+<ex-modal-layer [open]="!!challenge() && (!launcher.open() || reviewTrust())" (closeRequested)="launcher.open() ? reviewTrust.set(false) : cancelChallenge()">
+  @for (prompt of retainedChallenge() ? [retainedChallenge()!] : []; track prompt.id) { <ex-remote-challenge-dialog [challenge]="prompt" [machineName]="islandMachine()?.name ?? 'server'" [active]="!!challenge() && (!launcher.open() || reviewTrust())" [busy]="challengeBusy()" [error]="challengeError()" (answered)="answer($event)" /> }
+</ex-modal-layer>
+<ex-modal-layer [open]="pairingOpen()" [from]="pairingFrom()" (closeRequested)="pairingOpen.set(false)">
+  <section class="machine-dialog" role="dialog" aria-labelledby="pairing-title" [attr.inert]="pairingOpen() ? null : ''"><ex-icon name="peer" [size]="24" /><h2 id="pairing-title">Pair another computer</h2><p>Computer pairing is not available in this desktop version. You can run agents on this computer or connect to a server over SSH.</p><button exButton variant="primary" (click)="pairingOpen.set(false)">Back to machines</button></section>
+</ex-modal-layer>
+<ex-modal-layer [open]="!!waitingUpdate()" (closeRequested)="respondToUpdate(false)">
+  @if (retainedUpdate(); as pending) {
+    <section class="machine-dialog" role="dialog" aria-modal="true" aria-labelledby="engine-update-title" [attr.inert]="waitingUpdate() ? null : ''">
+      <h2 id="engine-update-title">Engine update on {{ pending.name }}</h2>
+      <p role="status">
+        @if (pending.connections === null) { This engine cannot report active connections. }
+        @else if (pending.connections === 1) { One connection is active. The update will start when it closes. }
+        @else if (pending.connections === 257) { At least 257 connections are active. The update will start when they close. }
+        @else { {{ pending.connections }} connections are active. The update will start when they close. }
+      </p>
+      <p>Forcing the update disconnects everyone using this engine and stops running agents, terminals and apps.</p>
+      @if (updateActionError()) { <p role="alert">{{ updateActionError() }}</p> }
+      <div class="update-actions">
+        <button exButton [disabled]="updateActionBusy()" (click)="respondToUpdate(false)">Cancel connection</button>
+        <button exButton variant="danger" [disabled]="updateActionBusy()" (click)="respondToUpdate(true)">Force update</button>
+      </div>
+    </section>
+  }
+</ex-modal-layer>
+<ex-modal-layer [open]="!!sessionChoice()" (closeRequested)="chooseSession('cancel')">
+  @if (retainedSessionChoice(); as pending) {
+    <section class="machine-dialog" role="dialog" aria-modal="true" aria-labelledby="windows-sign-in-title" [attr.inert]="sessionChoice() ? null : ''">
+      <h2 id="windows-sign-in-title">Nobody is signed in to Windows on {{ pending.name }}</h2>
+      <p>Apps need a Windows desktop session. {{ signInHint }} Then try again.</p>
+      <p>You can also start without apps. Agents, terminals and files work, and you can switch to the desktop session later from Apps.</p>
+      @if (sessionChoiceError()) { <p role="alert">{{ sessionChoiceError() }}</p> }
+      <div class="update-actions">
+        <button exButton [disabled]="sessionChoiceBusy()" (click)="chooseSession('cancel')">Cancel</button>
+        <button exButton [disabled]="sessionChoiceBusy()" (click)="chooseSession('retry')">Try again</button>
+        <button exButton variant="primary" [disabled]="sessionChoiceBusy()" (click)="chooseSession('without-apps')">Start without apps</button>
+      </div>
+    </section>
+  }
+</ex-modal-layer>
+<ex-modal-layer [open]="!!desktopSwitch()" (closeRequested)="closeDesktopSwitch()">
+  @if (retainedDesktopSwitch(); as pending) {
+    <section class="machine-dialog" role="dialog" aria-modal="true" aria-labelledby="desktop-session-title" [attr.inert]="desktopSwitch() ? null : ''" [attr.aria-busy]="desktopSwitchBusy() ? 'true' : null">
+      <h2 id="desktop-session-title">Switch {{ pending.name }} to your desktop session?</h2>
+      <p>The engine restarts inside your signed-in Windows desktop so apps can run. Running agents and terminals stop, and other computers connected to {{ pending.name }} reconnect.</p>
+      @if (desktopSwitchError()) { <p role="alert">{{ desktopSwitchError() }}</p> }
+      <div class="update-actions">
+        <button exButton [disabled]="desktopSwitchBusy()" (click)="closeDesktopSwitch()">Cancel</button>
+        <button exButton variant="danger" [disabled]="desktopSwitchBusy()" (click)="confirmDesktopSession()">{{ desktopSwitchBusy() ? 'Switching…' : 'Switch and restart' }}</button>
+      </div>
+    </section>
+  }
+</ex-modal-layer>
+</div>

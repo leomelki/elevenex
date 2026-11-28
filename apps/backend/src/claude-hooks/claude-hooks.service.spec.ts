@@ -3,6 +3,7 @@ import { ClaudeHooksService } from './claude-hooks.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { WorktreeContextService } from '../worktree-context/worktree-context.service.js';
 import { SessionTitleService } from '../session-title/session-title.service.js';
+jest.mock('../sessions/sessions.service.js', () => ({ SessionsService: class SessionsService {} }));
 
 const flushImmediate = () =>
   new Promise<void>((resolve) => setImmediate(resolve));
@@ -18,6 +19,13 @@ function deferred<T>() {
 }
 
 describe('ClaudeHooksService', () => {
+  it('identifies the provider owning an authoritative idle transition without manufacturing a completion', () => {
+    const changed = jest.fn(); service.on('status-changed', changed);
+    service.updateRuntimeActivity(5, { activityStatus: 'running', actionKind: null, actionLabel: null, backgroundActive: false }, { authoritative: true, provider: 'codex' });
+    service.updateRuntimeActivity(5, { activityStatus: 'idle', actionKind: null, actionLabel: null, backgroundActive: false }, { authoritative: true, provider: 'codex' });
+    expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 5, provider: 'codex', status: 'idle' }));
+    expect(sessionsService.markCompletionUnreviewed).not.toHaveBeenCalled();
+  });
   let service: ClaudeHooksService;
   let sessionsService: {
     findOne: jest.Mock;
@@ -67,6 +75,76 @@ describe('ClaudeHooksService', () => {
     }).compile();
 
     service = module.get(ClaudeHooksService);
+  });
+
+  it('publishes activity without waiting for metadata and clears it if persistence fails', async () => {
+    const pending = deferred<void>();
+    sessionsService.markLastStateChange.mockReturnValueOnce(pending.promise);
+    const changed = jest.fn(); service.on('status-changed', changed);
+    const update = service.updateStatus(1, 'running');
+    expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'running' }));
+    pending.reject(new Error('Session removed'));
+    await update;
+    expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'idle' }));
+    expect(service.getStatus(1)).toBe('idle');
+  });
+
+  it('reports explicit input on a fresh terminal session and resumes after the tool or elicitation', async () => {
+    for (const [hook, actionKind, resume] of [
+      ['PermissionRequest', 'permission', 'PostToolUse'],
+      ['Elicitation', 'user_input', 'ElicitationResult'],
+      ['PreToolUse', 'user_input', 'PostToolUseFailure'],
+    ]) {
+      await service.handleHookEvent(1, { hook_event_name: hook, tool_name: 'AskUserQuestion' });
+      expect(service.getActivity(1)).toMatchObject({ activityStatus: 'waiting', actionKind });
+      await service.handleHookEvent(1, { hook_event_name: resume });
+      expect(service.getStatus(1)).toBe('running');
+    }
+    expect(sessionsService.markCompletionUnreviewed).not.toHaveBeenCalled();
+  });
+
+  it('does not complete the main turn or invent input requests for task/agent progress and informational notices', async () => {
+    await service.updateStatus(1, 'running');
+    for (const hook of ['TaskCompleted', 'SubagentStop', 'Notification']) {
+      await service.handleHookEvent(1, { hook_event_name: hook, notification_type: 'auth_success' });
+      expect(service.getStatus(1)).toBe('running');
+    }
+    await service.handleHookEvent(1, { hook_event_name: 'PermissionRequest' });
+    await service.handleHookEvent(1, { hook_event_name: 'SubagentStart' });
+    expect(service.getStatus(1)).toBe('waiting');
+    expect(sessionsService.markCompletionUnreviewed).not.toHaveBeenCalled();
+    await service.handleHookEvent(1, { hook_event_name: 'Stop' });
+    expect(sessionsService.markCompletionUnreviewed).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports terminal turn failures and session exit without a false successful completion', async () => {
+    await service.updateStatus(1, 'running');
+    await service.handleHookEvent(1, { hook_event_name: 'StopFailure' });
+    expect(service.getActivity(1)).toMatchObject({ activityStatus: 'idle', failed: true });
+    expect(sessionsService.markCompletionUnreviewed).not.toHaveBeenCalled();
+    await service.handleHookEvent(1, { hook_event_name: 'UserPromptSubmit' });
+    expect(service.getActivity(1).failed).toBeUndefined();
+    await service.handleHookEvent(1, { hook_event_name: 'SessionEnd' });
+    expect(service.getStatus(1)).toBe('idle');
+    expect(sessionsService.markCompletionUnreviewed).not.toHaveBeenCalled();
+  });
+
+  it('retains terminal background activity through main completion and clears it on exit/cleanup', async () => {
+    const tui = { origin: 'tui' as const };
+    await service.updateStatus(1, 'running');
+    for (const agent_id of ['one', 'two', 'one']) await service.handleHookEvent(1, { hook_event_name: 'SubagentStart', agent_id }, tui);
+    await service.handleHookEvent(1, { hook_event_name: 'Stop' }, tui);
+    expect(service.getActivity(1)).toMatchObject({ activityStatus: 'idle', backgroundActive: true });
+    await service.handleHookEvent(1, { hook_event_name: 'SubagentStop', agent_id: 'one' }, tui);
+    expect(service.getActivity(1).backgroundActive).toBe(true);
+    await service.handleHookEvent(1, { hook_event_name: 'SubagentStop', agent_id: 'two' }, tui);
+    expect(service.getActivity(1).backgroundActive).toBe(false);
+    await service.handleHookEvent(1, { hook_event_name: 'SubagentStart', agent_id: 'three' }, tui);
+    await service.handleHookEvent(1, { hook_event_name: 'SessionEnd' }, tui);
+    expect(service.getActivity(1).backgroundActive).toBe(false);
+    service.clearStatus(1);
+    service.updateRuntimeActivity(1, { activityStatus: 'running', backgroundActive: true, actionKind: null, actionLabel: null });
+    expect(service.getActivity(1)).toMatchObject({ activityStatus: 'idle', backgroundActive: false });
   });
 
   it('marks a session unreviewed when running transitions to idle', async () => {

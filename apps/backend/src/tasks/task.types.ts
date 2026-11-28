@@ -28,6 +28,8 @@ export interface TaskSetup {
   localBranch?: string;
   preparationStage?:
     | 'refreshing_ref'
+    // Checkout work is serialized per repository; another setup may hold it.
+    | 'waiting_for_checkout'
     | 'preparing_checkout'
     | 'restoring_sessions';
 }

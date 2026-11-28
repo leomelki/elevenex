@@ -1,0 +1,85 @@
+<button
+  type="button"
+  class="trigger"
+  cdkOverlayOrigin
+  #origin="cdkOverlayOrigin"
+  [attr.aria-expanded]="open()"
+  aria-haspopup="dialog"
+  aria-label="Attachments and tools"
+  title="Attachments and tools"
+  (click)="open.set(!open())"
+>
+  <ex-icon name="plus" [size]="16" />
+</button>
+<ng-template
+  cdkConnectedOverlay
+  [cdkConnectedOverlayOrigin]="origin"
+  [cdkConnectedOverlayOpen]="open()"
+  [cdkConnectedOverlayHasBackdrop]="true"
+  cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop"
+  [cdkConnectedOverlayPositions]="[
+    {
+      originX: 'end',
+      originY: 'top',
+      overlayX: 'end',
+      overlayY: 'bottom',
+      offsetY: -8,
+    },
+  ]"
+  (backdropClick)="open.set(false)"
+  (overlayKeydown)="$event.key === 'Escape' && open.set(false)"
+  (detach)="detached()"
+  ><section
+    class="picker"
+    role="dialog"
+    aria-label="Attachments and tools"
+    cdkTrapFocus
+    [cdkTrapFocusAutoCapture]="true"
+  >
+    <button
+      type="button"
+      class="choice"
+      (click)="attach.emit(); open.set(false)"
+    >
+      <ex-icon name="attach" [size]="14" /><span>Attach files</span
+      ><small>⌘U</small></button
+    ><button type="button" class="choice" (click)="requestMention()">
+      <ex-icon name="at" [size]="14" />Mention a session, task or file
+    </button>
+    @if (servers().length) {
+      <hr class="divider" />
+      <span class="label">MCP servers</span>
+      @if (servers().length > 8) {
+        <label class="field"
+          ><span>Search</span
+          ><input
+            type="search"
+            (input)="search($event)"
+            aria-label="Search MCP servers"
+        /></label>
+      }
+      @for (server of filtered(); track server.id) {
+        <label class="field"
+          ><span
+            >{{ server.name
+            }}<small [class.error]="server.error">{{
+              server.error || (server.tools || 0) + " tools"
+            }}</small></span
+          ><input
+            type="checkbox"
+            [checked]="server.on"
+            (change)="serverChanged.emit({ id: server.id, on: !server.on })"
+            [attr.aria-label]="'Enable ' + server.name"
+        /></label>
+      }
+    }
+    <hr class="divider" />
+    <button
+      type="button"
+      class="choice"
+      (click)="manage.emit(); open.set(false)"
+    >
+      Manage MCP servers…
+    </button>
+  </section></ng-template
+>

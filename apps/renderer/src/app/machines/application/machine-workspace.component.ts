@@ -1,0 +1,385 @@
+import { TaskAppsComponent } from '../../task-apps';
+import { CodePanelComponent } from '../../code';
+import type { CodeTarget, CodeFileIntent } from '@elevenex/shared';
+import type { TaskBrowserWindowContext } from '@elevenex/shared';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal, untracked, viewChild } from '@angular/core';
+import { TaskBrowserComponent, type BrowserComposerIntent } from '../../task-browser';
+import { TaskTerminalComponent, type TerminalQuestion, type TerminalBrowserState } from '../../task-terminal';
+import { ELEVENEX_BRIDGE } from '../../backend/backend-client.service';
+import type { TerminalBrowserIntent } from '@elevenex/shared';
+import { jumpHome, settleMark, type CreateProjectIntent } from '../../projects';
+import { AppShellComponent } from '../../shell/app-shell.component';
+import { AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, StatusGlyphComponent } from '../../ui';
+import { WorkspacePanelsComponent } from '../../workbench/workspace-panels.component';
+import { WorkspaceDialogsComponent, WorkspaceNavigationComponent, WorkspaceOnboardingComponent, WorkspaceProjectRailComponent, WorkspaceStore, WorkspaceTaskSetupComponent, WorkspaceTaskHeaderComponent, workspaceTaskSignal } from '../../workspace';
+import { OpensWhenBackComponent, type Machine } from '../index';
+import { SessionChatReviewComponent, type ChatReviewTarget } from '../../session-chat/session-chat-review.component';
+import { SessionChatComponent, type AgentChatFocus } from '../../session-chat/session-chat.component';
+import type { AgentWorkIntent } from '../../conversation';
+import type { SessionAgentReference } from '@elevenex/shared';
+import type { ChatSelection } from '../../session-chat/session-chat.store';
+import { WorkspaceWritingJournal } from '../../workspace/workspace-writing-journal';
+import { SessionChatOutbox } from '../../session-chat/session-chat-outbox';
+import { SessionChatDrafts } from '../../session-chat/session-chat-drafts';
+import { SessionChatClient } from '../../backend/session-chat-client.service';
+
+/** Connected workspace lifetime. The machine owner retains chrome and transport recovery. */
+@Component({
+  selector: 'ex-machine-workspace',
+  providers: [WorkspaceStore, SessionChatDrafts, SessionChatClient, SessionChatOutbox, WorkspaceWritingJournal],
+  imports: [TaskAppsComponent, CodePanelComponent, TaskBrowserComponent, TaskTerminalComponent, AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, StatusGlyphComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
+  templateUrl: './machine-workspace.component.html',
+  styleUrl: './machine-workspace.component.css',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { '(window:keydown)': 'shortcut($event)', '[attr.inert]': 'active() ? null : ""' },
+})
+export class MachineWorkspaceComponent {
+  readonly machine = input.required<Machine>();
+  readonly active = input(false);
+  readonly reconnectAction = input('Try now');
+  /** Prepare scoped reads behind inert Home while the selected machine gets ready. */
+  readonly preparing = input(false);
+  readonly generation = input(0);
+  readonly prepared = output<{ readonly machineId: string; readonly generation: number }>();
+  readonly changeRequested = output<void>();
+  readonly reconnectRequested = output<void>();
+  readonly desktopSessionRequested = output<void>();
+  readonly store = inject(WorkspaceStore);
+  /** Lifecycle of the open session's workspace while it isn't simply ready. */
+  protected readonly workspaceNotice = computed(() => { const task = this.store.selectedTask(); return task ? workspaceTaskSignal(task) : null; });
+  readonly outbox = inject(SessionChatOutbox);
+  readonly writingJournal = inject(WorkspaceWritingJournal);
+  readonly browserWindowContext = computed<TaskBrowserWindowContext | null>(() => {
+    const task = this.store.selectedTask(); if (!task) return null;
+    const project = this.store.projects().find(project => project.id === String(task.projectId));
+    return {
+      taskName: task.name,
+      projectName: task.projectName ?? project?.name ?? '',
+      ...(project?.logo ? { projectImage: project.logo } : {}),
+      branchName: task.branchName,
+      stage: this.store.selectedTaskStage(),
+      hue: project?.hue ?? 'steel',
+      machineName: this.machine().name,
+    };
+  });
+  readonly panelOpen = this.store.panelOpen;
+  readonly panel = this.store.panel;
+  readonly wideReview = this.store.wideReview;
+  protected readonly taskApps = viewChild(TaskAppsComponent);
+  protected onAppsIdle(): void {
+    if (this.panel() !== 'apps') return;
+    this.store.selectPanel('changes');
+    this.store.appLink.set(null);
+  }
+  readonly agentFocus = signal<AgentChatFocus | null>(null);
+  readonly agentNavigationBusy = signal(false);
+  readonly agentNavigationError = signal('');
+  private readonly returnOrigins = new Map<number, { readonly parent: number; readonly itemId?: string }>();
+  private agentScope: string | null = null;
+  readonly codeFile = signal<CodeFileIntent | null>(null);
+  readonly codeTarget = computed<CodeTarget | null>(() => { const selected = this.store.taskSelection(); return selected ? { scopeId: selected.scopeId, taskId: selected.taskId } : null; }, { equal: (a, b) => a?.scopeId === b?.scopeId && a?.taskId === b?.taskId });
+  readonly reviewTarget = signal<ChatReviewTarget | null>(null);
+  readonly selectedReview = computed(() => {
+    const target = this.reviewTarget(), selected = this.store.selected();
+    return target && selected && target.scopeId === selected.scopeId && target.taskId === selected.taskId && target.sessionId === selected.sessionId ? target : null;
+  });
+  openCode(review: ChatReviewTarget, path: string): void {
+    const target = this.codeTarget();
+    if (!target || this.selectedReview() !== review || !this.panelOpen() || this.panel() !== 'changes' ||
+        this.store.offline() || review.scopeId !== target.scopeId || review.taskId !== target.taskId) return;
+    this.codeFile.set({ ...target, file: { path, fromChanges: true } });
+    this.store.selectPanel('code');
+    this.panelOpen.set(true);
+    this.wideReview.set(true);
+  }
+  openChatFile(intent: CodeTarget & { readonly sessionId: number; readonly path: string }): void {
+    const selected = this.store.selected(), target = this.codeTarget();
+    if (!target || this.store.offline() || selected?.scopeId !== intent.scopeId ||
+        selected.taskId !== intent.taskId || selected.sessionId !== intent.sessionId ||
+        target.scopeId !== intent.scopeId || target.taskId !== intent.taskId) return;
+    this.codeFile.set({ ...target, file: { path: intent.path, fromChat: true } });
+    this.store.selectPanel('code');
+    this.panelOpen.set(true);
+  }
+  review(target: ChatReviewTarget): void {
+    this.reviewTarget.set(target); this.store.selectPanel('changes'); this.panelOpen.set(true);
+  }
+  readonly terminalSelection = computed(() => { const selected = this.store.taskSelection(); return selected ? { scopeId: selected.scopeId, taskId: selected.taskId } : null; });
+  private readonly chatDrafts = inject(SessionChatDrafts);
+  private composerFocusFrame?: number;
+  private readonly terminalBridge = inject(ELEVENEX_BRIDGE);
+  readonly terminalBrowser = signal<TerminalBrowserIntent | null>(null);
+  readonly selectedTerminalBrowser = computed(() => { const intent = this.terminalBrowser(), selected = this.store.selected(); return intent && selected?.scopeId === intent.scopeId && selected.taskId === intent.taskId ? intent : null; });
+  readonly terminalBrowserError = signal('');
+  readonly terminalBrowserUrl = signal('');
+  readonly terminalBrowserBusy = signal(false);
+  readonly terminalCopyBusy = signal(false);
+  readonly terminalCopied = signal(false);
+  private terminalCopyTimer?: ReturnType<typeof setTimeout>;
+  readonly terminalBrowserState = computed<TerminalBrowserState | null>(() => {
+    const intent = this.selectedTerminalBrowser();
+    return intent ? { terminalId: intent.terminalId, port: intent.port, busy: this.terminalBrowserBusy(), error: this.terminalBrowserError(), url: this.terminalBrowserUrl(),
+      ...(this.terminalCopyBusy() ? { copyBusy: true } : {}), ...(this.terminalCopied() ? { copied: true } : {}) } : null;
+  });
+  private terminalBrowserOpening?: TerminalBrowserIntent;
+  askTerminal(question: TerminalQuestion): void {
+    const selected = this.store.selected();
+    if (!selected || selected.scopeId !== question.scopeId || selected.taskId !== question.taskId || this.store.offline()) return;
+    const entry = this.chatDrafts.entry(selected);
+    const context = `Help me understand this terminal failure.\n\nCommand: ${question.command.slice(0, 4096)}\nExit code: ${question.code}\n\nTerminal output (last 80 lines, bounded):\n${question.output.slice(-8000)}`;
+    const text = entry.text();
+    entry.setText((text ? text + '\n\n' : '') + context);
+    this.wideReview.set(false);
+    if (this.composerFocusFrame !== undefined) cancelAnimationFrame(this.composerFocusFrame);
+    this.composerFocusFrame = requestAnimationFrame(() => {
+      this.composerFocusFrame = undefined;
+      const current = this.store.selected();
+      if (current?.scopeId === selected.scopeId && current.taskId === selected.taskId && current.sessionId === selected.sessionId) this.focusWriting();
+    });
+  }
+  openTerminalPort(intent: TerminalBrowserIntent, copy = false): void {
+    const selected = this.store.selected();
+    if (!selected || selected.scopeId !== intent.scopeId || selected.taskId !== intent.taskId) return;
+    const opening = this.terminalBrowserOpening;
+    if (opening?.scopeId === intent.scopeId && opening.taskId === intent.taskId && opening.terminalId === intent.terminalId && opening.port === intent.port) return;
+    const previous = this.selectedTerminalBrowser();
+    if (previous?.terminalId !== intent.terminalId || previous.port !== intent.port) this.terminalBrowserUrl.set('');
+    this.terminalBrowser.set(intent);
+    void this.launchTerminalPort(copy);
+  }
+  async launchTerminalPort(copy = false): Promise<void> {
+    const intent = this.selectedTerminalBrowser();
+    if (!intent || this.terminalBrowserOpening === intent || this.store.offline()) return;
+    this.terminalBrowserOpening = intent;
+    clearTimeout(this.terminalCopyTimer);
+    this.terminalCopied.set(false);
+    this.terminalBrowserBusy.set(!copy); this.terminalCopyBusy.set(copy); this.terminalBrowserError.set('');
+    const current = () => this.terminalBrowserOpening === intent && this.selectedTerminalBrowser() === intent;
+    try {
+      const target = { taskId: intent.taskId, terminalId: intent.terminalId, port: intent.port };
+      const reply = copy
+        ? await this.terminalBridge.taskTerminalCopyPort(intent.scopeId, target)
+        : await this.terminalBridge.taskTerminalOpenPort(intent.scopeId, target);
+      if (!current()) return;
+      if (!reply.ok) this.terminalBrowserError.set(reply.error.message);
+      else {
+        this.terminalBrowserUrl.set(reply.value.url ?? '');
+        if (copy && reply.value.url) {
+          this.terminalCopied.set(true);
+          this.terminalCopyTimer = setTimeout(() => this.terminalCopied.set(false), 2000);
+        }
+      }
+    } catch {
+      if (current()) this.terminalBrowserError.set(copy ? 'Could not copy the URL. Check the connection and try again.' : 'Could not open this service. Check the terminal and connection.');
+    } finally {
+      if (this.terminalBrowserOpening === intent) {
+        this.terminalBrowserOpening = undefined;
+        this.terminalBrowserBusy.set(false);
+        this.terminalCopyBusy.set(false);
+      }
+    }
+  }
+  readonly launch = signal<'idle' | 'creating' | 'flying'>('idle');
+  private readonly setupStarted = signal(false);
+  readonly onboarding = computed(() => this.launch() !== 'idle' || (!!this.store.scopeId() && !this.store.loading() && !this.store.projects().length && (!this.store.error() || this.setupStarted())));
+  private readonly root = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
+  private source: CreateProjectIntent | null = null;
+  private flights: Animation[] = [];
+  private disposers: (() => void)[] = [];
+  private launchRevision = 0;
+  private readonly preparationMachineId = computed(() => this.machine().id);
+
+  constructor() {
+    effect(() => {
+      const scope = this.store.scopeId(), selection = this.store.selected();
+      if (scope !== this.agentScope) {
+        this.agentScope = scope;
+        this.returnOrigins.clear();
+      }
+      untracked(() => {
+        if (this.agentFocus()?.selection !== selection) this.agentFocus.set(null);
+        this.agentNavigationError.set('');
+      });
+    });
+    effect(() => {
+      const file = this.codeFile(), target = this.codeTarget();
+      if (file && (file.scopeId !== target?.scopeId || file.taskId !== target.taskId)) this.codeFile.set(null);
+    });
+    effect(() => {
+      const selected = this.store.selected(), target = this.reviewTarget();
+      if (selected && target && selected.taskId === target.taskId && selected.sessionId === target.sessionId && selected.scopeId !== target.scopeId && !this.store.offline() && !this.store.restoring()) this.reviewTarget.set({ ...target, scopeId: selected.scopeId });
+    });
+    effect(() => this.store.connect(this.machine(), this.active() || this.preparing(), this.active()));
+    let creationOrigin: string | null = null;
+    afterRenderEffect(() => {
+      const key = this.store.selectedCreationKey();
+      if (key === creationOrigin) return;
+      creationOrigin = key;
+      if (!key || !this.active()) return;
+      // New-session navigation must expose the composer when a side view covers it.
+      const compact = matchMedia('(max-width: 700px)').matches;
+      if (!this.wideReview() && !(compact && this.panelOpen())) return;
+      this.wideReview.set(false);
+      if (compact) this.panelOpen.set(false);
+      if (this.composerFocusFrame !== undefined) cancelAnimationFrame(this.composerFocusFrame);
+      this.composerFocusFrame = requestAnimationFrame(() => {
+        this.composerFocusFrame = undefined;
+        if (this.active() && this.store.selectedCreationKey() === key) this.focusWriting();
+      });
+    });
+    afterRenderEffect(onCleanup => {
+      const machineId = this.preparationMachineId(), generation = this.generation();
+      // Let first-use templates/styles/layout paint before starting the launch.
+      // Two frames cross a paint boundary; no backend response gates opening.
+      let frame: number | undefined = requestAnimationFrame(() => {
+        frame = requestAnimationFrame(() => {
+          frame = undefined;
+          this.prepared.emit({ machineId, generation });
+        });
+      });
+      onCleanup(() => { if (frame !== undefined) cancelAnimationFrame(frame); });
+    });
+    effect(() => { if (!this.active()) this.stopLaunch(); });
+    effect(() => { if (!this.store.scopeId()) this.stopLaunch(); });
+    afterRenderEffect(() => {
+      if (this.launch() !== 'creating' || this.store.busy()) return;
+      if (this.store.projects().length) this.flyHome();
+      else if (this.store.error()) { this.source = null; this.launch.set('idle'); }
+    });
+    afterRenderEffect(() => {
+      const projectId = this.store.projectCreated();
+      if (!projectId || this.onboarding() || this.store.dialogOpen() || this.store.loading() || this.store.activeProject() !== String(projectId)) return;
+      const action = this.root.querySelector<HTMLButtonElement>('[data-new-task]');
+      if (!action || action.disabled) return;
+      action.focus({ preventScroll: true });
+      this.store.projectCreated.set(null);
+    });
+    inject(DestroyRef).onDestroy(() => {
+      this.terminalBrowserOpening = undefined;
+      clearTimeout(this.terminalCopyTimer);
+      this.stopLaunch();
+      if (this.composerFocusFrame !== undefined) cancelAnimationFrame(this.composerFocusFrame);
+    });
+  }
+
+  projectSubmitted(intent: CreateProjectIntent): void { this.setupStarted.set(true); this.source = intent; this.launch.set('creating'); }
+
+  private flyHome(): void {
+    const intent = this.source;
+    this.launch.set('flying');
+    const revision = ++this.launchRevision;
+    const from = intent?.card.querySelector<HTMLElement>('[data-np="face"] ex-project-mark');
+    const to = this.root.querySelector<HTMLElement>('[data-project-id] ex-project-mark');
+    const finish = () => { if (revision === this.launchRevision) { this.launch.set('idle'); this.source = null; this.setupStarted.set(false); } };
+    if (!intent || !from || !to) { finish(); return; }
+    // Keep flight copies outside the modal's receding/blurred background. This
+    // owner still cancels every copy when its workspace or scope goes away.
+    const flightRoot = this.root.ownerDocument.body;
+    const flight = jumpHome(flightRoot, from, to, { landed: element => {
+      if (revision === this.launchRevision) this.disposers.push(settleMark(flightRoot, element, intent.project.hue));
+    } });
+    const name = intent.card.querySelector<HTMLElement>('[data-np="name"]');
+    const heading = this.root.querySelector<HTMLElement>('ex-workspace-navigation h1');
+    if (name && heading) {
+      const nameFlight = jumpHome(flightRoot, name, heading, { text: intent.project.name, grow: .06, shadow: false, dur: 940, delay: 50, peak: 62, scale: heading.offsetHeight / Math.max(1, name.offsetHeight) });
+      if (nameFlight) this.flights.push(nameFlight);
+    }
+    if (flight) { this.flights.push(flight); void flight.finished.then(finish, finish); }
+    else finish();
+  }
+
+  private stopLaunch(): void {
+    this.launchRevision++;
+    for (const flight of this.flights) flight.cancel();
+    for (const dispose of this.disposers) dispose();
+    this.flights = []; this.disposers = []; this.source = null; this.launch.set('idle'); this.setupStarted.set(false);
+  }
+
+  private readonly taskBrowser = viewChild(TaskBrowserComponent);
+  pickBrowserElement(request: { scopeId: string; taskId: number; sessionId: number; tabId?: string }): void {
+    const selected = this.store.selected();
+    if (!selected || selected.scopeId !== request.scopeId || selected.taskId !== request.taskId || selected.sessionId !== request.sessionId) return;
+    this.browserAttention();
+    void this.taskBrowser()?.beginElementPick(request.tabId);
+  }
+  private readonly chat = viewChild(SessionChatComponent);
+
+  async openAgentSession(event: { readonly source: ChatSelection; readonly intent: AgentWorkIntent & {
+    readonly target: { readonly kind: 'session'; readonly session: SessionAgentReference };
+  } }): Promise<void> {
+    const { source, intent } = event;
+    const session = intent.target.session;
+    const anchor = intent.origin?.closest<HTMLElement>('[data-work-step]')?.dataset['workStep'];
+    if (this.store.selected() !== source || this.agentNavigationBusy()) return;
+    this.agentNavigationBusy.set(true);
+    this.agentNavigationError.set('');
+    const previousError = this.store.error();
+    try {
+      const selected = await this.store.openLinkedSession(source, session);
+      if (!selected) {
+        if (this.store.selected() === source) {
+          this.agentNavigationError.set(this.store.error() !== previousError ? this.store.error() || 'Could not open this session.' : 'Could not open this session.');
+        }
+        return;
+      }
+      if (selected !== this.store.selected() || !this.active()) return;
+      const prior = this.returnOrigins.get(source.sessionId);
+      if (selected !== source && intent.action !== 'return') {
+        this.returnOrigins.delete(selected.sessionId);
+        this.returnOrigins.set(selected.sessionId, { parent: source.sessionId, itemId: anchor });
+        if (this.returnOrigins.size > 32) {
+          const oldest = this.returnOrigins.keys().next().value;
+          if (oldest !== undefined) this.returnOrigins.delete(oldest);
+        }
+      }
+      this.wideReview.set(false);
+      if (matchMedia('(max-width: 700px)').matches && this.panelOpen()) this.panelOpen.set(false);
+      this.agentFocus.set({
+        selection: selected, action: intent.action, from: source.sessionId,
+        itemId: intent.itemId ?? (intent.action === 'return' && prior?.parent === selected.sessionId ? prior.itemId : undefined),
+      });
+    } finally {
+      this.agentNavigationBusy.set(false);
+    }
+  }
+  browserAttention(): void { this.store.selectPanel('browser'); this.panelOpen.set(true); }
+  browserContext(intent: BrowserComposerIntent): void {
+    const selected = this.store.selected();
+    if (!selected || selected.scopeId !== intent.scopeId || selected.taskId !== intent.taskId || selected.sessionId !== intent.sessionId) return;
+    const staged = this.chat()?.stageBrowserContext(intent.text, intent.element) ?? null;
+    this.taskBrowser()?.contextStaged(intent, staged);
+  }
+
+  discardSessionDraft(): void {
+    const starting = this.store.selectedCreation();
+    if (!starting || starting.status === 'creating') return;
+    this.store.discardSessionCreation();
+    const selected = this.store.selected();
+    if (this.composerFocusFrame !== undefined) cancelAnimationFrame(this.composerFocusFrame);
+    this.composerFocusFrame = requestAnimationFrame(() => {
+      this.composerFocusFrame = undefined;
+      if (!this.active() || this.store.selected() !== selected || this.store.selectedCreation()) return;
+      if (selected) this.focusWriting();
+      else this.root.querySelector<HTMLButtonElement>(`[data-task-id="${starting.taskId}"] header .add button`)?.focus({ preventScroll: true });
+    });
+  }
+  focusWriting(): void { this.root.querySelector<HTMLTextAreaElement>('ex-composer textarea')?.focus({ preventScroll: true }); }
+  closePanel(): void { this.codeFile.set(null); this.panelOpen.set(false); this.wideReview.set(false); }
+  togglePanel(): void { if (this.panelOpen()) this.closePanel(); else this.panelOpen.set(true); }
+
+  shortcut(event: KeyboardEvent): void {
+    if (!this.active() || this.root.closest('[hidden]') || event.defaultPrevented || event.isComposing || !(event.metaKey || event.ctrlKey) || this.store.dialogOpen() || document.querySelector('.cdk-overlay-container [role="dialog"], ex-commit-panel [role="dialog"]')) return;
+    const key = event.key.toLowerCase();
+    if ((key === 'n' || event.code === 'KeyN') && event.altKey && !event.shiftKey && this.store.selectedTask() && !this.store.busy() && this.store.selectedTask()?.state === 'ready') {
+      event.preventDefault(); void this.store.createSession(String(this.store.selectedTask()!.id));
+    } else if (key === 'n' && !event.shiftKey && !event.altKey && this.store.projects().length) {
+      event.preventDefault(); void this.store.openNewTask();
+    } else if (event.shiftKey && key === 'r' && this.store.selected()) {
+      event.preventDefault(); this.store.selectPanel('changes');
+      const wide = !this.wideReview(); this.panelOpen.set(true); this.wideReview.set(wide);
+    } else if (/^[0-9]$/.test(key) && !event.shiftKey && !event.altKey && !this.store.busy()) {
+      const projectId = key === '0' ? 'all' : this.store.projects()[Number(key) - 1]?.id;
+      if (projectId) { event.preventDefault(); void this.store.selectProject(projectId); }
+    }
+  }
+}

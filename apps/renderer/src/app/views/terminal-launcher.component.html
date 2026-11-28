@@ -1,0 +1,26 @@
+<button #trigger type="button" class="trigger" cdkOverlayOrigin #origin="cdkOverlayOrigin" aria-haspopup="dialog" aria-label="New shell or script" title="New shell or script" [attr.aria-expanded]="open()" [disabled]="disabled()" (click)="toggle()"><ex-icon name="chevron-down" [size]="12" /></button>
+<ng-template cdkConnectedOverlay [cdkConnectedOverlayOrigin]="origin" [cdkConnectedOverlayOpen]="open()" [cdkConnectedOverlayPositions]="positions" [cdkConnectedOverlayViewportMargin]="8" [cdkConnectedOverlayPush]="true" [cdkConnectedOverlayHasBackdrop]="true" cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop" (backdropClick)="close(true)" (detach)="close(false)">
+  <div class="launcher" role="dialog" aria-label="Open in a new terminal">
+    <label class="field">
+      <ex-icon name="search" [size]="13" />
+      <input #field type="text" role="combobox" aria-label="Search scripts" aria-autocomplete="list" aria-expanded="true" placeholder="Search scripts…" autocomplete="off" autocapitalize="off" spellcheck="false" [attr.aria-controls]="listId" [attr.aria-activedescendant]="activeId()" [value]="query()" (input)="filter(field.value)" (keydown)="keydown($event)" />
+    </label>
+    <div #list class="options" role="listbox" aria-label="Open in a new terminal" [id]="listId">
+      @for (option of options(); track option.id; let index = $index) {
+        @if (option.kind === 'script' && (index === 0 || options()[index - 1]?.kind === 'shell')) { <div class="heading" role="presentation">Scripts</div> }
+        <div class="option" role="option" tabindex="-1" [id]="option.id" [class.active]="index === activeIndex()" [attr.aria-selected]="index === activeIndex()" (pointermove)="activeIndex.set(index)" (mousedown)="$event.preventDefault()" (click)="choose(option)" (keydown.enter)="choose(option)">
+          @if (option.kind === 'shell') {
+            <ex-icon name="terminal" [size]="13" /><span class="name">New shell</span><ex-kbd>⌘T</ex-kbd>
+          } @else {
+            <ex-icon name="play" [size]="12" /><span class="name">{{ option.script.name }}</span><code [title]="option.script.cmd">{{ option.script.cmd }}</code>
+          }
+        </div>
+      }
+      @if (!visibleScripts().length) {
+        <p class="note" role="status">{{ scripts().length ? 'No scripts match' : 'No project scripts found' }}</p>
+      } @else if (hiddenCount()) {
+        <p class="note" role="status">{{ hiddenCount() }} more, refine the search</p>
+      }
+    </div>
+  </div>
+</ng-template>

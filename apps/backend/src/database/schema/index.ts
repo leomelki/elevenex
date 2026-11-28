@@ -4,6 +4,9 @@ export * from './repo-worktrees.schema.js';
 export * from './workspaces.schema.js';
 export * from './task-reservations.schema.js';
 export * from './sessions.schema.js';
+export * from './session-launches.schema.js';
+export * from './session-prompt-receipts.schema.js';
+export * from './session-completion-notices.schema.js';
 export * from './session-folders.schema.js';
 export * from './session-forks.schema.js';
 export * from './plan-chat-forks.schema.js';
@@ -19,3 +22,8 @@ export * from './claude-tool-interactions.schema.js';
 export * from './worktree-context.schema.js';
 export * from './app-settings.schema.js';
 export * from './turn-changes.schema.js';
+export * from './antigravity-turns.schema.js';
+export * from './desktop-workspace.schema.js';
+export * from './task-app-journal.schema.js';
+
+export * from './session-reply-returns.schema.js';

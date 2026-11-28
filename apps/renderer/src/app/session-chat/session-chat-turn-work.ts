@@ -1,0 +1,313 @@
+import { Injectable, signal } from '@angular/core';
+import {
+  SESSION_CHAT_TURN_WORK_MAX_LIMIT,
+  type SessionChatCompletedTurn, type SessionChatItem, type SessionChatRecord,
+} from '@elevenex/shared';
+import type { SessionChatClient } from '../backend/session-chat-client.service';
+import type { ChatSelection } from './session-chat.store';
+import { ChatDisclosureCache } from './session-chat-disclosure-cache';
+import { timelineRecord } from './session-chat-turn-timeline';
+
+const CACHE_TURNS = 16;
+const CACHE_BYTES = 1536 * 1024;
+// Keep the rows mounted until the timeline finishes closing.
+const DISCLOSURE_EXIT_MS = 280;
+// Unopened warm-ups. Moving between turns lets earlier reads finish into the
+// cache; beyond this bound the oldest yields.
+const SPECULATIVE_READS = 3;
+
+@Injectable({ providedIn: 'root' })
+export class SessionChatWorkCache {
+  private readonly turns = new ChatDisclosureCache<TurnWorkRows>(CACHE_TURNS, CACHE_BYTES);
+
+  private key(selection: ChatSelection, turnId: string, revision: string): string {
+    return JSON.stringify([selection.taskId, selection.sessionId, turnId, revision]);
+  }
+
+  get(selection: ChatSelection, turnId: string, revision: string): TurnWorkRows | undefined {
+    return this.turns.get(selection.scopeId, this.key(selection, turnId, revision));
+  }
+
+  put(selection: ChatSelection, turnId: string, revision: string, work: TurnWorkRows): void {
+    this.turns.put(selection.scopeId, this.key(selection, turnId, revision), work);
+  }
+}
+
+type WorkError = 'failed' | 'changed' | 'too-large';
+interface TurnWorkRows {
+  readonly items: readonly SessionChatRecord[];
+  /** A compact timeline omits paired receipts, moving the visible reply boundary. */
+  readonly replyOffset?: number;
+}
+export interface OpenTurnWork extends Partial<TurnWorkRows> {
+  readonly revision: string;
+  readonly toolIds: readonly string[];
+  readonly busy?: true;
+  readonly error?: WorkError;
+  readonly closing?: true;
+}
+interface WorkRequest {
+  readonly id: string;
+  readonly turnId: string;
+  readonly revision: string;
+  readonly controller: AbortController;
+  resume?: () => void;
+}
+interface WorkHint {
+  readonly turnId: string;
+  attemptedRevision?: string;
+}
+interface TurnToolPreparation {
+  prepare(items: readonly SessionChatRecord[], toolIds: readonly string[], signal: AbortSignal, turnId?: string): Promise<void>;
+  afterReveal(release: () => void): void;
+}
+
+export function completedTurnRecords(turn: SessionChatCompletedTurn, work?: Partial<TurnWorkRows>): readonly SessionChatRecord[] {
+  if (!work?.items) return turn.reply;
+  const boundary = work.replyOffset ?? turn.beforeReply;
+  return [...work.items.slice(0, boundary), ...turn.reply, ...work.items.slice(boundary)];
+}
+
+/** Collect bounded transport replies before publishing any activity to the view. */
+export class SessionChatTurnWork {
+  readonly open = signal<ReadonlyMap<string, OpenTurnWork>>(new Map());
+  private selection: ChatSelection | null = null;
+  private available = false;
+  private turns = new Map<string, SessionChatCompletedTurn>();
+  private readonly pending = new Map<string, WorkRequest>();
+  private readonly closing = new Map<string, ReturnType<typeof setTimeout>>();
+  private hinted?: WorkHint;
+  /** Unopened warm-ups, oldest first. A held large turn keeps its slot until opened or evicted. */
+  private readonly speculative: WorkRequest[] = [];
+
+  constructor(
+    private readonly client: Pick<SessionChatClient, 'turnWork' | 'cancel'>,
+    private readonly cache: SessionChatWorkCache,
+    private readonly tools?: TurnToolPreparation,
+  ) {}
+
+  select(selection: ChatSelection | null, retainDisclosures = false): void {
+    this.pause();
+    if (!retainDisclosures) this.hinted = undefined;
+    for (const id of this.closing.keys()) this.clearClosing(id);
+    this.selection = selection;
+    this.turns.clear();
+    this.open.update(open => retainDisclosures
+      ? new Map([...open].filter(([, turn]) => !turn.closing).map(([id, { revision, toolIds }]) => [id, { revision, toolIds }]))
+      : new Map());
+  }
+
+  sync(items: readonly SessionChatItem[], available: boolean): void {
+    this.turns = new Map(items.flatMap(item => item.completedTurn ? [[item.id, item.completedTurn]] : []));
+    if (!available) this.pause();
+    this.available = available;
+    if (this.hinted && !this.turns.has(this.hinted.turnId)) this.hinted = undefined;
+    for (const request of this.pending.values())
+      if (this.turns.get(request.turnId)?.revision !== request.revision) this.cancel(request);
+    for (const [id, open] of this.open()) {
+      const turn = this.turns.get(id);
+      if (!turn || (open.closing && turn.revision !== open.revision)) {
+        this.clearClosing(id);
+        this.set(id, undefined);
+      } else if (!open.closing) {
+        if (turn.revision !== open.revision) this.set(id, { revision: turn.revision, toolIds: open.toolIds });
+        this.load(id);
+      }
+    }
+    this.prefetchHint();
+  }
+
+  pause(): void {
+    this.available = false;
+    if (this.hinted) this.hinted.attemptedRevision = undefined;
+    for (const request of this.pending.values()) this.cancel(request);
+    for (const [id, open] of this.open())
+      if (open.busy) this.set(id, { ...open, busy: undefined });
+  }
+
+  toggle(id: string, expanded: boolean, toolIds: readonly string[] = []): void {
+    const open = this.open().get(id);
+    this.clearClosing(id);
+    if (!expanded) {
+      const pending = this.pending.get(id);
+      if (pending) this.cancel(pending);
+      if (!open?.items) this.set(id, undefined);
+      else {
+        this.set(id, { ...open, closing: true });
+        this.closing.set(id, setTimeout(() => {
+          this.closing.delete(id);
+          this.set(id, undefined);
+          this.prefetchHint();
+        }, DISCLOSURE_EXIT_MS));
+      }
+      return;
+    }
+    if (open?.closing) {
+      this.set(id, { ...open, closing: undefined, toolIds });
+      return;
+    }
+    const revision = this.turns.get(id)?.revision;
+    if (!revision || open) return;
+    this.set(id, { revision, toolIds });
+    this.load(id);
+  }
+
+  hint(id: string): void {
+    if (this.hinted?.turnId !== id) this.hinted = { turnId: id };
+    this.prefetchHint();
+  }
+
+  endHint(id: string): void {
+    if (this.hinted?.turnId === id) this.hinted = undefined;
+  }
+
+  retry(id: string): void {
+    const open = this.open().get(id);
+    if (open?.error !== 'failed') return;
+    this.set(id, { ...open, error: undefined });
+    this.load(id);
+  }
+
+  private set(id: string, value: OpenTurnWork | undefined): void {
+    this.open.update(open => {
+      if (!value && !open.has(id)) return open;
+      const next = new Map(open);
+      if (value) next.set(id, value);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  private prefetchHint(): void {
+    const hint = this.hinted;
+    const selection = this.selection;
+    if (!hint || !selection || !this.available) return;
+    const id = hint.turnId;
+    const turn = this.turns.get(id);
+    if (!turn || hint.attemptedRevision === turn.revision || this.open().has(id) || this.pending.has(id)) return;
+    hint.attemptedRevision = turn.revision;
+    if (this.cache.get(selection, id, turn.revision)) return;
+    // A newer dwell evicts only the oldest warm-up, even while another turn is open.
+    if (this.speculative.length >= SPECULATIVE_READS) this.cancel(this.speculative[0]!);
+    this.speculative.push(this.request(selection, id, turn));
+  }
+
+  private load(id: string): void {
+    const selection = this.selection;
+    const turn = this.turns.get(id);
+    const open = this.open().get(id);
+    if (!selection || !turn || !open || open.items || open.closing || open.error) return;
+    const cached = this.cache.get(selection, id, turn.revision);
+    if (cached && (!open.toolIds.length || !this.tools)) {
+      this.set(id, { ...open, ...cached, busy: undefined });
+      return;
+    }
+    if (!this.available && !cached) return;
+    if (!open.busy) this.set(id, { ...open, busy: true });
+    const active = this.pending.get(id);
+    // A click on the same turn takes ownership of its speculative read.
+    if (active) {
+      if (this.release(active)) active.resume?.();
+      return;
+    }
+    this.request(selection, id, turn, cached);
+  }
+
+  private request(selection: ChatSelection, turnId: string, turn: SessionChatCompletedTurn, cached?: TurnWorkRows): WorkRequest {
+    const request = { id: crypto.randomUUID(), turnId, revision: turn.revision, controller: new AbortController() };
+    this.pending.set(turnId, request);
+    void this.receive(selection, turn, request, cached);
+    return request;
+  }
+
+  private async receive(selection: ChatSelection, turn: SessionChatCompletedTurn, request: WorkRequest, cached?: TurnWorkRows): Promise<void> {
+    const { turnId, revision, controller } = request;
+    const result = cached ?? await this.readItems(selection, turn, request);
+    if (!result || !this.current(selection, request)) return;
+    const open = this.open().get(turnId);
+    if ('items' in result) {
+      if (!cached) this.cache.put(selection, turnId, revision, result);
+      if (this.tools && open?.toolIds.length) {
+        await this.tools.prepare(result.items, open.toolIds, controller.signal, result.replyOffset === undefined ? undefined : turnId);
+        if (!this.current(selection, request)) return;
+        // Retain the staged inspections until the mounted tools acquire them,
+        // even when their combined evidence exceeds the closed-tool cache.
+        this.tools.afterReveal(() => controller.abort());
+      }
+      if (open) this.set(turnId, { ...open, ...result, busy: undefined });
+    } else if (open) this.set(turnId, { ...open, error: result.error, busy: undefined });
+    this.pending.delete(turnId);
+    this.release(request);
+  }
+
+  private async readItems(selection: ChatSelection, turn: SessionChatCompletedTurn, request: WorkRequest):
+  Promise<TurnWorkRows | { error: WorkError } | undefined> {
+    const { turnId, revision, id } = request;
+    const items: SessionChatRecord[] = [];
+    const seen = new Set(turn.reply.map(row => row.id));
+    seen.add(turnId);
+    let offset = 0;
+    let replyOffset = 0;
+    let timeline: boolean | undefined;
+    while (offset < turn.total) {
+      const result = await this.client.turnWork(selection.scopeId, {
+        taskId: selection.taskId, sessionId: selection.sessionId, turnId, revision, offset,
+        requestId: id, deferToolDetails: true, timeline: true, limit: SESSION_CHAT_TURN_WORK_MAX_LIMIT,
+      });
+      if (!this.current(selection, request)) return;
+      if (!result.ok) {
+        if (result.error.status === 413) return { error: 'too-large' };
+        return { error: result.error.status === 409 ? 'changed' : 'failed' };
+      }
+      const page = result.value;
+      const compact = 'timeline' in page;
+      if (timeline !== undefined && timeline !== compact) return { error: 'failed' };
+      timeline = compact;
+      const rows = compact ? page.timeline : page.items;
+      const end = offset + rows.length;
+      if (page.taskId !== selection.taskId || page.sessionId !== selection.sessionId ||
+        page.turnId !== turnId || page.revision !== revision || page.offset !== offset || page.total !== turn.total ||
+          !rows.length || end > turn.total || page.nextOffset !== (end < turn.total ? end : null)) return { error: 'failed' };
+      for (const row of rows) {
+        const beforeReply = offset++ < turn.beforeReply;
+        if (!row) continue;
+        if (seen.has(row.id)) return { error: 'failed' };
+        seen.add(row.id);
+        items.push(timelineRecord(row, revision));
+        if (beforeReply) replyOffset++;
+      }
+      if (offset < turn.total && this.speculative.includes(request)) {
+        // Hold the validated first page and its cursor until an explicit open.
+        await new Promise<void>(resume => { request.resume = resume; });
+        request.resume = undefined;
+        if (!this.current(selection, request)) return;
+      }
+    }
+    return items.length ? { items, ...(timeline ? { replyOffset } : {}) } : { error: 'failed' };
+  }
+
+  private current(selection: ChatSelection, request: WorkRequest): boolean {
+    return this.selection === selection && this.pending.get(request.turnId) === request &&
+      this.turns.get(request.turnId)?.revision === request.revision;
+  }
+
+  private cancel(request: WorkRequest): void {
+    request.controller.abort();
+    if (request.resume) request.resume();
+    else if (this.selection) this.client.cancel(this.selection.scopeId, request.id);
+    this.pending.delete(request.turnId);
+    this.release(request);
+  }
+
+  /** Remove a request from the warm-up slots; true when it was speculative. */
+  private release(request: WorkRequest): boolean {
+    const index = this.speculative.indexOf(request);
+    if (index >= 0) this.speculative.splice(index, 1);
+    return index >= 0;
+  }
+
+  private clearClosing(id: string): void {
+    clearTimeout(this.closing.get(id));
+    this.closing.delete(id);
+  }
+}

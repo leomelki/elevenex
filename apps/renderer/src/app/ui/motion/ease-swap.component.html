@@ -1,0 +1,11 @@
+@for (label of labels(); track label.key) {
+    <span
+      #text
+      [animate.enter]="ready() ? 'enter' : ''"
+      (animate.leave)="leave($event)"
+    >
+      @if (contentTemplate(); as template) {
+        <ng-container [ngTemplateOutlet]="template" [ngTemplateOutletContext]="{ $implicit: label.content }" />
+      } @else {<ng-container>{{ label.key }}</ng-container>}
+    </span>
+  }

@@ -1,0 +1,1 @@
+ALTER TABLE `user_terminals` ADD `desktop_owner` text;

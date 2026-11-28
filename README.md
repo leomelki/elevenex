@@ -1,12 +1,16 @@
 # Elevenex
 
+Development targets the Angular renderer in `apps/renderer` and the Electron
+shell in `apps/desktop`. The previous frontend in `apps/frontend` and its shell
+in `apps/electron` are slated for removal. See the [desktop setup guide](apps/desktop/README.md).
+
 If your current setup is part tab cemetery, part terminal zoo, and part "wait, which repo was this note even for?", Elevenex is the cleanup pass. It keeps your terminals, sessions, notes, browser flows, and repo context structured around the actual project they belong to, so you can stay locked in instead of rebuilding your mental state every time you switch tasks.
 
 It is built to replace the usual pile of editor windows, terminal tabs, browser tabs, sticky-note docs, and scattered git tools with one project-centered workspace that does not fry your focus.
 
 ## What It Does
 
-- Organizes work as `project -> repository -> task -> session`.
+- Organizes work as `project -> task -> session`. Repositories belong to projects.
 - Lets you keep multiple coding sessions open and jump between them without losing context.
 - Creates named tasks for implementation, investigation, or review, starting from a new branch or an existing local or remote branch.
 - Chooses a clean environment automatically, keeping concurrent tasks isolated. Task names can change independently of their branches.
@@ -36,33 +40,26 @@ Elevenex also has a built-in browser surface for coding-adjacent flows that do n
 
 ## Architecture
 
-Elevenex is a pnpm monorepo with a desktop shell, a frontend, a backend, and a small layer of custom editor integration.
+Elevenex is a pnpm monorepo.
 
-- `apps/frontend`: Angular application for the workspace UI, session views, Claude workspace, project navigation, GitHub panel, and embedded editor panels.
-- `apps/backend`: NestJS backend with REST + WebSocket APIs, Drizzle ORM, `better-sqlite3`, terminal/session orchestration, local persistence, file watching, and supporting app services.
-- `apps/electron`: Electron desktop shell that loads the frontend, manages the embedded runtime, owns remote SSH/runtime orchestration, handles packaging, and owns the in-app browser surfaces.
-- `vscode-filesystem-provider`: custom VS Code extension that exposes worktree files through backend APIs.
-- `vscode-scm-extension`: custom VS Code extension for SCM views, diffs, and quick diff integration inside the embedded editor.
+- `apps/renderer` owns the Angular workspace UI, routing, and view state.
+- `apps/desktop` owns the Electron shell, the typed preload bridge, local and remote backend connections, and OS integration.
+- `apps/backend` owns the NestJS REST and WebSocket APIs, project and task data, Git, files, terminal processes, and agent sessions.
+- `packages/shared` defines serializable domain types and IPC contracts.
 
 ## Build From Source
 
 ### Prerequisites
 
-- Node.js with a toolchain capable of building native modules.
+- A supported Node.js version and a toolchain capable of building native modules. See the [desktop setup guide](apps/desktop/README.md#run).
 - `pnpm` for workspace installs and scripts.
+- Git 2.25 or newer on each backend host; see [Git compatibility](docs/git-compatibility.md).
 - `claude` available on your `PATH` if you want to use the in-app Claude Code workspace.
 - Native build support required by dependencies such as `better-sqlite3` and `node-pty`.
 
 Local backends launch terminals and actions directly with `node-pty`; they do
 not detect, require, or invoke `tmux`. Remote POSIX backends use `tmux` to keep
 processes alive across SSH disconnects and backend restarts.
-
-If you use remote servers through Elevenex:
-
-- v1 remote auto-install currently supports Linux and macOS.
-- The remote server must provide standard POSIX basics such as `sh`, `tar`, `mkdir`, and `ln`.
-- Elevenex will check for remote `claude` and `tmux` and pause setup with an in-app SSH terminal if they are missing.
-- Elevenex downloads the matching remote backend runtime from CI-built release artifacts, so system Node is not required on the remote host.
 
 ### Install
 
@@ -72,80 +69,43 @@ From the repository root:
 pnpm install
 ```
 
-The root `postinstall` does real setup work:
-
-- builds the custom VS Code integration packages
-- syncs bundled VS Code Web extension assets when available
-- generates favicon assets from the project logo
-
 ### Run In Development
 
-Start the backend:
+Start Electron, the Angular dev server, and the checkout's local backend from
+the repository root.
 
 ```bash
-pnpm backend:dev
+pnpm desktop:dev
 ```
 
-Start the frontend:
+To work on individual renderer components, start the component preview and
+open `http://127.0.0.1:4310`.
 
 ```bash
-pnpm frontend:dev
+pnpm desktop:preview
 ```
 
-Start the Electron shell:
-
-```bash
-pnpm electron:start
-```
-
-Start Electron with frontend debug mode:
-
-```bash
-pnpm electron:debug
-```
-
-Start backend, frontend, and Electron together in one command (cross-platform, no tmux required):
-
-```bash
-pnpm dev
-```
-
-Start backend, frontend, and Electron together in a tmux dev session:
-
-```bash
-pnpm dev:tmux
-```
+The legacy development commands include `pnpm dev`, `pnpm dev:tmux` and
+`pnpm frontend:dev`. Run `pnpm assets:icons` to regenerate legacy icons.
 
 ### Build And Package
 
-Build the macOS package directory target:
+Build and package the desktop from the repository root.
 
 ```bash
-pnpm electron:package:mac
+pnpm desktop:build
+pnpm desktop:package
 ```
 
-Electron packaging now stages two runtime layers:
-
-- the local packaged Electron backend/runtime used by the desktop app itself
-
-The local runtime is intentionally small: it runs through Electron's Node mode
-and resolves the independently installed `claude` and `codex` executables from
-the user's PATH. Agent executables are never embedded. Set
-`ELEVENEX_EMBED_LOCAL_NODE=1` only when a self-contained local Node runtime is
-explicitly required.
+For platform targets and backend runtime packaging, see the [desktop setup guide](apps/desktop/README.md).
 
 ## Remote Servers
 
-Elevenex can connect to remote servers over SSH and automatically prepare a remote backend when one is missing or out of date.
+Elevenex connects over SSH and prepares a versioned backend with bundled Node
+on supported Linux and macOS hosts. For host requirements and backend
+lifecycle, see the [remote development guide](apps/desktop/REMOTE_DEVELOPMENT.md).
 
-- On connect, Elevenex detects the remote OS and architecture.
-- v1 supports Linux and macOS on `x64` and `arm64`.
-- Elevenex checks for remote `claude` and `tmux` first.
-- If either dependency is missing, Elevenex opens an in-app SSH terminal so you can install the missing pieces and then re-check.
-- Once prerequisites are present, Elevenex downloads a versioned runtime artifact to `~/.elevenex`, updates it when the app commit SHA changes, and starts the backend in a detached `tmux` session.
-- The remote backend is kept separate from the SSH connection so it survives frontend shutdowns and reconnects cleanly later.
-
-## Paired Desktop Port Forwarding
+## Paired Desktop Port Forwarding (legacy frontend)
 
 When connected to a paired desktop, open a project's **Port forwarding** tab and
 choose **New forward**. Enter the service's port and save; Elevenex forwards it to

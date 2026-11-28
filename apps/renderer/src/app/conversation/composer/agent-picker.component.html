@@ -1,0 +1,124 @@
+<button
+  type="button"
+  class="trigger"
+  cdkOverlayOrigin
+  #origin="cdkOverlayOrigin"
+  [disabled]="disabled()"
+  [attr.aria-expanded]="open()"
+  aria-haspopup="dialog"
+  [attr.aria-describedby]="usageOpen() ? usageId : null"
+  [attr.aria-label]="'Adjust agent: ' + harnessLabel() + ', ' + modelLabel() + (value().presetEdited ? ', changed from saved preset' : '')"
+  [attr.title]="hasUsage() ? null : 'Agent · ⌘J'"
+  (click)="toggle()"
+>
+  <ex-agent-mark [mark]="value().mark" [harness]="value().harness" />
+  <span class="name">{{ value().preset || modelLabel() }}</span>
+  @if (value().presetEdited) { <span class="preset-edited" aria-hidden="true"></span> }
+  @if (subtitle(); as subtitle) {
+    <span class="sub">{{ subtitle }}</span>
+  }
+  @if (value().fast) {
+    <ex-icon class="fast" name="bolt" [size]="12" />
+  }
+  @if (hasUsage()) {
+    <span class="meters">
+      @if (value().context !== undefined) {
+        <ex-context-meter
+          [used]="value().context || 0"
+          [tokens]="value().tokens || ''"
+          [compact]="true"
+        />
+      }
+      @if (value().plan; as plan) {
+        <ex-agent-plan-meter [plan]="plan" />
+      }
+    </span>
+  }
+  <ex-icon name="chevron-down" [size]="13" />
+</button>
+<ng-template
+  cdkConnectedOverlay
+  #settingsOverlay="cdkConnectedOverlay"
+  [cdkConnectedOverlayOrigin]="origin"
+  [cdkConnectedOverlayOpen]="menu.rendered()"
+  [cdkConnectedOverlayWidth]="menuWidth()"
+  [cdkConnectedOverlayFlexibleDimensions]="true"
+  [cdkConnectedOverlayGrowAfterOpen]="true"
+  cdkConnectedOverlayMinWidth="0px"
+  cdkConnectedOverlayMinHeight="0px"
+  [cdkConnectedOverlayHasBackdrop]="true"
+  [cdkConnectedOverlayDisableClose]="true"
+  cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop"
+  [cdkConnectedOverlayPositions]="positions"
+  [cdkConnectedOverlayViewportMargin]="16"
+  [cdkConnectedOverlayPush]="true"
+  (positionChange)="above.set($event.connectionPair.overlayY === 'bottom')"
+  (backdropClick)="open.set(false)"
+  (overlayKeydown)="overlayKey($event)"
+>
+  <section
+    #dialog
+    class="agent-settings"
+    [class.leaving]="menu.leaving()"
+    [class.below]="!above()"
+    role="dialog"
+    aria-label="Adjust agent"
+    [attr.aria-busy]="busy()"
+    [attr.aria-hidden]="!open()"
+    [attr.inert]="open() ? null : ''"
+    [cdkTrapFocus]="open()"
+    (animationend)="menu.finish($event)"
+  >
+    @let data = menu.data();
+    <!-- Harness and model changes can add or remove sections: ease the height. -->
+    <div exAutoHeight>
+      <ex-agent-menu
+        [value]="data.value"
+        [harnesses]="data.harnesses"
+        [locked]="data.locked"
+        [disabled]="disabled() || !open()"
+        [busy]="data.busy"
+        [modelsRefreshAvailable]="data.modelsRefreshAvailable"
+        [modelsError]="data.modelsError"
+        (modelsRefreshRequested)="modelsRefreshRequested.emit()"
+        [showFork]="data.showFork"
+        [showSavePreset]="data.showSavePreset"
+        [reasoningAvailable]="data.reasoningAvailable"
+        [fastAvailable]="data.fastAvailable"
+        [canCompact]="data.canCompact"
+        (changed)="changeAgent($event)"
+        (fork)="fork.emit(); open.set(false)"
+        (savePreset)="savePreset.emit($event); open.set(false)"
+        (compactRequested)="compactRequested.emit()"
+      />
+    </div>
+  </section>
+</ng-template>
+<ng-template
+  cdkConnectedOverlay
+  #usageOverlay="cdkConnectedOverlay"
+  [cdkConnectedOverlayOrigin]="origin"
+  [cdkConnectedOverlayOpen]="usage.rendered()"
+  cdkConnectedOverlayWidth="min(288px, calc(100vw - var(--space-8)))"
+  [cdkConnectedOverlayFlexibleDimensions]="true"
+  [cdkConnectedOverlayGrowAfterOpen]="true"
+  cdkConnectedOverlayMinWidth="0px"
+  cdkConnectedOverlayMinHeight="0px"
+  [cdkConnectedOverlayPositions]="positions"
+  [cdkConnectedOverlayViewportMargin]="16"
+  [cdkConnectedOverlayPush]="true"
+>
+  <div
+    class="usage-card"
+    [id]="usageId"
+    role="tooltip"
+    [class.leaving]="usage.leaving()"
+    [attr.aria-hidden]="!usageOpen()"
+    (animationend)="usage.finish($event)"
+  >
+    <ex-agent-usage [agent]="usage.data()" />
+    <div class="usage-footer">
+      <span>Adjust the agent</span><ex-kbd>⌘J</ex-kbd>
+    </div>
+  </div>
+</ng-template>

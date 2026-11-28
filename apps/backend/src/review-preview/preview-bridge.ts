@@ -8,7 +8,7 @@ import {
  *
  * Shipped as a string rather than a `.js` file next to this one because
  * `nest-cli.json` has no `assets` block, so a sibling file would never reach
- * `dist/`. Same approach as `config/vscode-web-launcher.ts`.
+ * `dist/`.
  *
  * It runs inside a frame sandboxed without `allow-same-origin`, so it has an
  * opaque origin: it cannot read the host page, and `event.origin` on the

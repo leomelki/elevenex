@@ -57,6 +57,8 @@ export interface PiSessionSnapshotPayload extends PiRuntimeStatePayload {
 }
 
 export interface PiRuntimeState {
+  persistedSelectionLoaded?: boolean;
+  activity?: import('./pi-activity.js').PiActivity;
   piSessionPath: string | null;
   cachedWorktreePath: string | null;
   runPhase: PiRunPhase;
@@ -70,6 +72,7 @@ export interface PiRuntimeState {
   }[];
   queuePaused: boolean;
   liveItems: ClaudeTranscriptItem[];
+  messageIds: Map<string, number>;
   // Stable id for the assistant message currently being streamed, shared by
   // every `message_update` event and the terminating `message_end` event so
   // their transcript items reconcile to a single entry instead of the

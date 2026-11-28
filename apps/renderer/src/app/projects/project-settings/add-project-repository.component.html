@@ -1,0 +1,20 @@
+@if (!adding()) {
+  <button type="button" class="add-row" (click)="start()"><span class="icon add"><ex-icon name="plus" [size]="14" /></span><span class="title"><b>Add a repository</b><span>A folder on {{ machine() }}, or a URL to clone</span></span></button>
+} @else {
+  <div class="adding">
+    <div class="input">
+      <ex-icon [name]="isUrl() ? 'link' : 'folder'" [size]="15" />
+      <input #field cdkFocusInitial [value]="draft()" spellcheck="false" aria-label="Folder or clone URL" role="combobox" aria-autocomplete="list" [attr.aria-expanded]="entries().length > 0" [attr.aria-controls]="listId()" [attr.aria-activedescendant]="entries().length ? listId() + '-' + highlight() : null" (input)="draft.set(field.value)" (keydown)="key($event)" />
+      <ex-kbd>Esc</ex-kbd><button exButton size="sm" variant="primary" [disabled]="loading() || !entries().length" (click)="add()">Add</button>
+    </div>
+    <div class="list" role="listbox" aria-label="Folders" [id]="listId()" [attr.aria-busy]="loading()">
+      @for (entry of entries(); track entry.path; let index = $index) {
+        <button type="button" class="option" role="option" tabindex="-1" [id]="listId() + '-' + index" [attr.aria-selected]="highlight() === index" [class.highlight]="highlight() === index" (mouseenter)="highlight.set(index)" (click)="choose(entry)">
+          <ex-icon [name]="entry.git || entry.clone ? 'repo' : 'folder'" [size]="14" /><span class="mono">{{ entry.path }}</span><span class="sub">{{ entry.dir && !entry.git && !entry.clone ? 'Open folder' : (entry.git || (entry.clone ? 'Clone repository' : 'not a repository yet: Elevenex sets up git')) }}</span>@if (highlight() === index) { <ex-kbd>↵</ex-kbd> }
+        </button>
+      } @empty {
+        <div class="empty" role="status">{{ loading() ? 'Finding folders…' : failed() ? 'Folders could not be loaded. Try another path.' : 'Nothing on ' + machine() + ' starts with that.' }}</div>
+      }
+    </div>
+  </div>
+}

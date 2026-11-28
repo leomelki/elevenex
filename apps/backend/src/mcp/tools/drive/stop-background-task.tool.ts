@@ -14,7 +14,7 @@ export const stopBackgroundTaskTool = defineTool({
   costClass: 'scoped',
   mutates: true,
   description:
-    "Stop one background task (a backgrounded shell or subagent) in a session, leaving the session and its turn alive. 🟡scoped. Use on items from session_status/poll_session_status `backgroundWork`, especially `orphaned` ones left behind by a finished subagent. The session may resume briefly to report the stop; then await_session_event.",
+    "Stop one background task (a backgrounded shell or subagent) in a session, leaving the session and its turn alive. 🟡scoped. Use on items from session_status `backgroundWork`, especially `orphaned` ones left behind by a finished subagent. The session may resume briefly to report the stop; then await_session_event.",
   disallowSelfTarget: 'session',
   inputShape: {
     sessionId: z
@@ -37,7 +37,7 @@ export const stopBackgroundTaskTool = defineTool({
       data: { sessionId: args.sessionId, taskId: args.taskId, stopped: true },
       deepLink: ctx.deepLink.session(args.sessionId),
       nextStep:
-        'await_session_event or poll_session_status to wait for the session to settle.',
+        'await_session_event to wait for the session to settle.',
     };
   },
 });

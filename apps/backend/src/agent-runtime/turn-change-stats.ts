@@ -30,6 +30,7 @@ export interface TurnChangeHunk {
   deletions: number;
   patch?: string;
   startLine?: number;
+  evidenceLabel?: string;
 }
 
 export interface TurnChangedFile {
@@ -40,12 +41,30 @@ export interface TurnChangedFile {
   hunks: TurnChangeHunk[];
   attribution?: 'tool' | 'observed' | 'shared';
   diffUnavailable?: string;
+  observationKey?: string;
+}
+
+export interface TurnToolEvidence {
+  kind: 'provider' | 'command';
+  toolId: string;
+  toolName: string;
+  providerTurnId?: string;
+  window?: { start: number; end: number };
+  files: TurnChangedFile[];
 }
 
 export interface TurnChangeDetails extends TurnChangeSummary {
   filesChanged: TurnChangedFile[];
+  /** Versioned independently of legacy transcript-derived change statistics. */
+  evidence?: { version: 1; tools: TurnToolEvidence[]; sources?: TurnToolEvidence['kind'][]; partial?: true };
+  summaryOnly?: true;
   capture?: { root: string; complete: boolean; shared: boolean; message?: string; unchangedPaths?: string[]; aliases?: string[] };
 }
+
+// This value is also persisted in older captures. It marks an observation
+// with no preimage, unlike a verified binary, mode-only or oversized change.
+export const UNKNOWN_IGNORED_FILE_BASELINE =
+  'The file is ignored by Git and its starting contents were not available';
 
 interface EditOp {
   oldString: string;
@@ -58,6 +77,7 @@ interface EditOp {
 }
 
 interface ExtractedEdits {
+  status?: TurnChangedFile['status'];
   filePath: string;
   toolName: string;
   edits: EditOp[];
@@ -273,18 +293,26 @@ function extractEdits(toolName: string, input: unknown): ExtractedEdits[] {
         'newText',
         'content',
       ]);
-      const patch = readPath(change, ['patch', 'diff', 'unifiedDiff']);
+      let patch = readPath(change, ['patch', 'diff', 'unifiedDiff']);
+      const kind = asString(change['kind']) || asString(asRecord(change['kind'])?.['type']);
+      const created = kind === 'add' || kind === 'create';
+      const deleted = kind === 'delete';
+      const plainContent = (created || deleted) && patch && !/^@@ /m.test(patch) && !/^[+-]/m.test(patch) ? patch : undefined;
+      if (plainContent) patch = '';
+      const addedLines = patch.split('\n').filter(line => line.startsWith('+') && !line.startsWith('+++')).length;
+      const deletedLines = patch.split('\n').filter(line => line.startsWith('-') && !line.startsWith('---')).length;
       extracted.push({
         filePath,
         toolName,
+        status: created ? 'created' : deleted ? 'deleted' : kind === 'update' || kind === 'modify' ? 'modified' : undefined,
         edits: [
           {
-            oldString,
-            newString,
+            oldString: deleted && plainContent ? plainContent : oldString,
+            newString: created && plainContent ? plainContent : newString,
             patch,
             label: changes.length > 1 ? `Change ${index + 1}` : undefined,
-            additions: asNumber(change['additions']),
-            deletions: asNumber(change['deletions']),
+            additions: asNumber(change['additions']) ?? (patch ? addedLines : undefined),
+            deletions: asNumber(change['deletions']) ?? (patch ? deletedLines : undefined),
           },
         ],
       });
@@ -449,7 +477,7 @@ function computeTurnChangeDetails(units: ToolUnit[]): TurnChangeDetails | null {
       if (file.hunks.length === 0) {
         files.delete(extracted.filePath);
       } else {
-        file.status = statusForFile(file.hunks);
+        file.status = extracted.status ?? statusForFile(file.hunks);
       }
     }
   }
@@ -495,6 +523,7 @@ export function reconcileCapturedChanges(
 ): TurnChangeDetails | null {
   const snapshot = items.findLast((item) => item.turnChanges)?.turnChanges;
   if (!snapshot) return native;
+  if (snapshot.evidence) return snapshot;
   const roots = [snapshot.capture?.root, ...(snapshot.capture?.aliases ?? [])]
     .filter((root): root is string => !!root)
     .map((root) => root.replaceAll('\\', '/').replace(/\/$/, ''));

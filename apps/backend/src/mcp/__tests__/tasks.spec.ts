@@ -388,6 +388,17 @@ describe('task-aware agent workflow', () => {
     });
   });
 
+  it('records the authenticated creator only for explicitly temporary work', async () => {
+    const f = fixture();
+    const input = { repoId: 5, requestId: 'review', mode: 'new', branchName: 'scratch-review' };
+    await f.call('create_task', { ...input, temporary: true });
+    expect(f.tasks.create).toHaveBeenCalledWith(5, input, 42);
+    Object.assign(f.ctx, { agentSessionId: null });
+    await expect(f.call('create_task', { ...input, temporary: true }))
+      .rejects.toMatchObject({ code: 'temporary_task_requires_session' });
+    expect(f.tasks.create).toHaveBeenCalledTimes(1);
+  });
+
   it('previews running work without finishing, and does not invent stop confirmation', async () => {
     const f = fixture();
     expect(
@@ -395,7 +406,9 @@ describe('task-aware agent workflow', () => {
     ).toMatchObject({ agents: 1, terminals: 2, actions: 3 });
     expect(f.tasks.finish).not.toHaveBeenCalled();
     await f.call('finish_task', { taskId: 12 });
-    expect(f.tasks.finish).toHaveBeenCalledWith(12, false);
+    expect(f.tasks.finish).toHaveBeenCalledWith(12, false, undefined, {
+      agent: { sessionId: 42, userRequested: false },
+    });
   });
 
   it('schedules self-finishing only on explicit user request without assuming stop approval', async () => {

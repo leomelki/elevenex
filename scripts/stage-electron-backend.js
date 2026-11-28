@@ -1,4 +1,10 @@
 const {
+  formatSize,
+  getDirectorySize,
+  removeGitArtifacts,
+  restoreDriverLicenses,
+} = require("./runtime-stage-utils");
+const {
   chmodSync,
   cpSync,
   existsSync,
@@ -12,20 +18,20 @@ const {
 } = require("fs");
 const { execSync } = require("child_process");
 const path = require("path");
-const {
-  assembleRuntime,
-  formatSize,
-  getDirectorySize,
-  removeGitArtifacts,
-  stagedVSCodeRoot,
-} = require("./prepare-vscode-web-runtime");
 const repoRoot = path.resolve(__dirname, "..");
 const backendRoot = path.join(repoRoot, "apps", "backend");
 const backendBundleRoot = path.join(backendRoot, "bundle");
-const stageBaseRoot = path.join(repoRoot, "apps", "electron", ".stage");
+// The new desktop reuses assembly in an isolated staging tree with bundled Node.
+// Default commands continue to build the legacy Electron runtime unchanged.
+const stageBaseRoot =
+  process.env.ELEVENEX_BACKEND_STAGE_ROOT ||
+  path.join(repoRoot, "apps", "electron", ".stage");
 const stageBackendRoot = path.join(stageBaseRoot, "backend");
 const backendPackageJson = require(path.join(backendRoot, "package.json"));
 const NATIVE_RUNTIME_DEPENDENCIES = [
+  "patchright-core",
+  "patchright",
+  "ffmpeg-static",
   "better-sqlite3",
   "node-pty",
   "@vscode/ripgrep",
@@ -160,7 +166,7 @@ function copyDependencyTree(packageName, searchPaths) {
 
 function resolveInstalledPackagePath(
   packageName,
-  searchPaths = [backendRoot, repoRoot],
+  searchPaths = [backendRoot, path.join(repoRoot, "packages/browser-agent"), repoRoot],
 ) {
   const packageParts = packageName.split("/");
   for (const searchPath of searchPaths) {
@@ -221,31 +227,6 @@ function removeSourceMaps(rootDir) {
   }
 }
 
-function stageExtensionRuntime(extensionDirName) {
-  const sourceRoot = path.join(repoRoot, extensionDirName);
-  const destinationRoot = path.join(stageBackendRoot, extensionDirName);
-
-  ensureDir(destinationRoot);
-  copyRequiredPath(
-    path.join(sourceRoot, "dist"),
-    path.join(destinationRoot, "dist"),
-  );
-  copyRequiredPath(
-    path.join(sourceRoot, "package.json"),
-    path.join(destinationRoot, "package.json"),
-  );
-
-  const packageNlsPath = path.join(sourceRoot, "package.nls.json");
-  if (existsSync(packageNlsPath)) {
-    copyRequiredPath(
-      packageNlsPath,
-      path.join(destinationRoot, "package.nls.json"),
-    );
-  }
-
-  removeSourceMaps(destinationRoot);
-}
-
 function writeStagedBackendPackageJson() {
   const stagedPackageJson = {
     name: "elevenex-embedded-backend",
@@ -301,7 +282,7 @@ function stageBundledNodeRuntime() {
 function stageNativePackageTree(
   packageName,
   seen = new Set(),
-  searchPaths = [backendRoot, repoRoot],
+  searchPaths = [backendRoot, path.join(repoRoot, "packages/browser-agent"), repoRoot],
 ) {
   if (seen.has(packageName)) {
     return;
@@ -336,15 +317,20 @@ function stageNativePackageTree(
 
 async function main() {
   resetStageRoot();
-  await assembleRuntime();
 
   copyRequiredPath(
     path.join(backendBundleRoot, "main.cjs"),
     path.join(stageBackendRoot, "main.cjs"),
   );
+  copyRequiredPath(path.join(backendBundleRoot, "browser-setup.cjs"), path.join(stageBackendRoot, "browser-setup.cjs"));
+  copyRequiredPath(path.join(backendBundleRoot, "terminal-screen-worker.cjs"), path.join(stageBackendRoot, "terminal-screen-worker.cjs"));
   copyRequiredPath(
     path.join(backendBundleRoot, "pi-agent-extension.mjs"),
     path.join(stageBackendRoot, "pi-agent-extension.mjs"),
+  );
+  copyRequiredPath(
+    path.join(backendBundleRoot, "shell-integration"),
+    path.join(stageBackendRoot, "shell-integration"),
   );
   copyRequiredPath(
     path.join(backendRoot, "drizzle"),
@@ -354,11 +340,23 @@ async function main() {
     path.join(backendRoot, "bin"),
     path.join(stageBackendRoot, "bin"),
   );
+  // Portable Linux archives can be assembled from a Mac/Windows checkout.
+  // Copy only the native helper built for the target that owns this stage.
+  // The Mac helper is its signed app bundle; runtime archives cannot carry links.
+  if (process.platform === "win32") copyRequiredPath(
+    path.join(backendBundleRoot, "bin", "task-app-windows.exe"),
+    path.join(stageBackendRoot, "bin", "task-app-windows.exe"),
+  );
+  if (process.platform === "darwin") copyRequiredPath(
+    path.join(backendBundleRoot, "bin", "Elevenex Agent.app"),
+    path.join(stageBackendRoot, "bin", "Elevenex Agent.app"),
+  );
   ensureDir(path.join(stageBackendRoot, "node_modules"));
   const stagedNativePackages = new Set();
   for (const packageName of NATIVE_RUNTIME_DEPENDENCIES) {
     stageNativePackageTree(packageName, stagedNativePackages);
   }
+  restoreDriverLicenses(path.join(stageBackendRoot, "node_modules"));
   // The backend dynamically imports the small JavaScript SDK for lightweight
   // Codex generation. Stage only its JS files; never traverse its dependency
   // on @openai/codex, which is where the native CLI payload is published.
@@ -378,12 +376,6 @@ async function main() {
     path.join(repoRoot, "apps", "frontend", "proxy.conf.json"),
     path.join(stageBackendRoot, "proxy.conf.json"),
   );
-  copyRequiredPath(
-    stagedVSCodeRoot,
-    path.join(stageBackendRoot, "vscode-web-dist"),
-  );
-  stageExtensionRuntime("vscode-filesystem-provider");
-  stageExtensionRuntime("vscode-scm-extension");
   removeSourceMaps(stageBackendRoot);
   removeGitArtifacts(stageBackendRoot);
 
@@ -391,20 +383,12 @@ async function main() {
     "main.cjs": getDirectorySize(path.join(stageBackendRoot, "main.cjs")),
     node: getDirectorySize(path.join(stageBackendRoot, "node")),
     node_modules: getDirectorySize(path.join(stageBackendRoot, "node_modules")),
-    "vscode-web-dist": getDirectorySize(
-      path.join(stageBackendRoot, "vscode-web-dist"),
-    ),
-    "vscode-filesystem-provider": getDirectorySize(
-      path.join(stageBackendRoot, "vscode-filesystem-provider"),
-    ),
-    "vscode-scm-extension": getDirectorySize(
-      path.join(stageBackendRoot, "vscode-scm-extension"),
-    ),
   };
 
-  const commitSha = execSync("git rev-parse HEAD", { cwd: repoRoot })
-    .toString()
-    .trim();
+  // Isolated development builders receive a source fingerprint without .git.
+  const commitSha = process.env.ELEVENEX_BACKEND_STAGE_VERSION ||
+    execSync("git rev-parse HEAD", { cwd: repoRoot }).toString().trim();
+  if (!/^[a-f0-9]{40}$/i.test(commitSha)) throw new Error('Invalid backend stage revision');
   writeFileSync(path.join(stageBackendRoot, "version"), commitSha, "utf8");
   writeFileSync(path.join(stageBaseRoot, "version"), commitSha, "utf8");
 

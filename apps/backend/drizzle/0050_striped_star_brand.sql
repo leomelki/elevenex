@@ -1,0 +1,1 @@
+ALTER TABLE `app_settings` ADD `last_used_agent_config` text;

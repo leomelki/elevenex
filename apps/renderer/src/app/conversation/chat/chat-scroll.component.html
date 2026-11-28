@@ -1,0 +1,77 @@
+<div
+  #viewport
+  class="viewport"
+  tabindex="0"
+  role="region"
+  aria-label="Conversation"
+  (scroll)="onScroll()"
+  (wheel)="onViewportWheel($event)"
+  (pointerdown)="onViewportPointerDown($event)"
+  (pointerup)="clearPointerScroll()"
+  (keydown)="onViewportKey($event)"
+>
+  <div #track class="track">
+    <div #content class="content"><ng-content /></div>
+  </div>
+</div>
+@if (historyError()) {
+  <div class="history-status" role="status">
+    <span>{{ historyError() }}</span>
+    <button type="button" (click)="retryHistory()">Retry</button>
+  </div>
+}
+@if (pin(); as pin) {
+  <aside
+    #reminderElement
+    class="reminder"
+    [class.arming]="arming()"
+    [class.peek]="peek()"
+    [animate.enter]="reminderMotion() ? 'reminder-enter' : ''"
+    animate.leave="reminder-leave"
+    aria-label="Your message for the reply in view"
+  >
+    <div class="scrim" aria-hidden="true"></div>
+    <button
+      type="button"
+      class="surface"
+      [attr.aria-label]="'Back to your message: ' + pin.text"
+      [attr.aria-expanded]="peek()"
+      (pointerenter)="startPeek($event)"
+      (pointerleave)="endPeek()"
+      (focus)="peekOnFocus($event)"
+      (blur)="endPeek()"
+      (click)="scrollToMessage(pin.id)"
+    >
+      <span class="glyph" aria-hidden="true"><ex-icon name="arrow-up" [size]="12" /></span>
+      <span class="quote-stack">
+        @for (quote of pinQuotes(); track quote.id) {
+          <span
+            class="quote"
+            [animate.enter]="quoteMotion() ? 'quote-enter' : ''"
+            [animate.leave]="quoteMotion() ? 'quote-leave' : ''"
+          >{{ quote.text }}</span>
+        }
+      </span>
+    </button>
+  </aside>
+}
+<div
+  class="return"
+  [class.visible]="!atEnd()"
+  [attr.inert]="atEnd() ? '' : null"
+  [attr.aria-hidden]="atEnd()"
+>
+  <button
+    exButton
+    variant="secondary"
+    class="return-button"
+    [attr.aria-label]="returnLabel()"
+    [exTooltip]="returnLabel()"
+    (click)="returnToEnd()"
+  >
+    <ex-icon name="arrow-down" [size]="16" />
+    @if (unread()) {
+      <span class="unread-dot" aria-hidden="true"></span>
+    }
+  </button>
+</div>

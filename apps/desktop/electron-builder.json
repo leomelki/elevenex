@@ -1,0 +1,60 @@
+{
+  "appId": "app.elevenex.desktop",
+  "productName": "Elevenex Desktop",
+  "asar": true,
+  "asarUnpack": [
+    "dist/backend/host.js",
+    "dist/backend/process-tree.js",
+    "dist/remote/askpass-helper.js"
+  ],
+  "directories": {
+    "output": "release",
+    "buildResources": "assets/icons"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/backend-release.json",
+    "dist/code/*.css",
+    "dist/browser/tokens.css",
+    "dist/code/LICENSE.txt",
+    "renderer/**/*",
+    "assets/icons/icon.png",
+    "assets/icons/tray*.png",
+    "package.json"
+  ],
+  "npmRebuild": false,
+  "mac": {
+    "artifactName": "elevenex-new-desktop-macos-${arch}.${ext}",
+    "icon": "assets/icons/icon.icns",
+    "category": "public.app-category.developer-tools",
+    "target": [
+      "dmg",
+      "zip"
+    ]
+  },
+  "win": {
+    "artifactName": "elevenex-new-desktop-windows-${arch}.${ext}",
+    "icon": "assets/icons/icon.ico",
+    "target": [
+      "nsis"
+    ]
+  },
+  "nsis": {
+    "installerIcon": "assets/icons/icon.ico",
+    "uninstallerIcon": "assets/icons/icon.ico",
+    "installerHeaderIcon": "assets/icons/icon.ico"
+  },
+  "dmg": {
+    "icon": "assets/icons/icon.icns"
+  },
+  "linux": {
+    "artifactName": "elevenex-new-desktop-linux-${arch}.${ext}",
+    "executableName": "elevenex-desktop",
+    "icon": "assets/icons/png",
+    "category": "Development",
+    "target": [
+      "AppImage",
+      "deb"
+    ]
+  }
+}

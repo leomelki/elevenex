@@ -38,12 +38,22 @@ import { UserPtyManager } from '../user-terminal/user-pty-manager.service.js';
 import { ActionsService } from '../actions/actions.service.js';
 import { TaskGitService, taskBranchSlug } from './task-git.service.js';
 import { TaskWorktreeAllocator } from './task-worktree-allocator.service.js';
+import type { TaskAppRun } from '@elevenex/shared';
+import { TaskAppHost, type AppLaunch, type AppRunObserver } from '../task-apps/task-app-host.js';
+import { AppSetupError } from '../task-apps/app-setup-error.js';
 import { TaskSetup } from './task.types.js';
 import { WorktreeContextService } from '../worktree-context/worktree-context.service.js';
 import { NavigationEventsService } from '../navigation/navigation-events.service.js';
-import { refreshWorkspaceCheckout } from '../workspaces/workspace-ownership.js';
+import {
+  isWorkspaceCheckoutFailure,
+  refreshWorkspaceCheckout,
+} from '../workspaces/workspace-ownership.js';
 import { compareWorkspaceOrder } from '../workspaces/workspace-order.js';
 import { isMissingWorktreePath } from '../worktrees/worktree-path.js';
+import {
+  MISSING_WORKTREE_ERROR,
+  workspaceTaskError,
+} from '../workspaces/workspace-checkout-errors.js';
 
 type Task = typeof schema.workspaces.$inferSelect;
 type Repo = typeof schema.repos.$inferSelect;
@@ -81,16 +91,31 @@ export function conciseFailureMessage(message: string): string {
     : text || message.slice(-MAX_FAILURE_MESSAGE_LENGTH);
 }
 
+function preparationFailureMessage(error: unknown): string {
+  const seen = new Set<object>();
+  let message = 'Could not prepare the task.';
+  // Drizzle wraps SQLite errors with the query. Surface the underlying cause.
+  while (error && typeof error === 'object' && !seen.has(error)) {
+    seen.add(error);
+    const detail = error as { message?: unknown; cause?: unknown };
+    if (typeof detail.message === 'string') message = detail.message;
+    error = detail.cause;
+  }
+  return conciseFailureMessage(message);
+}
+
 @Injectable()
 export class TasksService
   implements OnApplicationBootstrap, OnModuleInit, OnModuleDestroy
 {
   private readonly logger = new Logger(TasksService.name);
+  private readonly finishingListeners = new Set<(taskId: number) => Promise<void>>();
   private readonly releasePreviews = new Map<
     number,
     ReturnType<TasksService['checkReleasePreview']>
   >();
   private readonly operations = new Map<number, Promise<void>>();
+  private readonly queuedPreparations = new Set<number>();
   private readonly finishRequests = new Map<
     number,
     NonNullable<Task['taskFinishRequest']>
@@ -120,6 +145,7 @@ export class TasksService
     private readonly terminals: UserPtyManager,
     private readonly actions: ActionsService,
     private readonly worktreeContext: WorktreeContextService,
+    private readonly appHost: TaskAppHost,
     @Optional() private readonly navigationEvents?: NavigationEventsService,
   ) {}
 
@@ -131,6 +157,12 @@ export class TasksService
     this.hooks.off('status-changed', this.finishOnIdle);
     this.finishRequests.clear();
     this.idleFinishRequests.clear();
+    this.queuedPreparations.clear();
+  }
+
+  onFinishing(listener: (taskId: number) => Promise<void>): () => void {
+    this.finishingListeners.add(listener);
+    return () => this.finishingListeners.delete(listener);
   }
 
   private sessionIsIdle(sessionId: number): boolean {
@@ -225,6 +257,18 @@ export class TasksService
       .from(schema.workspaces)
       .where(isNull(schema.workspaces.archivedAt));
     for (const task of tasks) {
+      if (task.taskState === 'failed' && task.taskError) {
+        const detail = workspaceTaskError(task.taskError);
+        if (
+          detail?.code === 'environment_missing' &&
+          task.taskError !== JSON.stringify(detail)
+        )
+          await this.update(
+            task.id,
+            { taskError: JSON.stringify(detail) },
+            'failed',
+          );
+      }
       if (task.taskFinishRequest && task.taskState === 'ready') {
         this.finishRequests.set(task.id, task.taskFinishRequest);
         if (this.sessionIsIdle(task.taskFinishRequest.sessionId)) {
@@ -358,11 +402,7 @@ export class TasksService
             .update(schema.workspaces)
             .set({
               taskState: 'failed',
-              taskError: JSON.stringify({
-                code: 'environment_missing',
-                message:
-                  'This task’s checkout is unavailable. Choose a branch and retry setup.',
-              }),
+              taskError: JSON.stringify(MISSING_WORKTREE_ERROR),
             })
             .where(
               and(
@@ -403,7 +443,7 @@ export class TasksService
       checked.error ?? observationError;
     if (task.taskError && !error) {
       try {
-        error = JSON.parse(task.taskError);
+        error = workspaceTaskError(task.taskError);
       } catch {
         error = { message: task.taskError };
       }
@@ -415,15 +455,7 @@ export class TasksService
     return {
       ...task,
       taskState: needsEnvironment ? 'failed' : task.taskState,
-      error:
-        error ??
-        (needsEnvironment
-          ? {
-              code: 'environment_missing',
-              message:
-                'This task needs a worktree. Choose a branch and retry setup.',
-            }
-          : null),
+      error: error ?? (needsEnvironment ? MISSING_WORKTREE_ERROR : null),
       preparationStage: task.taskConfig
         ? (JSON.parse(task.taskConfig).preparationStage ?? null)
         : null,
@@ -570,7 +602,7 @@ export class TasksService
     return { task, timedOut: timedOut && task.taskState === 'preparing' };
   }
 
-  async create(repoId: number, input: TaskSetup) {
+  async create(repoId: number, input: TaskSetup, temporaryCreatorId?: number) {
     const repo = await this.repo(repoId);
     await this.projects.assertProjectIsActive(repo.projectId);
     const existing = (
@@ -579,11 +611,12 @@ export class TasksService
         .from(schema.workspaces)
         .where(eq(schema.workspaces.taskRequestId, input.requestId))
     )[0];
+    const creatorId = temporaryCreatorId ?? null;
     if (existing) {
       if (existing.repoId !== repoId)
-        throw new ConflictException(
-          'This request belongs to another repository.',
-        );
+        throw new ConflictException('This request belongs to another repository.');
+      if (existing.taskCreatedBySessionId !== creatorId)
+        throw new ConflictException('This request belongs to another task creation.');
       return this.get(existing.id);
     }
     if (!input.branchName.trim())
@@ -605,6 +638,8 @@ export class TasksService
         linkStatus: 'unlinked',
         taskState: 'preparing',
         taskRequestId: input.requestId,
+        taskCreatedBySessionId: creatorId,
+        taskTemporary: creatorId !== null,
         taskConfig: JSON.stringify(setup),
         sourceRef: setup.branchName,
         checkoutMode: setup.checkoutMode,
@@ -619,65 +654,84 @@ export class TasksService
           .from(schema.workspaces)
           .where(eq(schema.workspaces.taskRequestId, input.requestId))
       )[0];
-    if (!task || task.repoId !== repoId)
+    if (!task || task.repoId !== repoId || task.taskCreatedBySessionId !== creatorId)
       throw new ConflictException('Could not reserve the task request.');
     this.schedule(task.id);
     this.navigationEvents?.invalidate();
     return this.get(task.id);
   }
 
-  async retry(id: number, patch: Partial<TaskSetup> = {}) {
+  async retry(
+    id: number,
+    patch: Partial<TaskSetup> = {},
+    expectedFailure?: string | null,
+  ) {
+    const task = await this.record(id);
+    const repo = await this.repo(task.repoId);
+    const key = await this.git.repositoryKey(repo.path);
+    return this.git.exclusive(key, () =>
+      this.retryLocked(id, patch, expectedFailure),
+    );
+  }
+
+  private async retryLocked(
+    id: number,
+    patch: Partial<TaskSetup>,
+    expectedFailure?: string | null,
+  ) {
     // Validation creates own undefined DTO fields; @IsOptional also accepts
     // null. Neither represents a setup change, so preserve the saved values.
     patch = Object.fromEntries(
       Object.entries(patch).filter(([, value]) => value != null),
     );
     const task = await this.record(id);
+    if (
+      expectedFailure !== undefined &&
+      (task.taskState !== 'failed' || task.taskError !== expectedFailure)
+    )
+      throw new ConflictException(
+        'The task setup changed. Refresh before choosing a recovery.',
+      );
     if (task.archivedAt)
       throw new ConflictException(
         'Reopen this task before preparing its worktree.',
       );
+    const repo = await this.repo(task.repoId);
+    await this.projects.assertProjectIsActive(repo.projectId);
     if (task.taskState === 'released') {
-      const repo = await this.repo(task.repoId);
-      const key = await this.git.repositoryKey(repo.path);
-      return this.git.exclusive(key, async () => {
-        const current = await this.record(id);
-        if (current.taskState !== 'released' || current.archivedAt)
-          return this.get(id);
-        await this.projects.assertProjectIsActive(repo.projectId);
-        const saved = this.resumeSetup(current);
-        const setup = { ...saved, ...patch };
-        if (
-          (patch.branchName && patch.branchName !== saved.branchName) ||
-          (patch.checkoutMode && patch.checkoutMode !== saved.checkoutMode) ||
-          (patch.mode && patch.mode !== saved.mode) ||
-          (patch.baseRef && patch.baseRef !== saved.baseRef)
-        ) {
-          setup.resolvedCommit = undefined;
-          setup.branchPrepared = undefined;
-          setup.localBranch = undefined;
-        }
-        await this.update(id, {
-          name: patch.name?.trim() || current.name,
-          taskState: 'preparing',
-          taskError: null,
-          taskConfig: JSON.stringify(setup),
-          checkoutMode: setup.checkoutMode,
-        });
-        this.schedule(id);
-        return this.get(id);
+      const saved = this.resumeSetup(task);
+      const setup = { ...saved, ...patch };
+      if (
+        (patch.branchName && patch.branchName !== saved.branchName) ||
+        (patch.checkoutMode && patch.checkoutMode !== saved.checkoutMode) ||
+        (patch.mode && patch.mode !== saved.mode) ||
+        (patch.baseRef && patch.baseRef !== saved.baseRef)
+      ) {
+        setup.resolvedCommit = undefined;
+        setup.branchPrepared = undefined;
+        setup.localBranch = undefined;
+      }
+      await this.update(id, {
+        name: patch.name?.trim() || task.name,
+        taskState: 'preparing',
+        taskError: null,
+        taskConfig: JSON.stringify(setup),
+        checkoutMode: setup.checkoutMode,
       });
+      this.schedule(id);
+      return this.get(id);
     }
     if (
       task.taskState !== 'failed' &&
       !(task.taskState === 'ready' && task.linkStatus === 'unlinked')
     )
       return this.get(id);
-    if (task.taskError && JSON.parse(task.taskError).code === 'finish_failed')
+    const failure = workspaceTaskError(task.taskError);
+    if (failure?.code === 'finish_failed')
       throw new ConflictException(
         'Finish this task again to complete process cleanup.',
       );
-    if (task.taskError && JSON.parse(task.taskError).code === 'release_failed')
+    if (failure?.code === 'release_failed')
       throw new ConflictException(
         'Release this worktree again to complete process cleanup.',
       );
@@ -688,14 +742,33 @@ export class TasksService
       checked.workspace.linkStatus === 'linked'
     )
       return this.get(id);
-    const saved: TaskSetup = task.taskConfig
-      ? JSON.parse(task.taskConfig)
-      : {
-          requestId: randomUUID(),
-          mode: 'existing',
-          branchName:
-            task.taskBranch || task.desiredBranch || task.createdFromRef || '',
-        };
+    const missingCheckout =
+      (failure?.code === 'environment_missing' &&
+        isWorkspaceCheckoutFailure(task)) ||
+      (task.taskState === 'ready' && task.linkStatus === 'unlinked');
+    await this.allocator.assertRecoveryIdle(id);
+    const saved: TaskSetup = missingCheckout
+      ? { ...this.resumeSetup(task), confirmExternal: false }
+      : task.taskConfig
+        ? JSON.parse(task.taskConfig)
+        : {
+            requestId: randomUUID(),
+            mode: 'existing',
+            branchName:
+              task.taskBranch ||
+              task.desiredBranch ||
+              task.createdFromRef ||
+              '',
+          };
+    if (missingCheckout) {
+      const previous = await this.allocator.previousCheckout(repo, task);
+      if (saved.checkoutMode === 'branch' && previous?.branch) {
+        saved.branchName = `refs/heads/${previous.branch}`;
+        saved.localBranch = previous.branch;
+      } else if (saved.checkoutMode === 'snapshot' && previous?.head) {
+        saved.resolvedCommit = await this.git.resolve(repo.path, previous.head);
+      }
+    }
     const setup = { ...saved, ...patch };
     if (
       (patch.branchName && patch.branchName !== saved.branchName) ||
@@ -710,7 +783,7 @@ export class TasksService
         .delete(schema.taskReservations)
         .where(eq(schema.taskReservations.taskId, id));
     }
-    if (patch.environment === 'new' || patch.worktreeId)
+    if (patch.environment === 'new' || patch.worktreeId || missingCheckout)
       await this.db
         .delete(schema.taskReservations)
         .where(eq(schema.taskReservations.taskId, id));
@@ -851,19 +924,25 @@ export class TasksService
   }
 
   private schedule(id: number) {
-    if (this.operations.has(id)) return;
+    if (this.operations.has(id)) {
+      this.queuedPreparations.add(id);
+      return;
+    }
     const pending = this.prepare(id)
       .catch(async (error: unknown) => {
-        const current = await this.record(id);
-        if (current.archivedAt || current.taskState !== 'preparing') return;
+        const [current] = await this.db
+          .select()
+          .from(schema.workspaces)
+          .where(eq(schema.workspaces.id, id));
+        // Confirmed project deletion can remove a finished task while its
+        // coalesced remote-ref refresh is still returning. Never revive it.
+        if (!current || current.archivedAt || current.taskState !== 'preparing')
+          return;
         const detail =
           error instanceof HttpException
             ? error.getResponse()
             : {
-                message:
-                  error instanceof Error
-                    ? conciseFailureMessage(error.message)
-                    : 'Could not prepare the task.',
+                message: preparationFailureMessage(error),
               };
         await this.update(id, {
           taskState: 'failed',
@@ -872,8 +951,21 @@ export class TasksService
           ),
         });
       })
-      .finally(() => this.operations.delete(id));
+      .finally(async () => {
+        this.operations.delete(id);
+        // A retry can be accepted after failure is saved but before this
+        // operation settles. Do not leave that accepted retry preparing forever.
+        if (!this.queuedPreparations.delete(id)) return;
+        const latest = await this.db
+          .select()
+          .from(schema.workspaces)
+          .where(eq(schema.workspaces.id, id))
+          .then((rows) => rows[0]);
+        if (latest && !latest.archivedAt && latest.taskState === 'preparing')
+          this.schedule(id);
+      });
     this.operations.set(id, pending);
+    void pending.catch((error: unknown) => this.logger.error('Could not complete task setup bookkeeping', error));
   }
 
   private async prepare(id: number) {
@@ -891,15 +983,11 @@ export class TasksService
           'Choose a base branch for this repository.',
         );
       if (initialSetup.mode === 'new') initialSetup.baseRef = base;
-      initialSetup.preparationStage = 'refreshing_ref';
-      await this.update(
-        id,
-        { taskConfig: JSON.stringify(initialSetup) },
-        'preparing',
-      );
+      await this.setPreparationStage(id, initialSetup, 'refreshing_ref');
       // Network work is coalesced independently and never holds checkout leases.
       await this.git.refresh(repo.path, base, initialSetup.useSavedRef);
     }
+    await this.setPreparationStage(id, initialSetup, 'waiting_for_checkout');
     await this.git.exclusive(key, async () => {
       const current = await this.record(id);
       if (current.archivedAt || current.taskState !== 'preparing') return;
@@ -917,7 +1005,7 @@ export class TasksService
           );
         if (
           setup.mode === 'existing' &&
-          current.finalCommit &&
+          (current.finalCommit || current.startingCommit) &&
           !(await this.git.remoteRef(repo.path, base)) &&
           !(await this.git.hasLocalBranch(
             repo.path,
@@ -928,6 +1016,7 @@ export class TasksService
             code: 'branch_missing',
             message:
               'This task’s branch was deleted. Restore it from the saved commit or choose another branch.',
+            savedCommit: current.finalCommit || current.startingCommit,
           });
         setup.resolvedCommit = await this.git.resolve(repo.path, base);
         const remote =
@@ -958,14 +1047,12 @@ export class TasksService
             });
         }
         if (setup.mode === 'existing' && !remote) {
-          if (
-            current.finalCommit &&
-            !(await this.git.hasLocalBranch(repo.path, setup.localBranch))
-          )
+          if (!(await this.git.hasLocalBranch(repo.path, setup.localBranch)))
             throw new ConflictException({
               code: 'branch_missing',
               message:
                 'This task’s branch was deleted. Restore it from the saved commit or choose another branch.',
+              savedCommit: current.finalCommit || current.startingCommit,
             });
           setup.resolvedCommit = await this.git.resolve(
             repo.path,
@@ -1008,8 +1095,7 @@ export class TasksService
       }
       if (setup.mode === 'new')
         setup.contextRootRef ??= current.startingCommit ?? setup.resolvedCommit;
-      setup.preparationStage = 'preparing_checkout';
-      await this.update(id, { taskConfig: JSON.stringify(setup) });
+      await this.setPreparationStage(id, setup, 'preparing_checkout');
       const environment = await this.allocator.allocate(
         repo,
         await this.record(id),
@@ -1079,8 +1165,7 @@ export class TasksService
         // Existing branches still need their earlier branch work summarized.
         setup.contextRootRef ?? null,
       );
-      setup.preparationStage = 'restoring_sessions';
-      await this.update(id, { taskConfig: JSON.stringify(setup) });
+      await this.setPreparationStage(id, setup, 'restoring_sessions');
       await this.restoreSessions(id, environment.path, setup.localBranch!);
       setup.preparationStage = undefined;
       await this.update(id, {
@@ -1112,6 +1197,73 @@ export class TasksService
     });
   }
 
+  /** Admit the run under the same lock that releases and reassigns this checkout. */
+  async startApp(
+    sessionId: number,
+    checkout: Task,
+    launch: Omit<AppLaunch, 'taskId' | 'cwd'>,
+    authorize: () => Promise<'launch' | 'request'>,
+  ) {
+    const repo = await this.repo(checkout.repoId);
+    const key = await this.git.repositoryKey(repo.path);
+    // A host check is read-only and can take seconds. Keep it off the
+    // repository lock, then validate the checkout and consent as usual.
+    const host = await this.appHost.checkHost(launch.mode).catch(error => {
+      if (!(error instanceof AppSetupError)) throw error;
+      return error;
+    });
+    return this.git.exclusive(key, async () => {
+      const current = await this.record(checkout.id);
+      if (current.isDefault || current.taskState !== 'ready' || current.archivedAt ||
+          current.taskFinishRequest || current.linkStatus !== 'linked' ||
+          this.releaseCheckoutToken(current) !== this.releaseCheckoutToken(checkout))
+        throw new ConflictException('The task checkout is unavailable or has changed.');
+      await this.projects.assertProjectIsActive(repo.projectId);
+      await this.sessions.assertSessionWorkspaceLinked(sessionId);
+      const operation = await authorize();
+      const request = { ...launch, taskId: current.id, cwd: current.path };
+      const existing = this.appHost.existing(request);
+      if (existing) return existing;
+      const blocker = host instanceof AppSetupError ? host : undefined;
+      const needsApproval = operation === 'request' || !!blocker;
+      const hostReady = host instanceof AppSetupError ? undefined : host;
+      if (needsApproval && request.savedAction) await this.actions.checkAppAction(request, request.savedAction);
+      const run = needsApproval
+        ? this.appHost.propose(request, { sessionId, checkoutToken: this.releaseCheckoutToken(current) }, blocker)
+        : await this.runApp(request, observer => this.appHost.start(request, observer, hostReady));
+      if (run.status === 'requested' || (run.mode === 'stream' && run.status === 'starting'))
+        this.navigationEvents?.openApp(run.runId, current.id, sessionId);
+      return run;
+    });
+  }
+
+  private runApp(request: AppLaunch, start: (observer?: AppRunObserver) => TaskAppRun | Promise<TaskAppRun>) {
+    if (!request.savedAction) return start();
+    return this.actions.runAppAction(request, request.savedAction, start,
+      runId => this.appHost.stop(request.taskId, runId));
+  }
+
+  /** Desktop-only consent applies to the exact stored argv and checkout. */
+  async approveApp(id: number, runId: string) {
+    const checkout = await this.record(id);
+    const repo = await this.repo(checkout.repoId);
+    const key = await this.git.repositoryKey(repo.path);
+    const hostReady = await this.appHost.prepareApproval(id, runId);
+    if (!hostReady) return this.appHost.get(id, runId);
+    return this.git.exclusive(key, async () => {
+      const pending = this.appHost.pending(id, runId);
+      const current = await this.record(id);
+      const session = await this.sessions.findOne(pending.sessionId);
+      if (session.workspaceId !== id || session.status === 'archived' || current.archivedAt ||
+          current.taskState !== 'ready' || current.linkStatus !== 'linked' || current.taskFinishRequest ||
+          this.releaseCheckoutToken(current) !== pending.checkoutToken)
+        throw new ConflictException('The launch request no longer belongs to the active checkout.');
+      await this.projects.assertProjectIsActive(repo.projectId);
+      await this.sessions.assertSessionWorkspaceLinked(session.id);
+      return this.runApp(pending.launch, observer => this.appHost.approve(id, runId, observer, hostReady));
+    });
+  }
+
   async finishPreview(id: number, excludeSessionId?: number) {
     const task = await this.record(id);
     const sessions = await this.db
@@ -1136,7 +1288,9 @@ export class TasksService
           (await this.terminals.hasTmuxSessionForTerminal(terminal.id)),
       ),
     );
+    const apps = this.appHost.count(id, true);
     return {
+      ...(apps ? { apps } : {}),
       agents: sessions.filter(
         (session) =>
           session.id !== excludeSessionId &&
@@ -1184,7 +1338,7 @@ export class TasksService
       const running = await this.finishPreview(id, sessionId);
       if (
         !confirmStop &&
-        (running.agents || running.terminals || running.actions)
+        (running.agents || running.terminals || running.actions || running.apps)
       )
         throw new ConflictException({
           code: 'running_work',
@@ -1251,7 +1405,72 @@ export class TasksService
     return { taskId: id, cancelled: true, finishScheduled: false };
   }
 
-  async finish(id: number, confirmStop = false, afterTurn?: FinishRequest) {
+  async keepOpen(id: number): Promise<void> {
+    const kept = await this.db
+      .update(schema.workspaces)
+      .set({ taskTemporary: false, updatedAt: new Date().toISOString() })
+      .where(
+        and(
+          eq(schema.workspaces.id, id),
+          eq(schema.workspaces.isDefault, false),
+          eq(schema.workspaces.taskTemporary, true),
+          isNull(schema.workspaces.archivedAt),
+          ne(schema.workspaces.taskState, 'finishing'),
+        ),
+      )
+      .returning({ id: schema.workspaces.id });
+    if (kept.length) {
+      this.navigationEvents?.invalidate();
+      return;
+    }
+    const task = await this.record(id);
+    if (task.archivedAt || task.taskState === 'finishing')
+      throw new ConflictException('This task is closing or already closed.');
+  }
+
+  private async assertTemporaryCheckoutClean(
+    current: Task,
+    repo: Repo,
+    key: string,
+  ) {
+    const pool = current.poolWorktreeId
+      ? await this.db.query.repoWorktrees.findFirst({
+          where: eq(schema.repoWorktrees.id, current.poolWorktreeId),
+        })
+      : undefined;
+    if (
+      current.taskState !== 'ready' ||
+      current.linkStatus !== 'linked' ||
+      !current.path ||
+      !pool?.managed
+    )
+      throw new ConflictException({
+        code: 'temporary_checkout_unavailable',
+        message: 'Closing a temporary task requires a ready, managed checkout.',
+      });
+    await this.assertCheckoutIdentity(current, repo, key, pool);
+    const status = await this.git.status(current.path);
+    if (
+      status.dirty ||
+      status.conflicts ||
+      (await this.git.hasOperationInProgress(current.path))
+    )
+      throw new ConflictException({
+        code: 'temporary_checkout_dirty',
+        message: 'This task has uncommitted changes or a Git operation in progress. Leave it open for review.',
+      });
+  }
+
+  async finish(
+    id: number,
+    confirmStop = false,
+    afterTurn?: FinishRequest,
+    options: {
+      readonly allowArchivedProject?: boolean;
+      readonly confirmedApps?: number;
+      readonly agent?: { readonly sessionId: number; readonly userRequested: boolean };
+    } = {},
+  ) {
     const afterSessionId = afterTurn?.sessionId;
     const task = await this.record(id);
     if (task.archivedAt) {
@@ -1260,7 +1479,10 @@ export class TasksService
       return this.get(id);
     }
     const repo = await this.repo(task.repoId);
-    await this.projects.assertProjectIsActive(repo.projectId);
+    // Project deletion also cleans up projects that were archived with open
+    // tasks. Ordinary task actions retain their archived-project restriction.
+    if (!options.allowArchivedProject)
+      await this.projects.assertProjectIsActive(repo.projectId);
     const key = await this.git.repositoryKey(repo.path);
     return this.git.exclusive(key, async () => {
       const current = await this.record(id);
@@ -1276,7 +1498,21 @@ export class TasksService
         }
         if (!this.sessionIsIdle(afterSessionId)) return this.get(id);
       }
+      const agent = options.agent;
+      const agentCleanup = agent && !agent.userRequested && current.taskCreatedBySessionId !== null;
+      if (agentCleanup) {
+        if (!current.taskTemporary || current.taskCreatedBySessionId !== agent.sessionId)
+          throw new ConflictException({
+            code: 'task_finish_requires_user',
+            message: 'Only the creating session can close an open temporary task without a user request.',
+          });
+        if (current.taskFinishRequest)
+          throw new ConflictException('This task already has a scheduled finish.');
+        await this.assertTemporaryCheckoutClean(current, repo, key);
+      }
       const running = await this.finishPreview(id);
+      if (options.confirmedApps !== undefined && (running.apps ?? 0) > options.confirmedApps)
+        throw new ConflictException('Running apps have changed. Check the close preview in an Apps-capable desktop before closing the task.');
       if (afterSessionId !== undefined) {
         // Terminal/action preview can await slow process checks. A new turn or
         // a membership change during that wait must never stop the caller.
@@ -1300,8 +1536,8 @@ export class TasksService
         if (!this.sessionIsIdle(afterSessionId)) return this.get(id);
       }
       if (
-        !confirmStop &&
-        (running.agents || running.terminals || running.actions)
+        (agentCleanup || !confirmStop) &&
+        (running.agents || running.terminals || running.actions || running.apps)
       )
         throw new ConflictException({
           code: 'running_work',
@@ -1321,6 +1557,15 @@ export class TasksService
         .where(
           and(
             eq(schema.workspaces.id, id),
+            // Keep open can revoke permission while Git and process checks run.
+            agentCleanup
+              ? and(
+                  eq(schema.workspaces.taskTemporary, true),
+                  eq(schema.workspaces.taskState, 'ready'),
+                  isNull(schema.workspaces.taskFinishRequest),
+                  isNull(schema.workspaces.archivedAt),
+                )
+              : undefined,
             afterTurn
               ? and(
                   eq(schema.workspaces.taskFinishRequest, afterTurn),
@@ -1332,6 +1577,8 @@ export class TasksService
         )
         .returning({ id: schema.workspaces.id });
       if (!claimed.length) {
+        if (agentCleanup)
+          throw new ConflictException('This task changed while checking whether it could close.');
         if (afterTurn) this.forgetFinishRequest(id, afterTurn);
         return this.get(id);
       }
@@ -1339,6 +1586,11 @@ export class TasksService
       this.idleFinishRequests.delete(id);
       this.navigationEvents?.invalidate();
       try {
+        await this.appHost.stopAll(id);
+        if (this.finishingListeners.size)
+          await Promise.all(
+            [...this.finishingListeners].map((listener) => listener(id)),
+          );
         const sessions = await this.db
           .select()
           .from(schema.sessions)
@@ -1436,6 +1688,7 @@ export class TasksService
         await this.update(id, {
           archivedAt: new Date().toISOString(),
           taskState: 'ready',
+          taskTemporary: false,
           finalCommit,
           taskBranch,
           checkoutMode,
@@ -1732,7 +1985,7 @@ export class TasksService
       const running = await this.finishPreview(id);
       if (
         !confirmStop &&
-        (running.agents || running.terminals || running.actions)
+        (running.agents || running.terminals || running.actions || running.apps)
       )
         throw new ConflictException({
           code: 'running_work',
@@ -1763,7 +2016,7 @@ export class TasksService
           !confirmStop &&
           (latestRunning.agents ||
             latestRunning.terminals ||
-            latestRunning.actions)
+            latestRunning.actions || latestRunning.apps)
         ) {
           stopped = true; // No cleanup began; execution can safely be enabled again.
           throw new ConflictException({
@@ -1772,6 +2025,7 @@ export class TasksService
             ...latestRunning,
           });
         }
+        await this.appHost.stopAll(id);
         for (const session of sessions)
           await this.sessions.stopForWorktreeRelease(session.id);
         for (const terminal of await this.db
@@ -1980,26 +2234,55 @@ export class TasksService
       .where(eq(schema.actions.workspaceId, id));
   }
 
+  /**
+   * Stage writes change only task configuration, which ordinary updates do not
+   * announce. Desktop windows show the current step, so each change invalidates
+   * navigation once (a few times per setup, never while polling).
+   */
+  private async setPreparationStage(
+    id: number,
+    setup: TaskSetup,
+    stage: NonNullable<TaskSetup['preparationStage']>,
+  ) {
+    setup.preparationStage = stage;
+    await this.update(id, { taskConfig: JSON.stringify(setup) }, 'preparing');
+    this.navigationEvents?.invalidate();
+  }
+
   private async update(
     id: number,
     values: Partial<typeof schema.workspaces.$inferInsert>,
     expectedState?: string,
   ) {
-    await this.db
-      .update(schema.workspaces)
-      .set({ ...values, updatedAt: new Date().toISOString() })
-      .where(
-        and(
-          eq(schema.workspaces.id, id),
-          expectedState
-            ? and(
-                eq(schema.workspaces.taskState, expectedState),
-                isNull(schema.workspaces.archivedAt),
-              )
-            : undefined,
-        ),
-      );
-    if (values.taskState || 'archivedAt' in values || 'name' in values)
+    const changed = this.db.transaction((tx) => {
+      const result = tx
+        .update(schema.workspaces)
+        .set({ ...values, updatedAt: new Date().toISOString() })
+        .where(
+          and(
+            eq(schema.workspaces.id, id),
+            expectedState
+              ? and(
+                  eq(schema.workspaces.taskState, expectedState),
+                  isNull(schema.workspaces.archivedAt),
+                )
+              : undefined,
+          ),
+        )
+        .run();
+      // A branch lease protects setup only. Once ready, users can switch
+      // branches freely; the path lease continues to protect their files.
+      if (result.changes && values.taskState === 'ready')
+        tx.update(schema.taskReservations)
+          .set({ branchName: null })
+          .where(eq(schema.taskReservations.taskId, id))
+          .run();
+      return result.changes;
+    });
+    if (
+      changed &&
+      (values.taskState || 'archivedAt' in values || 'name' in values)
+    )
       this.navigationEvents?.invalidate();
   }
 }

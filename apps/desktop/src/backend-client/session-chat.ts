@@ -1,0 +1,481 @@
+import { registerChatAgents } from './session-chat-agents';
+import { SESSION_CHAT_PROMPT_LIMIT } from '@elevenex/shared';
+import { registerChatAttachments } from './session-chat-attachments';
+import { registerSessionChatMedia } from './session-chat-media';
+import { parseChangesPage } from "./session-chat-changes";
+import { handleForWindow, type TrustedSender } from "../ipc";
+import type { BackendClient } from "./client";
+import {
+  chatId,
+  chatObject,
+  chatText,
+  defaultRevision,
+  parseChatAction,
+  parseChatCatalog,
+  parseChatPage,
+  parsePresetDefault,
+  parseTurnWorkPage,
+  parseTurnWorkRead,
+  deferredToolDetails,
+  parseToolDetailsRead,
+  parseToolDetailsReply,
+  requestId,
+} from "./session-chat-validation";
+import { BackendRequestError, requestBackendJson } from "./transport";
+import { isSessionChatDeliveryId, SESSION_CHAT_FULL_TIMELINE_BYTES, SESSION_CHAT_TURN_WORK_BATCH_BYTES, SESSION_CHAT_TURN_WORK_LIMIT } from '@elevenex/shared';
+
+/** Transport stays on the existing per-window lease, including capability routing and cancellation. */
+export function registerSessionChatIpc(
+  client: BackendClient,
+  trusted: TrustedSender,
+): () => void {
+  const agents = registerChatAgents(client, trusted);
+  const attachments = registerChatAttachments(client, trusted);
+  const media = registerSessionChatMedia(client, trusted);
+  const scope = (value: unknown) => {
+    if (typeof value !== "string" || !/^[a-f0-9-]{36}$/.test(value))
+      throw new Error("A backend scope is required.");
+    return value;
+  };
+  const path = (task: number, session: number) =>
+    `/api/desktop-workspace/tasks/${task}/sessions/${session}/chat`;
+  const read = handleForWindow(
+    "session-chat:read",
+    trusted,
+    (window, ...args) => {
+      if (args.length !== 2) throw new Error("Invalid conversation arguments.");
+      const scopeId = scope(args[0]),
+        raw = chatObject(args[1]),
+        taskId = chatId(raw["taskId"]),
+        sessionId = chatId(raw["sessionId"]);
+      const key = "session-chat:" + requestId(raw["requestId"]),
+        query = new URLSearchParams();
+      const loadingMode = raw['loadingMode'];
+      if (loadingMode !== undefined && loadingMode !== 'window' && loadingMode !== 'progressive')
+        throw new Error('Invalid conversation loading mode.');
+      if (loadingMode !== undefined) query.set('loadingMode', loadingMode);
+      const summarizeCompleted = raw['summarizeCompleted'];
+      if (summarizeCompleted !== undefined && (summarizeCompleted !== true || loadingMode !== 'progressive'))
+        throw new Error('Invalid completed turn view.');
+      if (summarizeCompleted) query.set('summarizeCompleted', '1');
+      const summarizeRecent = raw['summarizeRecent'];
+      if (summarizeRecent !== undefined && (summarizeRecent !== true || !summarizeCompleted))
+        throw new Error('Invalid recent turn view.');
+      if (summarizeRecent) query.set('summarizeRecent', '1');
+      const deferDetails = deferredToolDetails(raw['deferToolDetails']);
+      if (deferDetails) query.set('deferToolDetails', '1');
+      if (raw["after"] !== undefined)
+        query.set("after", chatText(raw["after"], 200));
+      if (raw["before"] !== undefined)
+        query.set("before", chatText(raw["before"]));
+      if (raw["following"] !== undefined)
+        query.set("following", chatText(raw["following"], 1000));
+      if (raw["following"] !== undefined && (raw["after"] !== undefined || raw["before"] !== undefined))
+        throw new Error("Choose one conversation cursor.");
+      return client.execute(
+        window,
+        scopeId,
+        `${key}:${taskId}:${sessionId}:${query}`,
+        false,
+        async (endpoint, signal) =>
+          parseChatPage(
+            await requestBackendJson(
+              endpoint,
+              {
+                path: path(taskId, sessionId) + "?" + query,
+                limit: 4 * 1024 * 1024,
+              },
+              signal,
+            ),
+            taskId,
+            sessionId,
+            loadingMode,
+            summarizeCompleted,
+            deferDetails,
+          ),
+        15000,
+      );
+    },
+  );
+  const turnWork = handleForWindow('session-chat:turn-work', trusted, (window, ...args) => {
+    if (args.length !== 2) throw new Error('Invalid turn activity arguments.');
+    const scopeId = scope(args[0]);
+    const input = parseTurnWorkRead(args[1]);
+    const { taskId, sessionId, turnId, revision, offset, requestId, limit } = input;
+    const query = new URLSearchParams({ turnId, revision, offset: String(offset) });
+    if (input.deferToolDetails) query.set('deferToolDetails', '1');
+    if (limit !== undefined) query.set('limit', String(limit));
+    if (input.timeline) query.set('timeline', '1');
+    // Engines that predate complete timelines ignore this option and return
+    // the first page. Continuation requests still use the legacy contract.
+    const complete = input.timeline && offset === 0;
+    if (complete) query.set('complete', '1');
+    return client.execute(
+      window, scopeId, `session-chat:${requestId}:${taskId}:${sessionId}:turn-work:${query}`, false,
+      async (endpoint, signal) => parseTurnWorkPage(await requestBackendJson(endpoint, {
+        path: path(taskId, sessionId) + '/turn-work?' + query,
+        limit: complete ? SESSION_CHAT_FULL_TIMELINE_BYTES
+          : (limit ?? 0) > SESSION_CHAT_TURN_WORK_LIMIT ? SESSION_CHAT_TURN_WORK_BATCH_BYTES + 16 * 1024 : 512 * 1024,
+      }, signal), input),
+      15000,
+    );
+  });
+  const toolDetails = handleForWindow('session-chat:tool-details', trusted, (window, ...args) => {
+    if (args.length !== 2) throw new Error('Invalid tool detail arguments.');
+    const scopeId = scope(args[0]);
+    const input = parseToolDetailsRead(args[1]);
+    const { taskId, sessionId, item, result, requestId } = input;
+    const query = new URLSearchParams({ itemId: item.id, revision: item.revision });
+    if (input.turnId) query.set('turnId', input.turnId);
+    if (result) {
+      query.set('resultId', result.id);
+      query.set('resultRevision', result.revision);
+    }
+    return client.execute(
+      window, scopeId, `session-chat:${requestId}:${taskId}:${sessionId}:tool-details:${query}`, false,
+      async (endpoint, signal) => parseToolDetailsReply(await requestBackendJson(endpoint, {
+        path: path(taskId, sessionId) + '/tool-details?' + query, limit: 512 * 1024,
+      }, signal), input),
+      15000,
+    );
+  });
+  const catalog = handleForWindow(
+    "session-chat:catalog",
+    trusted,
+    (window, ...args) => {
+      if (args.length !== 2) throw new Error("Invalid catalog arguments.");
+      const scopeId = scope(args[0]),
+        raw = chatObject(args[1]);
+      const taskId = chatId(raw["taskId"]),
+        sessionId = chatId(raw["sessionId"]);
+      const provider = chatText(raw["provider"], 200),
+        id = requestId(raw["requestId"]);
+      if (raw["refresh"] !== undefined && typeof raw["refresh"] !== "boolean")
+        throw new Error("Invalid catalog refresh.");
+      if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(provider))
+        throw new Error("Invalid harness.");
+      return client.execute(
+        window,
+        scopeId,
+        `session-chat:${id}:catalog:${taskId}:${sessionId}:${provider}`,
+        false,
+        async (endpoint, signal) =>
+          parseChatCatalog(
+            await requestBackendJson(
+              endpoint,
+              {
+                path:
+                  path(taskId, sessionId) +
+                  "/catalog?" +
+                  new URLSearchParams({
+                    provider,
+                    ...(raw["refresh"] === true ? { refresh: "1" } : {}),
+                  }),
+                limit: 256 * 1024,
+              },
+              signal,
+            ),
+            provider,
+          ),
+        30000,
+      );
+    },
+  );
+  const changes = handleForWindow(
+    "session-chat:changes",
+    trusted,
+    (window, ...args) => {
+      if (args.length !== 2) throw new Error("Invalid review arguments.");
+      const scopeId = scope(args[0]),
+        raw = chatObject(args[1]);
+      const taskId = chatId(raw["taskId"]),
+        sessionId = chatId(raw["sessionId"]);
+      const turnId = chatText(raw["turnId"]),
+        offset = raw["offset"],
+        lineOffset = raw["lineOffset"] ?? 0;
+      const filePath =
+        raw["path"] === undefined ? undefined : chatText(raw["path"]);
+      const revision =
+        raw["revision"] === undefined
+          ? undefined
+          : chatText(raw["revision"], 64);
+      const source = raw["source"] ?? "net";
+      if (
+        (source !== "net" && source !== "provider" && source !== "command") ||
+        !turnId ||
+        (filePath !== undefined && !filePath) ||
+        typeof offset !== "number" ||
+        !Number.isSafeInteger(offset) ||
+        offset < 0 ||
+        typeof lineOffset !== "number" ||
+        !Number.isSafeInteger(lineOffset) ||
+        lineOffset < 0 ||
+        (revision !== undefined && !/^[a-f0-9]{64}$/.test(revision))
+      )
+        throw new Error("Invalid review window.");
+      const query = new URLSearchParams({
+        turnId,
+        offset: String(offset),
+        lineOffset: String(lineOffset),
+      });
+      if (filePath !== undefined) query.set("path", filePath);
+      if (source !== "net") query.set("source", source);
+      if (revision !== undefined) query.set("revision", revision);
+      return client.execute(
+        window,
+        scopeId,
+        `session-chat:${requestId(raw["requestId"])}:${taskId}:${sessionId}:changes:${query}`,
+        false,
+        async (endpoint, signal) => {
+          const page = parseChangesPage(
+            await requestBackendJson(
+              endpoint,
+              {
+                path: path(taskId, sessionId) + "/changes?" + query,
+                limit: 512 * 1024,
+              },
+              signal,
+            ),
+            turnId,
+            filePath,
+            source,
+          );
+          if (filePath === undefined && page.offset !== offset)
+            throw new Error("The review page changed.");
+          if (revision !== undefined && page.revision !== revision)
+            throw new Error("The review revision changed.");
+          if (
+            page.content?.nextOffset !== null &&
+            page.content?.nextOffset !== undefined &&
+            page.content.nextOffset !== lineOffset + page.content.lines.length
+          )
+            throw new Error("Invalid diff cursor.");
+          return page;
+        },
+      );
+    },
+  );
+  const delivery = handleForWindow('session-chat:delivery', trusted, (window, ...args) => {
+    if (args.length !== 2) throw new Error('Invalid conversation receipt arguments.');
+    const scopeId = scope(args[0]), raw = chatObject(args[1]);
+    const taskId = chatId(raw['taskId']), sessionId = chatId(raw['sessionId']), deliveryId = raw['deliveryId'];
+    if (!isSessionChatDeliveryId(deliveryId)) throw new Error('Invalid conversation delivery ID.');
+    const key = 'session-chat:' + requestId(raw['requestId']);
+    return client.execute(window, scopeId, `${key}:${taskId}:${sessionId}:delivery:${deliveryId}`, false, async (endpoint, signal) => {
+      const reply = chatObject(await requestBackendJson(endpoint, {
+        path: path(taskId, sessionId) + '/delivery/' + deliveryId,
+        limit: 1024,
+      }, signal));
+      const status = reply['status'];
+      if (reply['taskId'] !== taskId || reply['sessionId'] !== sessionId || reply['deliveryId'] !== deliveryId ||
+          (status !== null && status !== 'pending' && status !== 'accepted' && status !== 'failed' && status !== 'unconfirmed'))
+        throw new BackendRequestError({ code: 'invalid-response', message: 'The machine returned an invalid conversation receipt.' });
+      return { taskId, sessionId, deliveryId, status };
+    }, 3000);
+  });
+  const command = handleForWindow(
+    "session-chat:command",
+    trusted,
+    (window, ...args) => {
+      if (args.length !== 2) throw new Error("Invalid conversation arguments.");
+      const scopeId = scope(args[0]),
+        raw = chatObject(args[1]),
+        taskId = chatId(raw["taskId"]),
+        sessionId = chatId(raw["sessionId"]),
+        action = parseChatAction(raw["action"]),
+        deliveryId = raw['deliveryId'];
+      if (deliveryId !== undefined && (action.type !== 'send' || !isSessionChatDeliveryId(deliveryId)))
+        throw new Error('Invalid conversation delivery ID.');
+      return client.execute(
+        window,
+        scopeId,
+        null,
+        true,
+        async (endpoint, signal) => {
+          const reply = chatObject(
+            await requestBackendJson(
+              endpoint,
+              {
+                path: path(taskId, sessionId),
+                method: "POST",
+                body: deliveryId === undefined ? action : { ...action, deliveryId },
+                limit: 4096,
+              },
+              signal,
+            ),
+          );
+          if (reply["accepted"] !== true)
+            throw new BackendRequestError({
+              code: "invalid-response",
+              message: "The machine did not confirm the conversation action.",
+            });
+          const change =
+            reply["defaultChange"] === undefined
+              ? undefined
+              : {
+                  before: parsePresetDefault(
+                    chatObject(reply["defaultChange"])["before"],
+                  ),
+                  after: parsePresetDefault(
+                    chatObject(reply["defaultChange"])["after"],
+                  ),
+                };
+          if (
+            change &&
+            ((action.type !== "preset-default" &&
+              !(action.type === "save-preset" && action.makeDefault)) ||
+              change.after.id !== action.id ||
+              change.before.revision !==
+                (action.type === "preset-default"
+                  ? action.expectedRevision
+                  : action.type === "save-preset"
+                    ? action.expectedDefaultRevision
+                    : undefined))
+          )
+            throw new BackendRequestError({
+              code: "invalid-response",
+              message: "The machine returned an incompatible default change.",
+            });
+          const removal = reply["presetRemoval"] === undefined
+            ? undefined : chatObject(reply["presetRemoval"]);
+          const position = removal?.["position"];
+          if (action.type === "preset-delete" ? !removal : !!removal)
+            throw new BackendRequestError({
+              code: "invalid-response",
+              message: "The machine returned an incompatible preset removal.",
+            });
+          if (removal) {
+            if (typeof position !== "number" || !Number.isInteger(position) || position < 0 || position >= 24)
+              throw new BackendRequestError({
+                code: "invalid-response",
+                message: "The machine returned an invalid preset position.",
+              });
+            return { accepted: true as const, presetRemoval: { position, revision: defaultRevision(removal["revision"]) } };
+          }
+          return {
+            accepted: true as const,
+            ...(change ? { defaultChange: change } : {}),
+          };
+        },
+        action.type === 'edit-prompt' ? 60000 : 30000,
+      );
+    },
+  );
+  const cancel = handleForWindow(
+    "session-chat:cancel",
+    trusted,
+    (window, ...args) => {
+      if (args.length !== 2)
+        throw new Error("Invalid conversation cancellation.");
+      client.cancel(
+        window,
+        scope(args[0]),
+        "session-chat:" + requestId(args[1]),
+      );
+    },
+  );
+  const promptEdit = handleForWindow('session-chat:prompt-edit', trusted, (window, ...args) => {
+    if (args.length !== 2) throw new Error('Invalid edit arguments.');
+    const scopeId = scope(args[0]), raw = chatObject(args[1]);
+    const taskId = chatId(raw['taskId']), sessionId = chatId(raw['sessionId']);
+    const itemId = chatText(raw['itemId']);
+    if (!itemId.trim()) throw new Error('Invalid prompt ID.');
+    const query = new URLSearchParams({ itemId });
+    return client.execute(window, scopeId,
+      `session-chat:${requestId(raw['requestId'])}:${taskId}:${sessionId}:prompt-edit:${query}`, false,
+      async (endpoint, signal) => {
+        const reply = chatObject(await requestBackendJson(endpoint, {
+          path: path(taskId, sessionId) + '/prompt-edit?' + query, limit: 400 * 1024,
+        }, signal));
+        const laterPrompts = reply['laterPrompts'], keepsContext = reply['keepsContext'];
+        if (reply['taskId'] !== taskId || reply['sessionId'] !== sessionId || reply['itemId'] !== itemId ||
+            typeof laterPrompts !== 'number' || !Number.isSafeInteger(laterPrompts) || laterPrompts < 0 ||
+            typeof keepsContext !== 'boolean')
+          throw new Error('Invalid prompt edit reply.');
+        return { taskId, sessionId, itemId, laterPrompts, keepsContext,
+          text: chatText(reply['text'], SESSION_CHAT_PROMPT_LIMIT), revision: defaultRevision(reply['revision']) };
+      }, 15000);
+  });
+  const content = handleForWindow(
+    "session-chat:content",
+    trusted,
+    (window, ...args) => {
+      if (args.length !== 2)
+        throw new Error("Invalid conversation content arguments.");
+      const scopeId = scope(args[0]),
+        raw = chatObject(args[1]),
+        taskId = chatId(raw["taskId"]),
+        sessionId = chatId(raw["sessionId"]),
+        id = chatText(raw["itemId"]),
+        part = raw["part"],
+        offset = raw["offset"];
+      if (
+        (part !== "input" && part !== "text") ||
+        typeof offset !== "number" ||
+        !Number.isSafeInteger(offset) ||
+        offset < 0
+      )
+        throw new Error("Invalid content window.");
+      const query = new URLSearchParams({
+        itemId: id,
+        part,
+        offset: String(offset),
+      });
+      return client.execute(
+        window,
+        scopeId,
+        `session-chat:${requestId(raw["requestId"])}:${taskId}:${sessionId}:content:${query}`,
+        false,
+        async (endpoint, signal) => {
+          const reply = chatObject(
+            await requestBackendJson(
+              endpoint,
+              {
+                path: path(taskId, sessionId) + "/content?" + query,
+                limit: 128 * 1024,
+              },
+              signal,
+            ),
+          );
+          if (
+            reply["itemId"] !== id ||
+            reply["part"] !== part ||
+            reply["offset"] !== offset ||
+            typeof reply["total"] !== "number" ||
+            !Number.isSafeInteger(reply["total"]) ||
+            reply["total"] < offset ||
+            (reply["nextOffset"] !== null &&
+              (typeof reply["nextOffset"] !== "number" ||
+                !Number.isSafeInteger(reply["nextOffset"]) ||
+                reply["nextOffset"] <= offset ||
+                reply["nextOffset"] > reply["total"]))
+          )
+            throw new Error("Invalid content reply.");
+          return {
+            itemId: id,
+            part,
+            offset,
+            total: reply["total"],
+            nextOffset: reply["nextOffset"],
+            text: chatText(reply["text"], 16000),
+          };
+        },
+      );
+    },
+  );
+  return () => {
+    agents();
+    attachments();
+    media();
+    changes();
+    read();
+    turnWork();
+    toolDetails();
+    catalog();
+    command();
+    delivery();
+    cancel();
+    promptEdit();
+    content();
+  };
+}

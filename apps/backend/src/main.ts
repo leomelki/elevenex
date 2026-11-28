@@ -1,7 +1,3 @@
-import {
-  resolveVSCodeAssetVersion,
-  vscodeStatic,
-} from './config/vscode-static.js';
 import { interceptProcessStreams } from './backend-logs/log-interceptor.js';
 interceptProcessStreams();
 
@@ -15,6 +11,11 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module.js';
+import { TaskAppGateway } from './task-apps/task-app.gateway.js';
+import { TaskAppController } from './task-apps/task-app.controller.js';
+import { RuntimeBrowserController } from './desktop-browser/runtime-browser.controller.js';
+import { RuntimeBrowserStream } from './desktop-browser/runtime-stream.js';
+
 import { TerminalGateway } from './terminal/terminal.gateway.js';
 import { UserTerminalGateway } from './user-terminal/user-terminal.gateway.js';
 import { ActionsGateway } from './actions/actions.gateway.js';
@@ -29,28 +30,26 @@ import { ServerConnectionGateway } from './server-connection/server-connection.g
 import { ClaudeRuntimeService } from './claude-runtime/claude-runtime.service.js';
 import { RuntimeControlService } from './runtime-control/runtime-control.service.js';
 import { ElevenexMcpHttpTransport } from './mcp/transport/elevenex-mcp-http.transport.js';
+import { McpAgentEndpointService } from './mcp/transport/mcp-agent-endpoint.service.js';
 import { AgentChannelGateway } from './mcp/human-channel/agent-channel.gateway.js';
 import { DesktopPortForwardingGateway } from './mcp/port-forwarding/desktop-port-forwarding.gateway.js';
 import { CookieProxyService } from './plannotator/cookie-proxy.service.js';
-import { join } from 'path';
 import * as http from 'http';
 import * as express from 'express';
 import { createEdgeProxyServer } from './proxy/edge-proxy.server.js';
+import { DesktopTerminalGateway } from './user-terminal/stream/desktop-terminal.gateway.js';
 import {
   getEdgeProxyUpstreamOrigin,
   getElevenexBindHost,
   getElevenexProxyPort,
 } from './config/ports.js';
-import { readFile } from 'fs/promises';
+import { chmod } from 'fs/promises';
+import { claimWindowsBackend, listenWindowsDesktop } from './config/windows-desktop-pipe.js';
+import { isAbsolute } from 'path';
 import {
   getBackendRuntimeRoot,
-  getBackendVSCodeStaticPath,
 } from './config/runtime-paths.js';
 import { ShellEnvService } from './config/shell-env.service.js';
-import {
-  buildVSCodeWebLauncherHtml,
-  renderVSCodeWorkbenchHtml,
-} from './config/vscode-web-launcher.js';
 import {
   buildMcpAuthProxyUnavailableHtml,
   parseMcpAuthProxyRequestUrl,
@@ -72,11 +71,22 @@ function listenServer(
 }
 
 async function bootstrap() {
+  const windowsSocket = process.platform === 'win32' && process.env.ELEVENEX_DESKTOP_SOCKET;
+  const windowsKey = process.env.ELEVENEX_WINDOWS_PIPE_KEY;
+  const windowsOwnerPipe = process.env.ELEVENEX_WINDOWS_OWNER_PIPE;
+  delete process.env.ELEVENEX_WINDOWS_OWNER_PIPE;
+  delete process.env.ELEVENEX_WINDOWS_PIPE_KEY;
+  delete process.env.ELEVENEX_APP_ACCESS;
+  delete process.env.ELEVENEX_APP_HANDOFF;
+  delete process.env.ELEVENEX_CODE_ACCESS;
+  if (windowsSocket) await claimWindowsBackend(windowsOwnerPipe ?? '');
   // The parsers are installed by hand further down, after the routes that need
   // to read the raw request stream themselves.
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bodyParser: false,
   });
+  // The application, rather than a browser library, owns child-process shutdown.
+  app.enableShutdownHooks(['SIGINT', 'SIGTERM']);
   app.setGlobalPrefix('api');
 
   // A user-requested restart (Settings → Backend) exits with a code the
@@ -103,106 +113,6 @@ async function bootstrap() {
       next();
     },
   );
-
-  // Serve a stable launcher in both dev and packaged modes.
-  app.use(
-    '/vscode-static/index.html',
-    (_req: express.Request, res: express.Response) => {
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-store');
-      res.send(buildVSCodeWebLauncherHtml());
-    },
-  );
-
-  const vscodeStaticPath = getBackendVSCodeStaticPath();
-  const vscodeAssetVersion = await resolveVSCodeAssetVersion(vscodeStaticPath);
-
-  // workbench.html ships with {{WORKBENCH_WEB_BASE_URL}}-style placeholders
-  // that VS Code's own server would substitute. Render it ourselves and inject
-  // window.product from the iframe query string so asset URLs resolve and the
-  // workspace/extensions load.
-  const renderWorkbench = async (
-    req: express.Request,
-    res: express.Response,
-    next: express.NextFunction,
-    sourcePath: string,
-  ) => {
-    try {
-      const raw = await readFile(sourcePath, 'utf-8');
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-store');
-      res.send(
-        renderVSCodeWorkbenchHtml(raw, {
-          baseUrl: `/vscode-static/v/${vscodeAssetVersion}`,
-        }),
-      );
-    } catch (error) {
-      next(error);
-    }
-  };
-
-  app.use(
-    '/vscode-static/out/vs/code/browser/workbench/workbench.html',
-    (
-      req: express.Request,
-      res: express.Response,
-      next: express.NextFunction,
-    ) => {
-      renderWorkbench(
-        req,
-        res,
-        next,
-        join(
-          vscodeStaticPath,
-          'out',
-          'vs',
-          'code',
-          'browser',
-          'workbench',
-          'workbench.html',
-        ),
-      );
-    },
-  );
-
-  app.use(
-    '/vscode-static/out/vs/code/browser/workbench/workbench-dev.html',
-    (
-      req: express.Request,
-      res: express.Response,
-      next: express.NextFunction,
-    ) => {
-      renderWorkbench(
-        req,
-        res,
-        next,
-        join(
-          vscodeStaticPath,
-          'out',
-          'vs',
-          'code',
-          'browser',
-          'workbench',
-          'workbench-dev.html',
-        ),
-      );
-    },
-  );
-
-  app.use(
-    `/vscode-static/v/${vscodeAssetVersion}`,
-    vscodeStatic(vscodeStaticPath, true),
-  );
-  // Older bookmarks remain usable but never receive immutable caching.
-  app.use('/vscode-static', vscodeStatic(vscodeStaticPath));
-
-  // Serve FileSystemProvider extension bundle
-  const ext1Path = join(runtimeRoot, 'vscode-filesystem-provider');
-  app.use('/vscode-ext1', express.static(ext1Path));
-
-  // Serve SCM extension bundle
-  const ext2Path = join(runtimeRoot, 'vscode-scm-extension');
-  app.use('/vscode-ext2', express.static(ext2Path));
 
   // Register MCP auth proxy BEFORE body-parser so req stream is readable
   // Proxies localhost MCP auth servers for SSH/remote access: /api/mcp-auth-proxy/:port/*
@@ -337,11 +247,15 @@ async function bootstrap() {
   // MaxListenersExceededWarning on stderr that ends up masking real errors.
   httpServer.setMaxListeners(0);
 
+  app.get(TaskAppGateway).attach(httpServer, app.get(TaskAppController));
+  app.get(RuntimeBrowserStream).attachToServer(httpServer, app.get(RuntimeBrowserController));
+
   const terminalGateway = app.get(TerminalGateway);
   terminalGateway.attachToServer(httpServer);
 
   const userTerminalGateway = app.get(UserTerminalGateway);
   userTerminalGateway.attachToServer(httpServer);
+  app.get(DesktopTerminalGateway).attachToServer(httpServer);
 
   const actionsGateway = app.get(ActionsGateway);
   actionsGateway.attachToServer(httpServer);
@@ -373,6 +287,9 @@ async function bootstrap() {
   agentChannelGateway.attachToServer(httpServer);
   app.get(DesktopPortForwardingGateway).attachToServer(httpServer);
 
+  // Publish a harness-reachable MCP endpoint before module initialization can
+  // bootstrap missions. Socket-only desktop transport has no public TCP API.
+  await app.get(McpAgentEndpointService).prepare();
   await app.init();
 
   const edgeProxyServer = createEdgeProxyServer({
@@ -380,11 +297,24 @@ async function bootstrap() {
     upstreamOrigin: getEdgeProxyUpstreamOrigin(),
     localHttpServer: httpServer,
   });
-  await listenServer(
-    edgeProxyServer,
-    getElevenexProxyPort(),
-    getElevenexBindHost(),
-  );
+  // Opt-in desktop remote transport. A private Unix socket keeps the backend
+  // inaccessible to other remote users; legacy/local launchers retain TCP.
+  const desktopSocket = process.env.ELEVENEX_DESKTOP_SOCKET;
+  if (windowsSocket) {
+    await listenWindowsDesktop(edgeProxyServer, windowsSocket, windowsKey ?? '');
+  } else if (desktopSocket) {
+    if (!isAbsolute(desktopSocket) || desktopSocket.length > 100 || process.platform === 'win32') {
+      throw new Error('Invalid desktop backend socket');
+    }
+    process.umask(0o077);
+    await new Promise<void>((resolve, reject) => {
+      edgeProxyServer.once('error', reject);
+      edgeProxyServer.listen(desktopSocket, resolve);
+    });
+    await chmod(desktopSocket, 0o600);
+  } else {
+    await listenServer(edgeProxyServer, getElevenexProxyPort(), getElevenexBindHost());
+  }
 }
 bootstrap().catch((error) => {
   // A failed bootstrap (e.g. the edge proxy cannot bind its port) must kill the

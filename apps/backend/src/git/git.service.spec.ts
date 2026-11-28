@@ -2,7 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { execFileSync, execSync } from 'node:child_process';
+import { execFile, execFileSync, execSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   GitService,
   isValidGitRef,
@@ -10,6 +11,10 @@ import {
 } from './git.service.js';
 import type { SimpleGit, StatusResult } from 'simple-git';
 import { clearWorktreeFingerprintCache } from './git-worktree-fingerprint.js';
+import {
+  configureWorktreeStatusReader,
+  resetWorktreeStatusReader,
+} from './worktree-status-reader.js';
 import { BadRequestException } from '@nestjs/common';
 import { TextAgentGenerationService } from '../agent-generation/text-agent-generation.service.js';
 
@@ -27,6 +32,10 @@ describe('GitService', () => {
   let service: GitService;
   let tmpDir: string;
   let repoPath: string;
+  let generate: jest.Mock<
+    ReturnType<TextAgentGenerationService['generate']>,
+    Parameters<TextAgentGenerationService['generate']>
+  >;
 
   function createTrackedWorktree(name: string): string {
     const relativePath = `.worktrees/${name}`;
@@ -78,12 +87,16 @@ describe('GitService', () => {
   }
 
   beforeEach(async () => {
+    generate = jest.fn<
+      ReturnType<TextAgentGenerationService['generate']>,
+      Parameters<TextAgentGenerationService['generate']>
+    >();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         GitService,
         {
           provide: TextAgentGenerationService,
-          useValue: { generate: jest.fn() },
+          useValue: { generate },
         },
       ],
     }).compile();
@@ -339,6 +352,7 @@ describe('GitService', () => {
       fs.writeFileSync(path.join(repoPath, 'new-file.txt'), 'new content');
       await service.stageFiles(repoPath, ['new-file.txt']);
       const hookPath = path.join(repoPath, '.git', 'hooks', 'pre-commit');
+      fs.mkdirSync(path.dirname(hookPath), { recursive: true });
       fs.writeFileSync(
         hookPath,
         '#!/bin/sh\necho "pre-commit rejected commit" >&2\nexit 1\n',
@@ -378,8 +392,6 @@ describe('GitService', () => {
       );
       await service.stageFiles(repoPath, ['feature.ts']);
 
-      const generate = (service as any).textAgentGenerationService
-        .generate as jest.Mock;
       generate.mockResolvedValue({
         provider: 'claude',
         model: 'haiku',
@@ -390,10 +402,11 @@ describe('GitService', () => {
 
       expect(generate).toHaveBeenCalledTimes(1);
       const request = generate.mock.calls[0][0];
-      expect(request.claude.tools).toEqual([]);
-      expect(request.claude.settingSources).toEqual([]);
-      expect(typeof request.claude.systemPrompt).toBe('string');
-      expect(request.claude.systemPrompt.length).toBeLessThan(300);
+      expect(request.claude?.tools).toEqual([]);
+      expect(request.claude?.settingSources).toEqual([]);
+      const systemPrompt = request.claude?.systemPrompt;
+      expect(typeof systemPrompt).toBe('string');
+      expect(systemPrompt?.length).toBeLessThan(300);
       expect(request.prompt).toContain('Repository convention docs:');
       expect(request.prompt).toContain('### AGENTS.md');
       expect(request.prompt).toContain(
@@ -409,19 +422,135 @@ describe('GitService', () => {
       );
     });
 
-    it('should reject when the selected provider cannot generate a message', async () => {
-      fs.writeFileSync(
-        path.join(repoPath, 'feature.ts'),
-        'export const value = 1;\n',
-      );
-      await service.stageFiles(repoPath, ['feature.ts']);
-      jest
-        .spyOn(service as any, 'generateCommitMessageWithClaude')
-        .mockResolvedValue(null);
+    it.each(['claude', 'codex', 'pi', 'opencode'] as const)(
+      'does not restart %s or substitute another provider after generation fails',
+      async (provider) => {
+        fs.writeFileSync(
+          path.join(repoPath, 'feature.ts'),
+          'export const value = 1;\n',
+        );
+        await service.stageFiles(repoPath, ['feature.ts']);
+        generate.mockResolvedValue(null);
 
+        await expect(
+          service.suggestCommitMessage(repoPath, provider),
+        ).rejects.toThrow(
+          `Could not generate a commit message with ${provider}.`,
+        );
+        expect(generate).toHaveBeenCalledTimes(1);
+        expect(generate).toHaveBeenCalledWith(
+          expect.objectContaining({ provider }),
+        );
+      },
+    );
+
+    it('retries malformed AI output with a correction hint', async () => {
+      fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'changed');
+      await service.stageFiles(repoPath, ['initial.txt']);
+      generate
+        .mockResolvedValueOnce({
+          provider: 'codex',
+          model: null,
+          text: 'not a commit message',
+        })
+        .mockResolvedValueOnce({
+          provider: 'codex',
+          model: null,
+          text: '{"subject":"fix: correct behavior","body":null}',
+        });
+      expect(
+        await service.suggestCommitMessage(repoPath, 'codex'),
+      ).toMatchObject({ subject: 'fix: correct behavior', source: 'codex' });
+      expect(generate).toHaveBeenCalledTimes(2);
+      expect(generate.mock.calls[1][0].prompt).toContain(
+        'Your previous response could not be parsed',
+      );
+    });
+
+    it('bounds malformed-output correction attempts', async () => {
+      fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'changed');
+      await service.stageFiles(repoPath, ['initial.txt']);
+      generate.mockResolvedValue({
+        provider: 'codex',
+        model: null,
+        text: 'invalid',
+      });
       await expect(
-        service.suggestCommitMessage(repoPath, 'claude'),
-      ).rejects.toThrow('Could not generate a commit message with claude.');
+        service.suggestCommitMessage(repoPath, 'codex'),
+      ).rejects.toThrow('Could not generate a commit message with codex.');
+      expect(generate).toHaveBeenCalledTimes(3);
+    });
+
+    it('bounds large staged patches before generation and disables external diff drivers', async () => {
+      execFileSync(
+        'git',
+        ['config', 'diff.external', 'elevenex-missing-diff-driver'],
+        { cwd: repoPath },
+      );
+      fs.writeFileSync(
+        path.join(repoPath, 'large.txt'),
+        'large staged change\n'.repeat(100_000),
+      );
+      await service.stageFiles(repoPath, ['large.txt']);
+      generate.mockResolvedValue({
+        provider: 'codex',
+        model: null,
+        text: '{"subject":"Update large file","body":null}',
+      });
+      await service.suggestCommitMessage(repoPath, 'codex');
+      const prompt = generate.mock.calls[0][0].prompt;
+      expect(prompt).toContain('large staged change');
+      expect(prompt).toContain(
+        '[diff truncated for commit message generation]',
+      );
+      expect(typeof prompt === 'string' && prompt.length).toBeLessThan(30_000);
+    });
+
+    it('uses the supplied snapshot index for both status and diff context', async () => {
+      configureWorktreeStatusReader({ indexSettleMs: 0 });
+      try {
+        execFileSync('git', ['config', 'core.untrackedCache', 'true'], {
+          cwd: repoPath,
+        });
+        fs.writeFileSync(
+          path.join(repoPath, 'snapshot-feature.ts'),
+          'export const snapshotFeature = true;\n',
+        );
+        await service.stageFiles(repoPath, ['snapshot-feature.ts']);
+        const indexFile = path.join(tmpDir, 'snapshot-index');
+        fs.copyFileSync(path.join(repoPath, '.git', 'index'), indexFile);
+        execFileSync('git', ['reset', '--mixed', 'HEAD'], { cwd: repoPath });
+        generate.mockResolvedValue({
+          provider: 'codex',
+          model: null,
+          text: '{"subject":"feat(git): add snapshot feature","body":null}',
+        });
+
+        await service.suggestCommitMessage(repoPath, 'codex', indexFile);
+
+        expect(generate.mock.calls[0][0].prompt).toContain('snapshot-feature.ts');
+        expect(generate.mock.calls[0][0].prompt).toContain(
+          '+export const snapshotFeature = true;',
+        );
+        expect(
+          execFileSync('git', ['diff', '--cached', '--name-only'], {
+            cwd: repoPath,
+            encoding: 'utf8',
+          }),
+        ).toBe('');
+      } finally {
+        configureWorktreeStatusReader(null);
+        resetWorktreeStatusReader(repoPath);
+      }
+    });
+
+    it('preserves the explicit-provider requirement for direct API callers', async () => {
+      await expect(
+        service.suggestCommitMessage(repoPath, undefined),
+      ).rejects.toThrow(
+        'Commit message generation requires an active provider.',
+      );
+      expect(generate).not.toHaveBeenCalled();
     });
 
     it('should generate commit messages with pi when pi is the selected provider', async () => {
@@ -430,14 +559,11 @@ describe('GitService', () => {
         'export const value = 1;\n',
       );
       await service.stageFiles(repoPath, ['feature.ts']);
-      jest
-        .spyOn(service as any, 'generateCommitMessageWithPi')
-        .mockResolvedValue({
-          subject: 'feat(git): support pi commit messages',
-          body: null,
-          confidence: 'medium',
-          source: 'pi',
-        });
+      generate.mockResolvedValue({
+        provider: 'pi',
+        model: null,
+        text: '{"subject":"feat(git): support pi commit messages","body":null}',
+      });
 
       await expect(
         service.suggestCommitMessage(repoPath, 'pi'),
@@ -455,14 +581,11 @@ describe('GitService', () => {
         'export const value = 1;\n',
       );
       await service.stageFiles(repoPath, ['feature.ts']);
-      jest
-        .spyOn(service as any, 'generateCommitMessageWithCodex')
-        .mockResolvedValue({
-          subject: 'feat(git): support codex commit messages',
-          body: null,
-          confidence: 'medium',
-          source: 'codex',
-        });
+      generate.mockResolvedValue({
+        provider: 'codex',
+        model: null,
+        text: '{"subject":"feat(git): support codex commit messages","body":null}',
+      });
 
       await expect(
         service.suggestCommitMessage(repoPath, 'codex'),
@@ -575,6 +698,28 @@ describe('GitService', () => {
   });
 
   describe('getStatusSummary', () => {
+    it('versions local HEAD, index and same-count worktree edits independently of remote refs', async () => {
+      const execute = promisify(execFile);
+      const run = (...args: string[]) => execute('git', args, { cwd: repoPath });
+      const file = path.join(repoPath, 'initial.txt');
+      await fs.promises.writeFile(file, 'first replacement\n');
+      const first = await service.getStatusSummary(repoPath);
+      expect(first.changesRevision).toMatch(/^[a-f0-9]{64}$/);
+      expect((await service.getStatusSummary(repoPath)).changesRevision).toBe(first.changesRevision);
+      await fs.promises.writeFile(file, 'other replacement\n');
+      const second = await service.getStatusSummary(repoPath);
+      expect(second.total).toEqual(first.total);
+      expect(second.changesRevision).not.toBe(first.changesRevision);
+      await service.stageFiles(repoPath, ['initial.txt']);
+      const staged = await service.getStatusSummary(repoPath);
+      expect(staged.changesRevision).not.toBe(second.changesRevision);
+      await run('commit', '-m', 'Save changes');
+      const committed = await service.getStatusSummary(repoPath);
+      expect(committed.changesRevision).not.toBe(staged.changesRevision);
+      await run('update-ref', 'refs/remotes/origin/other', 'HEAD');
+      expect((await service.getStatusSummary(repoPath)).changesRevision).toBe(committed.changesRevision);
+    });
+
     it.each(['stage', 'unstage', 'commit'] as const)(
       'does not reuse a pre-%s summary that is still waiting for remote metadata',
       async (mutation) => {
@@ -1187,7 +1332,11 @@ describe('GitService', () => {
     it('reads the current branch in an unborn repository', async () => {
       const unborn = path.join(tmpDir, 'unborn');
       fs.mkdirSync(unborn);
-      execFileSync('git', ['init', '-b', 'new-branch'], {
+      execFileSync('git', ['init'], {
+        cwd: unborn,
+        stdio: 'pipe',
+      });
+      execFileSync('git', ['symbolic-ref', 'HEAD', 'refs/heads/new-branch'], {
         cwd: unborn,
         stdio: 'pipe',
       });

@@ -1,0 +1,65 @@
+:host {
+  display: block;
+  padding: var(--space-8);
+}
+header,
+section,
+.intent {
+  max-width: 1100px;
+  margin-inline: auto;
+}
+header {
+  margin-bottom: var(--space-6);
+}
+h1 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-display-size);
+  line-height: var(--text-display-line);
+  letter-spacing: var(--text-display-tracking);
+}
+p {
+  margin: 0;
+  color: var(--ink-muted);
+}
+section {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-glass);
+  margin-bottom: var(--space-4);
+}
+.samples {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-4);
+}
+.samples > div {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 36px;
+}
+.samples > div > span {
+  width: 190px;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  flex: none;
+}
+.context {
+  overflow: clip;
+}
+.briefs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 688px;
+  padding: var(--space-6);
+}
+.controls {
+  display: flex;
+  gap: var(--space-2);
+  padding: 0 var(--space-6) var(--space-6);
+}
+.intent {
+  font-size: var(--text-caption-size);
+}

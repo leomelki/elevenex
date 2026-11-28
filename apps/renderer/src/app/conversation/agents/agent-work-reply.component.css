@@ -1,0 +1,20 @@
+:host { display: block; min-width: 0; }
+.quote { border: 1px solid var(--line); border-inline-start: 2px solid var(--accent); border-radius: var(--radius-md); background: var(--surface-raised); }
+header, footer { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) var(--space-3); }
+header { border-bottom: 1px solid var(--line); font-size: var(--text-ui-size); }
+footer { border-top: 1px solid var(--line); padding-block: var(--space-1); }
+.mark { display: inline-flex; position: relative; z-index: 1; }
+.mark ex-agent-mark { --agent-mark-size: 20px; }
+.from { min-width: 0; overflow-wrap: anywhere; }
+.from strong { margin-inline-start: 2px; }
+.identity, .excerpt, .files { color: var(--ink-muted); font-size: var(--text-caption-size); }
+.identity { margin-inline-start: auto; overflow-wrap: anywhere; }
+.body, .preview { padding: var(--space-2) var(--space-3); }
+.preview {
+  max-block-size: calc(3 * var(--text-body-line)); padding-block: 0;
+  margin: var(--space-2) 0; overflow: hidden; overflow-wrap: anywhere;
+}
+.accessible-preview { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.grow { flex: 1; }
+.files { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); min-width: 0; max-width: 100%; }
+.files ex-file-chip { max-width: 100%; }
