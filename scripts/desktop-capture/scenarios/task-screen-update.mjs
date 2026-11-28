@@ -15,7 +15,7 @@ export default async function* (capture) {
     await owner(component => component.store.selectSession({ taskId: '11', sessionId: '101' }));
     await finish();
     assert.equal(await capture.evaluate(() => document.querySelectorAll('article.current .new-session, article.current .empty-session').length), 0);
-    assert.equal(await capture.evaluate(() => document.querySelector('ex-task-header .close-task')?.getAttribute('aria-label')), 'Close task');
+    assert.ok(await capture.evaluate(() => document.querySelector('ex-task-header [aria-label="Task actions"]')));
     yield {name: `${theme}-task`, inspect: ['ex-task-header', 'article.current .add']};
     await capture.motion.freeze();
     await capture.click('ex-git-bar .primary');
@@ -54,9 +54,12 @@ export default async function* (capture) {
     await capture.waitFor(() => !document.querySelector('ex-commit-panel .loading') && document.querySelector('ex-commit-panel .note')?.textContent.includes('Leave it out'));
     yield {name: `${theme}-secrets-included`, inspect: ['ex-commit-panel .box']};
     // Outside and the same trigger both close without submitting.
-    await capture.click('ex-task-header .close-task'); await finish();
+    await capture.click('ex-task-header [aria-label="Task actions"]');
+    await capture.waitFor(() => document.querySelector('[role="menu"][aria-label="Task actions"]'));
+    await capture.press('End'); await capture.press('Enter'); await finish();
     await capture.waitFor(() => document.querySelector('[role="dialog"][aria-label="Close task"]'));
     await capture.press('Escape'); await finish();
+    assert.equal(await capture.evaluate(() => document.activeElement?.matches('ex-task-header [aria-label="Task actions"]')), true);
     await capture.click('ex-git-bar .primary'); await finish();
     await capture.waitFor(() => !document.querySelector('ex-commit-panel .loading'));
     await capture.fill('ex-commit-panel .message input', 'Keep this draft during a reversal');

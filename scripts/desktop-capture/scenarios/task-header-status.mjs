@@ -14,7 +14,9 @@ export default async function* (capture) {
     component.fixture.workspaceGit = Object.assign(() => reply, { complete });
   });
   const complete = result => capture.component('ex-connected-workspace-demo', (component, result) => component.fixture.workspaceGit.complete(result), result);
-  const summary = (files = 0, behind = 0) => ({ ok: true, value: { taskId: 11, branch: 'fix/idempotent-retries', upstream: 'origin/main', ahead: 0, behind, files, additions: files ? 214 : 0, deletions: files ? 38 : 0, conflicted: false } });
+  const summary = (files = 0, behind = 0, upstream = 'origin/main') => ({ ok: true, value: { taskId: 11, branch: 'fix/idempotent-retries', upstream, ahead: 0, behind, files, additions: files ? 214 : 0, deletions: files ? 38 : 0, conflicted: false } });
+  const menuTrigger = 'ex-task-header [aria-label="Task actions"]';
+  const menu = '[role="menu"][aria-label="Task actions"]';
   const geometry = () => capture.evaluate(() => {
     const header = document.querySelector('ex-task-header header');
     const row = header.querySelector('.row');
@@ -27,7 +29,6 @@ export default async function* (capture) {
       row: box(row),
       rowCount: header.querySelectorAll(':scope > .row').length,
       titleStart: box(row.querySelector('h1')).left,
-      close: box(row.querySelector('.close-task')),
       panel: box(row.querySelector('[aria-label="Toggle side panel"]')),
       overflow: row.scrollWidth > row.clientWidth || document.documentElement.scrollWidth > innerWidth,
     };
@@ -40,6 +41,7 @@ export default async function* (capture) {
       await capture.theme(theme); await capture.reducedMotion(narrow);
       await capture.evaluate(() => { location.href = '/connected-workspace'; });
       await capture.waitFor(() => document.querySelector('[data-task-id="11"]'));
+      await capture.component('ex-connected-workspace-demo', component => component.fixture.liveSessionStatus(101, 'done'));
       await arm();
       await owner(component => component.store.selectSession({ taskId: '11', sessionId: '101' }));
       await capture.waitFor(() => document.querySelector('ex-task-header .git-loading')?.textContent === 'Checking Git status…');
@@ -60,16 +62,36 @@ export default async function* (capture) {
       assert.deepEqual(await geometry(), loading, 'Git status must preserve the toolbar, title start, and trailing controls');
       yield { name: `${name}-current`, inspect: ['ex-task-header', 'ex-task-header .row'], metadata: await geometry() };
 
-      await capture.evaluate(() => document.querySelector('ex-task-header .close-task').focus());
-      await capture.press('Tab'); await finish();
-      assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Toggle side panel');
+      await capture.evaluate(selector => document.querySelector(selector).focus(), menuTrigger);
+      await capture.press('ArrowDown'); await finish();
+      assert.equal(await capture.evaluate(() => document.activeElement?.textContent.trim()), 'Rename branch');
+      await capture.press('ArrowDown');
+      assert.equal(await capture.evaluate(() => document.activeElement?.textContent.trim()), 'Copy branch name');
+      await capture.press('ArrowDown');
+      assert.equal(await capture.evaluate(() => document.activeElement?.textContent.trim()), 'Close task');
       assert.notEqual(await capture.evaluate(() => getComputedStyle(document.activeElement).boxShadow), 'none');
-      yield { name: `${name}-keyboard`, selector: 'ex-task-header', inspect: ['ex-task-header .panel-toggle button'] };
-      await capture.press('Escape');
+      yield { name: `${name}-task-menu`, inspect: ['ex-task-header', menu, menu + ' [role="menuitem"]'] };
+      await capture.press('Escape'); await finish();
+      assert.equal(await capture.evaluate(selector => document.activeElement?.matches(selector), menuTrigger), true);
+      await capture.press('ArrowDown');
+      await capture.press('Enter'); await finish();
+      await capture.waitFor(() => document.activeElement?.matches('[aria-label="Branch name"]'));
+      await capture.press('Escape'); await finish();
+      assert.equal(await capture.evaluate(selector => document.activeElement?.matches(selector), menuTrigger), true);
+      await capture.press('Tab');
+      assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Toggle side panel');
 
       await arm();
       await capture.component('ex-workspace-task-header', component => { void component.git.refresh(); });
-      await capture.waitFor(() => !!document.querySelector('ex-task-header .stat.quiet'));
+      await complete(summary(0, 0, 'origin/fix/idempotent-retries'));
+      await capture.waitFor(() => document.querySelector('ex-task-header .close-task')?.textContent.trim() === 'Close task');
+      await finish();
+      assert.deepEqual(await geometry(), loading, 'The labeled shortcut must preserve the header and panel position');
+      yield { name: `${name}-close-shortcut`, selector: 'ex-task-header', inspect: ['ex-task-header .close-task'] };
+
+      await arm();
+      await capture.component('ex-workspace-task-header', component => { void component.git.refresh(); });
+      await capture.waitFor(() => !!document.querySelector('ex-task-header .close-task'));
       assert.deepEqual(await geometry(), loading, 'Refreshing an existing status must keep the header still');
       yield { name: `${name}-refreshing`, selector: 'ex-task-header' };
       await complete(summary(7, narrow ? 3 : 0));
@@ -78,18 +100,19 @@ export default async function* (capture) {
       assert.deepEqual(await geometry(), loading, 'Changed-file actions must keep the same header geometry');
       const controls = await capture.evaluate(() => {
         const header = document.querySelector('ex-task-header');
-        const branch = header.querySelector('ex-branch-chip .name').getBoundingClientRect();
+        const branch = header.querySelector('.branch').getBoundingClientRect();
+        const menu = header.querySelector('.task-menu').getBoundingClientRect();
         const title = header.querySelector('h1').getBoundingClientRect();
         const count = header.querySelector('.primary .count').getBoundingClientRect();
         const pull = header.querySelector('button.pull')?.getBoundingClientRect();
         const review = header.querySelector('.stat-slot button').getBoundingClientRect();
         return {
-          titleAndBranchFit: title.width > 0 && branch.left >= title.right && branch.width >= 12,
+          identityFits: title.width > 0 && branch.left >= title.right && branch.width >= 12 && menu.left >= branch.right,
           commitCountVisible: count.width > 0,
           pullFits: !!pull && pull.right <= review.left,
         };
       });
-      assert.deepEqual(controls, { titleAndBranchFit: true, commitCountVisible: true, pullFits: narrow });
+      assert.deepEqual(controls, { identityFits: true, commitCountVisible: true, pullFits: narrow });
       yield { name: `${name}-changes`, selector: 'ex-task-header', metadata: await geometry() };
 
       await arm();

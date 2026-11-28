@@ -29,7 +29,22 @@ export class WorkspaceTaskHeaderComponent {
   protected readonly commitOpen = signal(false);
   protected readonly pushAfter = signal(false);
   protected readonly controlsDisabled = computed(() =>
-    !!this.store.selectedCreation() || this.store.busy() || !!this.git.busy() || this.closeLoading());
+    !!this.store.selectedCreation() || this.store.offline() || this.store.busy() ||
+    this.store.mutationUncertain() || !!this.git.busy() || this.closeLoading());
+  protected readonly closeSuggested = computed(() => {
+    const task = this.store.selectedTask();
+    const summary = this.git.summary();
+    if (task?.state !== 'ready' || task.temporary || task.archivedAt || summary?.taskId !== task.id ||
+      this.store.offline() || this.commitOpen() || this.git.busy() || this.git.uncertain() ||
+      this.git.error() || this.git.pullError()) return false;
+
+    // Tracking a different branch (often main) does not establish that the task branch was pushed.
+    const upstream = summary.upstream;
+    const remoteSeparator = upstream?.indexOf('/') ?? -1;
+    return remoteSeparator > 0 && upstream?.slice(remoteSeparator + 1) === summary.branch &&
+      !summary.conflicted && summary.files === 0 && summary.ahead === 0 && summary.behind === 0 &&
+      !this.store.selectedTaskHasActivity();
+  });
   protected readonly pull = computed(() => {
     const task = this.store.selectedTask();
     const summary = this.git.summary();

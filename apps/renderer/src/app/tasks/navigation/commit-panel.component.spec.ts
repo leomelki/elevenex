@@ -2,7 +2,6 @@ import { TestBed } from "@angular/core/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CommitPanelComponent } from "./commit-panel.component";
 import { TaskGroupComponent } from "../outline/task-group.component";
-import { TaskHeaderComponent } from "../lifecycle/task-header.component";
 import type { CommitFile, CommitFileWindow } from "./commit-panel.models";
 import { MorphFromMotion } from "../../ui";
 
@@ -363,17 +362,6 @@ describe("commit panel public behavior", () => {
       vi.useRealTimers();
     }
   });
-});
-it("keeps Close task the same size and identity when suggested", () => {
-  const fixture = TestBed.createComponent(TaskHeaderComponent);
-  fixture.componentRef.setInput("title", "Task");
-  fixture.detectChanges();
-  const button = fixture.nativeElement.querySelector(".close-task");
-  expect(button.getAttribute("aria-label")).toBe("Close task");
-  fixture.componentRef.setInput("closeSuggested", true);
-  fixture.detectChanges();
-  expect(fixture.nativeElement.querySelector(".close-task")).toBe(button);
-  expect(button.classList.contains("suggested")).toBe(true);
 });
 it("keeps the task header creation action when selecting a nested session", () => {
   const fixture = TestBed.createComponent(TaskGroupComponent);

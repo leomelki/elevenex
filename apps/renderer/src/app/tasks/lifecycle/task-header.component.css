@@ -41,9 +41,51 @@ h1 {
   color: var(--ink-muted);
   font-size: var(--text-caption-size);
 }
-.identity ex-branch-chip {
+.branch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   flex: 0 1 auto;
-  min-width: calc(var(--space-8) + var(--space-4));
+  min-width: calc(var(--space-6) + var(--space-2));
+  max-width: 32ch;
+  min-height: var(--space-6);
+  padding-inline: var(--space-1);
+  border-radius: var(--radius-xs);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font: var(--text-mono-meta-size) / var(--text-mono-meta-line) var(--font-mono);
+}
+.branch ex-icon {
+  flex: none;
+}
+.branch.copied ex-icon {
+  color: var(--accent);
+}
+.branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-menu {
+  flex: none;
+  width: var(--control-height);
+  padding: 0;
+  color: var(--ink-muted);
+}
+.task-menu[aria-expanded="true"] {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+.menu-branch {
+  padding: var(--space-2);
+  color: var(--ink-muted);
+  font: var(--text-mono-meta-size) / var(--text-mono-meta-line) var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.menu-divider {
+  height: 1px;
+  margin-block: var(--space-1);
+  background: var(--line);
 }
 .identity ex-project-mark,
 ex-git-bar {
@@ -118,23 +160,13 @@ ex-git-bar {
   outline: 2px solid transparent;
   box-shadow: var(--focus-ring);
 }
-.close-task {
-  flex: none;
-  width: var(--control-height);
-  padding: 0;
-  color: var(--ink-muted);
+.close-task[aria-disabled="true"] {
+  opacity: .55;
+  cursor: default;
+  transform: none;
 }
-.close-task.suggested {
-  color: var(--accent);
-}
-.close-task.suggested:hover:not(:disabled) {
-  background: var(--accent-soft);
-}
-.separator {
-  flex: none;
-  width: 1px;
-  height: var(--text-mono-meta-line);
-  background: var(--line);
+.close-task[aria-disabled="true"]:hover {
+  background: var(--surface-raised);
 }
 .panel-toggle {
   --icon-button-size: var(--control-height);
@@ -164,6 +196,17 @@ ex-git-bar {
   }
   .identity ex-project-mark {
     display: none;
+  }
+  .branch {
+    position: relative;
+    min-width: 0;
+    justify-content: center;
+  }
+  .branch-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    clip-path: inset(50%);
   }
 }
 @container task-header (width <= 360px) {

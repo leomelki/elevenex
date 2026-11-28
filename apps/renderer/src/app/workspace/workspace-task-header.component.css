@@ -9,14 +9,6 @@
   width: var(--control-height);
   padding: 0;
 }
-.pull[data-variant="secondary"] {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: color-mix(in oklab, var(--accent) 35%, transparent);
-}
-.pull[data-variant="secondary"]:hover:not([aria-disabled="true"]) {
-  background: color-mix(in oklab, var(--accent) 14%, var(--accent-soft));
-}
 .pull[data-variant="secondary"].warning {
   background: var(--attention-soft);
   color: var(--attention);

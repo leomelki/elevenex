@@ -39,7 +39,7 @@ describe('workspace dialog focus and native submission', () => {
     const store = { taskSelection: selected, selectedCreation: () => null, offline: signal(false),
       selected, selectedTask: () => ({ id: 1, projectId: 3, name: 'Task', branchName: 'work', state: 'ready' }),
       activeProject: () => 'all', projects: () => [{ id: '3', name: 'Project' }], selectedTaskStage: () => 'active', busy: () => false,
-      error: signal<string | null>(null), commitPanelAvailable: () => true,
+      error: signal<string | null>(null), commitPanelAvailable: () => true, mutationUncertain: () => false,
     };
     const git = {
       summary: () => ({ branch: 'work', behind: 0 }), commitPreview: () => null, uncertain: () => false, state: () => undefined,
@@ -83,6 +83,6 @@ for (const uncommitted of [0, 2]) it(`checks authoritative work before ${uncommi
   fixture.debugElement.query(By.directive(TaskHeaderComponent)).injector.get(TaskHeaderComponent).closeRequested.emit();
   await fixture.whenStable(); fixture.detectChanges();
   expect(bridge.workspaceClosePreview).toHaveBeenCalledExactlyOnceWith('scope', 1);
-  if (uncommitted) { expect(store.closeTask).not.toHaveBeenCalled(); expect(document.querySelector('[aria-label="Close task"]')).not.toBeNull(); }
+  if (uncommitted) { expect(store.closeTask).not.toHaveBeenCalled(); expect(document.querySelector('[role="dialog"][aria-label="Close task"]')).not.toBeNull(); }
   else expect(store.closeTask).toHaveBeenCalledExactlyOnceWith();
 });

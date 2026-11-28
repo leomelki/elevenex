@@ -183,6 +183,14 @@ export class WorkspaceStore {
   readonly selectedProject = computed(() => this.projectRecords().find(project => String(project.id) === this.activeProject()) ?? null);
   readonly selectedTask = computed(() => this.taskRecords().find(task => task.id === (this.selectedCreation()?.taskId ?? this.chosen()?.taskId)) ?? null);
   readonly selectedTaskStage = computed(() => { const task = this.selectedTask(); return task ? workspaceTaskStage(task) : 'active'; });
+  readonly selectedTaskHasActivity = computed(() => {
+    const taskId = this.taskSelection()?.taskId;
+    return taskId !== undefined && (this.navigationSessions().get(taskId) ?? []).some(session => {
+      const status = workspaceSessionStatus(session);
+      return status === 'running' || status === 'attention' ||
+        !!session.commandCount || !!session.activeChildAgents?.length;
+    });
+  });
   readonly selectedSession = computed(() => {
     const selection = this.chosen();
     return selection ? this.navigationSessions().get(selection.taskId)?.find(session => session.id === selection.sessionId) ?? this.archives.pages().get(selection.taskId)?.sessions.find(session => session.id === selection.sessionId) ?? null : null;

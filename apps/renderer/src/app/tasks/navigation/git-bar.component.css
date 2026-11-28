@@ -48,7 +48,7 @@
   white-space: nowrap;
   cursor: pointer;
 }
-.stat:hover {
+button.stat:hover {
   background: var(--surface-sunken);
   color: var(--ink);
 }

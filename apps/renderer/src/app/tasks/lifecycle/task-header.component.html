@@ -22,15 +22,44 @@
       }
       @if (repo(); as repo) { <ex-repo-tag [repo]="repo" /> }
       @if (branch(); as name) {
-        <ex-branch-chip
-          [name]="name"
-          [compact]="true"
-          [breadcrumb]="true"
-          [copied]="branchCopied()"
-          [canRename]="canRenameBranch() && !disabled()"
-          (renameRequested)="branchRename.emit($event)"
-          (copyRequested)="branchCopy.emit($event)"
-        />
+        <span class="branch" [class.copied]="branchCopied()" [title]="name">
+          <ex-icon [name]="branchCopied() ? 'check' : 'branch'" [size]="12" />
+          <span class="branch-name">{{ name }}</span>
+        </span>
+      }
+      @if (branch() || !closed()) {
+        <button exButton variant="ghost" type="button" class="task-menu" aria-label="Task actions"
+          exTooltip="Task actions" tooltipSide="bottom" [cdkMenuTriggerFor]="taskMenu">
+          <ex-icon name="more" [size]="16" />
+        </button>
+        <ng-template #taskMenu>
+          <ex-dropdown-menu label="Task actions">
+            @if (branch(); as name) {
+              <div class="menu-branch">{{ name }}</div>
+              @if (!closed()) {
+                <button exDropdownItem [disabled]="!canRenameBranch() || disabled()" (triggered)="branchRename.emit(name)">
+                  <ex-icon name="pencil" [size]="14" />Rename branch
+                </button>
+              }
+              <button exDropdownItem (triggered)="branchCopy.emit(name)">
+                <ex-icon name="copy" [size]="14" />Copy branch name
+              </button>
+            }
+            @if (!closed()) {
+              @if (branch()) {
+                <div class="menu-divider" role="separator"></div>
+              }
+              @if (canKeepOpen()) {
+                <button exDropdownItem [disabled]="disabled()" (triggered)="keepOpenRequested.emit()">
+                  <ex-icon name="save" [size]="14" />Keep open
+                </button>
+              }
+              <button exDropdownItem [disabled]="disabled()" (triggered)="closeRequested.emit()">
+                <ex-icon name="archive" [size]="14" />Close task
+              </button>
+            }
+          </ex-dropdown-menu>
+        </ng-template>
       }
       @for (link of links(); track link.kind + link.label) {
         <ex-link-chip
@@ -71,7 +100,7 @@
           [toolbar]="true"
           [allowedActions]="gitAllowedActions()"
           [actionsDisabled]="gitActionsDisabled()"
-          [quietLabel]="gitQuietLabel()"
+          [quietLabel]="showCloseAction() ? '' : gitQuietLabel()"
           (action)="gitAction.emit($event)"
           (jobSessionRequested)="gitJobSessionRequested.emit($event)"
           (jobCancelled)="gitJobCancelled.emit($event)"
@@ -80,13 +109,11 @@
           <div gitPanel><ng-content select="[gitPanel]" /></div>
         </ex-git-bar>
       }
-      @if (!closed()) {
-        <button exButton variant="ghost" class="close-task" aria-label="Close task"
-          exTooltip="Close task" tooltipSide="bottom" [class.suggested]="closeSuggested()"
-          [disabled]="disabled()" (click)="closeRequested.emit()">
-          <ex-icon name="close-task" [size]="16" />
+      @if (showCloseAction()) {
+        <button exButton variant="secondary" type="button" class="close-task"
+          [attr.aria-disabled]="disabled()" (click)="!disabled() && closeRequested.emit()">
+          <ex-icon name="archive" [size]="14" />Close task
         </button>
-        <span class="separator" aria-hidden="true"></span>
       }
       <ex-icon-button
         class="panel-toggle"
@@ -99,3 +126,4 @@
     </div>
   </div>
 </header>
+<span class="visually-hidden" role="status">{{ branchCopied() ? 'Branch name copied' : '' }}</span>

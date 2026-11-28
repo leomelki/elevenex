@@ -1,10 +1,12 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   input,
   output,
 } from '@angular/core';
-import { ButtonComponent, IconButtonComponent, IconComponent, TooltipDirective } from '../../ui';
+import { CdkMenuTrigger } from '@angular/cdk/menu';
+import { ButtonComponent, DropdownItemComponent, DropdownMenuComponent, IconButtonComponent, IconComponent, TooltipDirective } from '../../ui';
 import type {
   GitAction,
   GitState,
@@ -15,17 +17,18 @@ import type {
 } from '../task.models';
 import { ProjectMarkComponent } from '../projects/project-mark.component';
 import { RepoTagComponent } from './repo-tag.component';
-import { BranchChipComponent } from '../branches/branch-chip.component';
 import { GitBarComponent } from '../navigation/git-bar.component';
 import { LinkChipComponent } from './link-chip.component';
 @Component({
   selector: 'ex-task-header',
   imports: [
     ButtonComponent,
+    CdkMenuTrigger,
+    DropdownItemComponent,
+    DropdownMenuComponent,
     IconButtonComponent,
     IconComponent,
     ProjectMarkComponent,
-    BranchChipComponent,
     GitBarComponent,
     LinkChipComponent,
     RepoTagComponent,
@@ -50,6 +53,7 @@ export class TaskHeaderComponent {
   readonly branchCopied = input(false);
   readonly disabled = input(false);
   readonly closed = input(false);
+  readonly canKeepOpen = input(false);
   readonly canRenameBranch = input(true);
   readonly canLink = input(true);
   readonly gitAllowedActions = input<readonly GitAction[]>();
@@ -57,6 +61,7 @@ export class TaskHeaderComponent {
   readonly gitQuietLabel = input('Up to date');
   readonly unreachable = input<string>();
   readonly closeRequested = output<void>();
+  readonly keepOpenRequested = output<void>();
   readonly panelToggle = output<void>();
   readonly branchRename = output<string>();
   readonly branchCopy = output<string>();
@@ -66,4 +71,6 @@ export class TaskHeaderComponent {
   readonly gitJobSessionRequested = output<string>();
   readonly gitJobCancelled = output<string>();
   readonly changesRequested = output<void>();
+
+  protected readonly showCloseAction = computed(() => !this.closed() && this.closeSuggested());
 }

@@ -118,10 +118,13 @@ inference for old rows that retain a default Claude choice after using another
 harness. Recovery uses bounded metadata pages, without reading transcript files,
 starting runtimes or scanning all sessions at startup.
 
-The selected task header shows **Temporary task** and **Keep open** when the
-engine marks an agent-created task as temporary. Keep open persists the user's
-decision under the selected backend scope and revokes the creating session's
+The selected task header shows **Temporary task** with **Keep open** in its
+**Task actions** menu when the engine marks an agent-created task as temporary.
+Keep open persists the user's decision under the selected backend scope and revokes the creating session's
 permission to close it independently. Older engines omit the temporary flag.
+Regular tasks get a labeled **Close task** shortcut when Git reports a clean
+checkout in sync with its same-named upstream and no loaded session is active.
+Both paths to Close task check live work and running resources before closing.
 
 ## Bounds and invalidation
 

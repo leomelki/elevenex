@@ -25,20 +25,89 @@ describe('Workspace task header status', () => {
       uncertain: signal(false), commitPreview: signal(null), refresh: vi.fn(), perform: vi.fn(),
     };
     const store = {
-      selectedTask: signal({ id: 11, name: 'A task', branchName: 'work', projectId: 1, projectRepositoryCount: 1, state: 'ready' }),
+      selectedTask: signal({ id: 11, name: 'A task', branchName: 'work', projectId: 1, projectRepositoryCount: 1, state: 'ready', temporary: false }),
       taskSelection: signal({ scopeId: 'scope', taskId: 11 }), selectedTaskStage: signal('active'),
       activeProject: signal('all'), projects: signal([{ id: '1', name: 'Project' }]),
       selectedCreation: signal(null), busy: signal(false), offline: signal(false),
       commitPanelAvailable: signal(false), machine: signal({ name: 'This machine' }),
+      mutationUncertain: signal(false), selectedTaskHasActivity: signal(false), error: signal<string | null>(null),
+      keepTaskOpen: vi.fn(), closeTask: vi.fn(),
+    };
+    const bridge = {
+      writeClipboardText: vi.fn(async () => {}),
+      workspaceClosePreview: vi.fn(async () => ({ ok: true, value: { running: 0, unpushed: 0, uncommitted: 0, terminals: 0, actions: 0 } })),
     };
     TestBed.configureTestingModule({ providers: [
-      { provide: WorkspaceStore, useValue: store }, { provide: ELEVENEX_BRIDGE, useValue: {} },
+      { provide: WorkspaceStore, useValue: store }, { provide: ELEVENEX_BRIDGE, useValue: bridge },
     ] });
     TestBed.overrideComponent(WorkspaceTaskHeaderComponent, { set: { providers: [{ provide: WorkspaceTaskGitService, useValue: git }] } });
     const fixture = TestBed.createComponent(WorkspaceTaskHeaderComponent);
     fixture.detectChanges();
-    return { fixture, git, store, root: fixture.nativeElement as HTMLElement };
+    return { fixture, git, store, bridge, root: fixture.nativeElement as HTMLElement };
   }
+
+  it('groups branch and temporary-task actions in one menu and keeps copy available in closed history', async () => {
+    const { fixture, git, store, bridge, root } = setup();
+    store.selectedTask.update(task => ({ ...task, temporary: true }));
+    git.summary.set(behind);
+    fixture.detectChanges();
+    const trigger = root.querySelector<HTMLButtonElement>('button[aria-label="Task actions"]')!;
+    const items = () => [...document.querySelectorAll<HTMLButtonElement>('[role="menu"][aria-label="Task actions"] [role="menuitem"]')];
+    expect(root.querySelector('.close-task')).toBeNull();
+    trigger.click();
+    fixture.detectChanges();
+    expect(items().map(item => item.textContent?.trim())).toEqual(['Rename branch', 'Copy branch name', 'Keep open', 'Close task']);
+    items()[1]!.click();
+    await fixture.whenStable();
+    expect(bridge.writeClipboardText).toHaveBeenCalledExactlyOnceWith(branch);
+    expect(root.textContent).toContain('Branch name copied');
+    trigger.click();
+    fixture.detectChanges();
+    items()[2]!.click();
+    expect(store.keepTaskOpen).toHaveBeenCalledOnce();
+
+    store.selectedTaskStage.set('closed');
+    fixture.detectChanges();
+    trigger.click();
+    fixture.detectChanges();
+    expect(items().map(item => item.textContent?.trim())).toEqual(['Copy branch name']);
+  });
+
+  it('offers a labeled close shortcut for a clean published branch and still checks the authoritative close preview', async () => {
+    const { fixture, git, store, bridge, root } = setup();
+    const published = { ...behind, upstream: `backup/${branch}`, behind: 0, files: 0, additions: 0, deletions: 0 };
+    git.state.set({ files: 0 });
+    git.loading.set(false);
+    for (const summary of [
+      { ...published, files: 1 },
+      { ...published, ahead: 1 },
+      { ...published, behind: 1 },
+      { ...published, conflicted: true },
+      { ...published, upstream: 'origin/main' },
+      { ...published, upstream: null },
+      { ...published, taskId: 12 },
+    ]) {
+      git.summary.set(summary);
+      fixture.detectChanges();
+      expect(root.querySelector('.close-task')).toBeNull();
+    }
+    git.summary.set(published);
+    store.selectedTaskHasActivity.set(true);
+    fixture.detectChanges();
+    expect(root.querySelector('.close-task')).toBeNull();
+    store.selectedTaskHasActivity.set(false);
+    fixture.detectChanges();
+    const close = root.querySelector<HTMLButtonElement>('.close-task')!;
+    expect(close.textContent?.trim()).toBe('Close task');
+    expect(root.querySelector('.stat.quiet')?.textContent?.trim() ?? '').toBe('');
+    close.click();
+    await fixture.whenStable();
+    expect(bridge.workspaceClosePreview).toHaveBeenCalledExactlyOnceWith('scope', 11);
+    expect(store.closeTask).toHaveBeenCalledOnce();
+    store.offline.set(true);
+    fixture.detectChanges();
+    expect(root.querySelector('.close-task')).toBeNull();
+  });
 
   it('keeps delayed loading, behind and error feedback inside the task toolbar with reachable actions', async () => {
     const { fixture, git, root } = setup();

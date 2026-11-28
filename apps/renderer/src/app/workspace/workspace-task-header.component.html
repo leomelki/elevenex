@@ -1,4 +1,5 @@
-@if (store.selectedTask(); as task) {
+@let selectedTask = store.selectedTask();
+@for (task of selectedTask ? [selectedTask] : []; track task.id) {
   <ex-task-header
     [unreachable]="store.offline() ? store.machine()?.name : undefined"
     [title]="task.name"
@@ -9,8 +10,10 @@
     [panelOpen]="panelOpen()"
     [branchCopied]="copied()"
     [closed]="store.selectedTaskStage() === 'closed'"
+    [closeSuggested]="closeSuggested()"
     [disabled]="controlsDisabled()"
-    [canRenameBranch]="!!git.summary()"
+    [canRenameBranch]="git.summary()?.taskId === task.id && !git.uncertain()"
+    [canKeepOpen]="!!task.temporary && task.state !== 'finishing'"
     [canLink]="false"
     [git]="!commitOpen() && git.error() ? undefined : git.state()"
     [gitAllowedActions]="['commit','commit-push','push']"
@@ -18,14 +21,11 @@
     [gitQuietLabel]="gitQuietLabel()"
     (panelToggle)="panelToggle.emit()"
     (closeRequested)="close()"
+    (keepOpenRequested)="store.keepTaskOpen()"
     (branchCopy)="copy($event)"
     (branchRename)="openGitDialog()"
     (gitAction)="gitAction($event)"
     (changesRequested)="panelToggle.emit()">
-    @if (task.temporary && task.state !== 'finishing') {
-      <button taskActions exButton size="sm" variant="secondary" type="button" title="Keep this temporary task open" [disabled]="store.busy() || store.offline()"
-        (click)="store.keepTaskOpen()">Keep open</button>
-    }
     <ng-container gitStatus>
       @if (git.pullError(); as error) {
         <div class="git-status pull-failure">

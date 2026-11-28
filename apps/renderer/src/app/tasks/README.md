@@ -22,7 +22,7 @@ settles immediately under reduced motion.
 The task row shows an agent icon beside the title when its creating agent can
 close it, keeping the row on one line. The row's tooltip explains the badge and
 the icon has the accessible name "Temporary task".
-The badge clears when the user chooses **Keep open** in the task header.
+The badge clears when the user chooses **Keep open** in the task header's **Task actions** menu.
 
 `TaskOutline.workspace` (`TaskWorkspaceSignal`: `tone`, `label`, `description`)
 reports a workspace that isn't ready: setting up, needing setup, closing. The
@@ -48,7 +48,7 @@ See [cross-harness delegation](../../../../backend/src/mcp/README.md#cross-harne
 | `StageGlyph` | `stage`, `size` | None |
 | `TaskStage` | `stage` | `stageChange(stage)` |
 | `LinkChip` | `kind`, `label`, `state`, `href`, `compact` | `activated()` |
-| `TaskHeader` | `title`, `repo`, `parent`, `branch`, `links`, `meta`, `project`, `git`, `closeSuggested`, `panelOpen`, `branchCopied` | `closeRequested`, `panelToggle`, `branchRename`, `branchCopy`, `linkRequested`, `linkActivated(link)`, `gitAction`, `changesRequested`, `parentRequested(TaskParentContext)` |
+| `TaskHeader` | `title`, `repo`, `parent`, `branch`, `links`, `meta`, `project`, `git`, `closeSuggested`, `canKeepOpen`, `panelOpen`, `branchCopied` | `closeRequested`, `keepOpenRequested`, `panelToggle`, `branchRename`, `branchCopy`, `linkRequested`, `linkActivated(link)`, `gitAction`, `changesRequested`, `parentRequested(TaskParentContext)` |
 | `CloseTask` | `title`, `sessions`, `running`, `apps`, `actions`, `terminals`, `unpushed`, `uncommitted`, `ticket` | `confirmed({push, moveTicket})`, `cancelled()` |
 | `RepoTag` | `repo: Repo or string`, `size` | None; hover exposes name/path |
 | `SubtaskGlyph` | `depth` | None; a fixed-width stair mark capped at three levels |
@@ -106,15 +106,16 @@ continues to work without these optional inputs. `canLink` and
 `canManageWorkspaces` disable unsupported integrations while preserving the
 designed form. `WorkspacePicker.canManage` controls its new/manage commands.
 
-`TaskHeader.closed` hides Close task for archived history.
 The 48px toolbar leads with the title and branch breadcrumb.
+The **Task actions** menu beside the branch offers rename, copy, and **Close task**.
+Pass `canKeepOpen` to include **Keep open** for temporary tasks.
+`closed` limits the menu to branch copy in archived history.
 An optional parent breadcrumb sits above it. In All projects, the connected
 header also shows the project mark when space permits. The Link action appears
 on hover or keyboard focus when linking is available and no link is set.
 In narrow panes the branch label and Git action words give way to icons.
 Branch rename/copy and Git actions keep their accessible names. The Git bar's
 toolbar presentation compacts the measured and painted labels together.
-Project task-specific buttons such as **Keep open** with `[taskActions]`.
 At pane widths of 360px or less, the toolbar puts identity and actions on
 separate lines. Its height within each layout stays fixed as Git state changes.
 The optional `[gitStatus]` projection sits beside Git actions in the toolbar.
@@ -158,8 +159,8 @@ first-project flight, later creation, controlled selection and cancellation.
 
 ## Commit panel and task-screen update (2026-10-27)
 
-`TaskHeader` always shows the quiet **Close task** icon for an open task.
-`closeSuggested` only changes its color; the button keeps its identity and size.
+`closeSuggested` replaces the quiet Git label with a labeled **Close task**
+shortcut. The same action stays available in the task menu.
 The owner checks authoritative close counts: a clean, idle task closes directly
 with Toast/Undo, while running, uncommitted or unpushed work opens `CloseTask`.
 `CloseTask.uncommitted` explains why a dirty workspace stays on disk.
