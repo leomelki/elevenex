@@ -208,8 +208,6 @@
         <h1>What should we work on?</h1>
         @if (store.starting()) {
           <p role="status">{{ creation()?.status === 'creating' ? 'Creating session… You can start writing.' : creation() ? 'Your draft stays here while you finish creating the session.' : 'Getting your agent ready… You can keep writing.' }}</p>
-        } @else if (store.compactStart()) {
-          <p role="status">Your session is ready. Send when you’re ready.</p>
         } @else if (store.state()?.presets !== undefined) {
           <div class="preset-heading">
             @if (presetEditing()) {
@@ -303,6 +301,8 @@
           @if (!presetFlow.presets().length && !presetEditing()) {
             <p>Choose your agent below, or save your own starting point.</p>
           }
+        } @else if (store.hadStartupDraft()) {
+          <p role="status">Your session is ready. Send when you’re ready.</p>
         } @else {
           <p>Choose an agent below, then send your first message.</p>
         }

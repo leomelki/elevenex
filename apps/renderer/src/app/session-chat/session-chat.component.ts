@@ -361,7 +361,7 @@ export class SessionChatComponent {
   });
   protected readonly presetEditing = computed(() =>
     this.showWelcome() && this.presetFlow.canEdit() && this.presetFlow.editing() &&
-    !this.store.starting() && !this.store.compactStart(),
+    !this.store.starting(),
   );
   protected readonly presetHeadingActions = computed<readonly ("edit" | "new")[]>(() => {
     if (!this.presetFlow.canEdit() || (!this.presetFlow.presets().length && !this.presetEditing())) return ["new"];

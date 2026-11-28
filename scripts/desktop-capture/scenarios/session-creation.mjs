@@ -7,7 +7,7 @@ export default async function* (capture) {
   const task = '[data-task-id="11"]';
   const add = `${task} header .add button`;
   const textarea = 'ex-session-chat ex-composer textarea';
-  const inspect = [task, 'ex-session-chat', '.start', '.creation-feedback', 'ex-composer', textarea];
+  const inspect = [task, 'ex-session-chat', '.start', 'ex-preset-picker', '.creation-feedback', 'ex-composer', textarea];
   const finish = async () => {
     await capture.evaluate(() => { for (const a of document.getAnimations()) if (Number.isFinite(a.effect?.getComputedTiming().endTime)) a.finish(); });
     await capture.settle();
@@ -38,7 +38,8 @@ export default async function* (capture) {
     await capture.component('ex-machine-workspace', c => { void c.store.createSession('11'); });
     assert.equal(await capture.evaluate(() => document.querySelectorAll('[data-session-id^="starting-"]').length), 1, 'Repeated creation stays on one local draft');
     await capture.component('ex-connected-workspace-demo', c => c.fixture.finishSessionCreation(11));
-    await capture.waitFor(() => !document.querySelector('[data-session-id^="starting-"]') && !document.querySelector('.start p')?.textContent.includes('Getting your agent ready'));
+    await capture.waitFor(() => !document.querySelector('[data-session-id^="starting-"]') &&
+      document.querySelector('ex-session-chat .start ex-preset-picker ex-preset-card button:not(:disabled)'));
     await finish();
     const retained = await capture.evaluate(() => {
       const draft = document.querySelector('ex-composer textarea');
@@ -49,9 +50,8 @@ export default async function* (capture) {
     assert.equal(retained.chat, 'chat'); assert.equal(retained.draft, 'draft'); assert.ok(retained.row && !retained.row.startsWith('starting-'));
     assert.equal(await capture.evaluate(() => document.querySelector('ex-composer textarea').selectionStart), caret, 'The receipt preserves the caret');
     const after = await capture.inspect([textarea]);
-    assert.equal(after.elements[textarea][0].rect.y, before.elements[textarea][0].rect.y, 'Typing does not move when the session becomes ready');
     assert.equal(retained.text, 'Investigate the retry path while the session gets ready.'); assert.equal(retained.focus, true); assert.equal(retained.disabled, false);
-    yield { name: `${theme}-ready-same-composer`, inspect, metadata: { retained, after: await capture.inspect([textarea]) } };
+    yield { name: `${theme}-ready-with-presets`, inspect, metadata: { retained, after } };
 
     // A definite rejection retains writing, supports explicit retry and does not disable navigation.
     await capture.click(add); await capture.fill(textarea, 'Keep this draft through a rejected create.');
@@ -92,12 +92,15 @@ export default async function* (capture) {
     assert.equal(await capture.evaluate(() => document.activeElement.matches('ex-composer textarea')), true);
     yield { name: `${theme}-compact-reduced-motion`, inspect };
     await capture.component('ex-connected-workspace-demo', c => c.fixture.finishSessionCreation(11));
-    await capture.waitFor(() => !document.querySelector('[data-session-id^="starting-"]'));
+    await capture.waitFor(() => !document.querySelector('[data-session-id^="starting-"]') &&
+      document.querySelector('ex-session-chat .start ex-preset-picker ex-preset-card button:not(:disabled)'));
+    assert.equal(await capture.evaluate(() => document.activeElement.matches('ex-composer textarea')), true);
+    yield { name: `${theme}-compact-ready-with-presets`, inspect };
 
     // Even a receipt before the next paint focuses the new, empty composer.
     await capture.component('ex-connected-workspace-demo', c => c.fixture.holdSessionCreation(false));
     await capture.evaluate(selector => document.querySelector(selector).focus(), add); await capture.press('Enter');
-    await capture.waitFor(() => document.querySelector('.start h1') && !document.querySelector('ex-composer .send')?.getAttribute('aria-busy')?.includes('true'));
+    await capture.waitFor(() => document.querySelector('ex-session-chat .start ex-preset-picker ex-preset-card button:not(:disabled)'));
     assert.equal(await capture.evaluate(() => document.activeElement.matches('ex-composer textarea')), true);
     assert.equal(await capture.evaluate(() => document.querySelector('ex-composer textarea').value), '');
     yield { name: `${theme}-fast-receipt-keyboard`, inspect };

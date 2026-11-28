@@ -116,7 +116,8 @@ export class SessionChatStore {
   readonly loading = signal(true);
   /** A new local conversation stays on its welcome view through initial hydration. */
   readonly starting = signal(false);
-  readonly compactStart = signal(false);
+  /** Keeps the ready message for startup drafts on engines without preset support. */
+  readonly hadStartupDraft = signal(false);
   private startingId: string | null = null;
   /** UI lifetime survives a verified same-machine scope rebind. */
   readonly viewRevision = signal(0);
@@ -137,6 +138,8 @@ export class SessionChatStore {
   readonly windowRevision = signal(0);
   private supportsFollowing = false;
   readonly draft = computed(() => this.activeEntry().text());
+  readonly preferredPresetId = computed(() => this.activeEntry().preferredPresetId());
+  preferPreset(id: string): void { this.entry.preferredPresetId.set(id); }
   readonly draftRestoring = computed(() => this.activeEntry().restoring());
   readonly draftError = computed(() => this.activeEntry().error());
   retryDraft(): void { this.entry.retry(); }
@@ -397,7 +400,7 @@ export class SessionChatStore {
     if (this.startingId === starting.id && this.entry === starting.draft) { this.selectedScope.set(starting.scopeId); return; }
     this.outbox?.setEditing(null);
     this.remember(); this.stopRead(); this.epoch++;
-    this.selection = null; this.startingId = starting.id; this.starting.set(true); this.compactStart.set(false);
+    this.selection = null; this.startingId = starting.id; this.starting.set(true); this.hadStartupDraft.set(false);
     this.work.select(null);
     this.tools.select(null);
     this.transcript.clear();
@@ -431,7 +434,7 @@ export class SessionChatStore {
     const nextEntry = this.drafts.entry(selection);
     const startingHandoff = !!this.startingId && this.entry === nextEntry;
     this.startingId = null;
-    if (!startingHandoff) { this.starting.set(false); this.compactStart.set(false); }
+    if (!startingHandoff) { this.starting.set(false); this.hadStartupDraft.set(false); }
     this.outbox?.setEditing(null);
     const sameSession = this.selection?.taskId === selection.taskId && this.selection.sessionId === selection.sessionId;
     const previousEntry = this.entry, previousCursor = this.cursor, previousBefore = this.before(), historical = this.historical();
@@ -676,7 +679,7 @@ export class SessionChatStore {
       }
       this.outbox?.receiptChanged(this.selection, settled);
     }
-    if (this.starting()) this.compactStart.set(!!this.draft().trim());
+    if (this.starting()) this.hadStartupDraft.set(!!this.draft().trim());
     this.starting.set(false);
     this.supportsFollowing = page.next !== undefined;
     const rewritten = this.historyRewritten(page);

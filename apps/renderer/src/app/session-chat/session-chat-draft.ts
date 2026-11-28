@@ -27,6 +27,8 @@ interface SubmissionContext {
 export class SessionDraft {
   private readonly value = signal('');
   readonly text = this.value.asReadonly();
+  /** Distinguishes named presets with identical settings while this composer is retained. */
+  readonly preferredPresetId = signal<string | null>(null);
   readonly uncertain = signal('');
   readonly files = signal<readonly AttachmentDraft[]>([]);
   readonly mentions = signal<readonly ConversationMention[]>([]);

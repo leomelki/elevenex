@@ -68,9 +68,12 @@ The connected owner can supply a `creation: StartingSession` before a saved
 the first paint. `SessionChatStore.openDraft` permits typing but dispatches no
 reads, uploads, settings or prompts for a local draft. Confirmation adopts its
 signals into `SessionChatDrafts` before opening the real session. Initial hydration
-keeps the welcome visible and sending disabled. Writing that began during creation
-keeps a compact welcome when settings arrive, so preset cards do not move the
-composer; starting choices remain available through the agent picker. The owner
+keeps the welcome visible and sending disabled. Eligible fresh sessions show
+the preset picker as soon as the engine supplies preset support, including when
+the composer already contains a draft. Engines without preset support keep the
+ready message for startup drafts and offer agent controls in the composer.
+While a composer entry is retained, its explicit preset choice takes precedence
+among presets matching the session's current agent settings. The owner
 handles `creationRetry`, `creationCheck` and `creationDiscard`. Failed/unconfirmed
 creates retain writing, and checking or reconnecting never replays creation.
 

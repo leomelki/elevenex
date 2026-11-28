@@ -585,7 +585,7 @@ describe("session chat ownership", () => {
     expect(store.viewRevision()).toBe(revision); expect(store.starting()).toBe(true);
     store.setDraft('Still writing during hydration');
     read.resolve(ok(page(20))); await settle();
-    expect(store.starting()).toBe(false); expect(store.compactStart()).toBe(true);
+    expect(store.starting()).toBe(false); expect(store.hadStartupDraft()).toBe(true);
     expect(store.draft()).toBe('Still writing during hydration');
     await store.submit({ text: store.draft(), intent: 'send', context: [] });
     expect(bridge.sessionChatCommand).toHaveBeenCalledWith('scope', expect.objectContaining({ sessionId: 20, action: expect.objectContaining({ type: 'send', text: 'Still writing during hydration' }) }));

@@ -14,7 +14,7 @@ import {
   BackendClientService,
   ELEVENEX_BRIDGE,
 } from "../backend/backend-client.service";
-import { SessionChatDrafts } from "./session-chat-drafts";
+import { SessionChatDrafts, SessionDraft } from "./session-chat-drafts";
 import { SessionChatComponent } from "./session-chat.component";
 import { MarkdownComponent, NowLineComponent, PresetCreatorComponent } from "../conversation";
 
@@ -1062,6 +1062,109 @@ describe("connected composer controls", () => {
     { id: 'deep', name: 'Deep work', provider: 'codex', providerLabel: 'Codex', model: 'gpt', modelLabel: 'GPT', reasoning: 'high', fast: false },
     { id: 'quick', name: 'Quick pass', provider: 'codex', providerLabel: 'Codex', model: 'gpt', modelLabel: 'GPT', reasoning: 'low', fast: true },
   ];
+  const initialPage = (sessionId: number, chatState: SessionChatState): SessionChatPage => ({
+    taskId: 1, sessionId, cursor: `initial-${sessionId}`, reset: true, before: null,
+    items: [], events: [], state: chatState,
+  });
+  async function startSession(fixture: ComponentFixture<SessionChatComponent>, sessionId: number) {
+    const id = `creation-${sessionId}`;
+    const draft = new SessionDraft();
+    fixture.componentRef.setInput('creationKey', id);
+    fixture.componentRef.setInput('creation', { id, scopeId: 'scope', taskId: 1, status: 'creating', draft });
+    fixture.componentRef.setInput('selection', null);
+    await settle(fixture);
+    return () => {
+      const target = { scopeId: 'scope', taskId: 1, sessionId };
+      TestBed.inject(SessionChatDrafts).adopt(target, draft);
+      fixture.componentRef.setInput('selection', target);
+      fixture.componentRef.setInput('creation', null);
+      fixture.detectChanges();
+    };
+  }
+  it.each([true, false])('shows presets with draft input before hydration=%s', async (writeEarly) => {
+    const chatState = { ...capabilities, presets: savedPresets, presetEditing: true,
+      presetDefault: { id: 'deep', revision: '1', provider: 'codex', defaultIds: ['deep'] } };
+    const { fixture, root, bridge, publish } = setup([], chatState);
+    await settle(fixture);
+    const confirm = await startSession(fixture, 3);
+    const composer = root.querySelector('textarea')!;
+    let finishRead!: (reply: BackendResult<SessionChatPage>) => void;
+    bridge.sessionChatRead.mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve; }));
+    confirm();
+    expect(root.querySelector('.start p')?.textContent).toContain('Getting your agent ready');
+    const write = () => {
+      composer.value = 'A draft kept through the first chat read';
+      composer.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    if (writeEarly) write();
+    const page = initialPage(3, chatState);
+    publish(page);
+    finishRead({ ok: true, value: page });
+    await settle(fixture);
+    if (!writeEarly) write();
+    await settle(fixture);
+    expect(root.querySelector('textarea')).toBe(composer);
+    expect(composer.value).toBe('A draft kept through the first chat read');
+    expect(root.querySelector('ex-preset-picker button[aria-pressed="true"]')?.textContent).toContain('Deep work');
+    expect(root.querySelector('button[data-preset-edit]')).not.toBeNull();
+    expect(root.textContent).not.toContain('Your session is ready');
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
+  it('keeps the ready fallback for a typed startup draft on engines without presets', async () => {
+    const { fixture, root, publish } = setup([], capabilities);
+    await settle(fixture);
+    const confirm = await startSession(fixture, 3);
+    fixture.componentInstance.store.setDraft('Keep typing');
+    publish(initialPage(3, capabilities));
+    confirm();
+    await settle(fixture);
+    expect(root.querySelector('.start p')?.textContent).toContain('Your session is ready');
+    expect(root.querySelector('ex-preset-picker')).toBeNull();
+    publish(initialPage(3, { ...capabilities, presets: [] }));
+    await fixture.componentInstance.store.refresh();
+    await settle(fixture);
+    expect(root.querySelector('.preset-heading')?.textContent).toContain('Agent setup');
+    expect(root.querySelector('ex-preset-picker button.custom')).not.toBeNull();
+  });
+  it('isolates preset choices across new sessions and keeps the picker off a started session', async () => {
+    const sameMix = { ...savedPresets[0]!, id: 'other', name: 'Same mix, different purpose' };
+    const chatState = { ...capabilities, presets: [...savedPresets, sameMix] };
+    const { fixture, root, bridge, publish, complete } = setup([], chatState);
+    await settle(fixture);
+    const selected = () => root.querySelector('ex-preset-picker button[aria-pressed="true"]')?.textContent;
+    const switchTo = async (sessionId: number, chatState: SessionChatState) => {
+      publish(initialPage(sessionId, chatState));
+      fixture.componentRef.setInput('creationKey', null);
+      fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId });
+      await settle(fixture);
+    };
+    const confirmFirst = await startSession(fixture, 3);
+    publish(initialPage(3, chatState));
+    confirmFirst();
+    await settle(fixture);
+    const choosing = fixture.componentInstance.presetFlow.selectPreset('other');
+    expect(bridge.sessionChatCommand).toHaveBeenCalledWith('scope', expect.objectContaining({
+      sessionId: 3, action: { type: 'preset', id: 'other', expectedProvider: 'codex' },
+    }));
+    complete();
+    await choosing;
+    await settle(fixture);
+    expect(selected()).toContain('Same mix, different purpose');
+    const confirmSecond = await startSession(fixture, 4);
+    let finishRead!: (reply: BackendResult<SessionChatPage>) => void;
+    bridge.sessionChatRead.mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve; }));
+    confirmSecond();
+    await switchTo(2, { ...chatState, providerLocked: true });
+    finishRead({ ok: true, value: initialPage(4, chatState) });
+    await settle(fixture);
+    expect(root.querySelector('.start')).toBeNull();
+    expect(root.querySelector('ex-preset-picker')).toBeNull();
+    await switchTo(4, chatState);
+    expect(selected()).toContain('Deep work');
+    await switchTo(3, chatState);
+    expect(selected()).toContain('Same mix, different purpose');
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  });
   it.each([
     { reasoning: 'high', fast: false },
     { reasoning: 'low', fast: true },

@@ -34,7 +34,6 @@ function matchesMix(preset: AgentConfig, state: SessionChatState): boolean {
 /** Owns the starting choice and retained creator, independently of transcript rendering. */
 export class SessionChatPresets {
   private disposed = false;
-  private readonly preferredId = signal<string | null>(null);
   private readonly tweakBase = signal<AgentConfig | undefined>(undefined);
   constructor(private readonly owner: PresetOwner) {}
   readonly presetDraft = signal<{
@@ -131,7 +130,7 @@ export class SessionChatPresets {
     if (!state) return undefined;
     const matching = this.presets().filter(preset => matchesMix(preset, state));
     return (
-      matching.find((preset) => preset.id === this.preferredId()) ??
+      matching.find((preset) => preset.id === this.owner.store.preferredPresetId()) ??
       matching.find((preset) => preset.id === this.defaultPreset()?.id) ??
       matching[0]
     );
@@ -327,7 +326,7 @@ export class SessionChatPresets {
         expectedMix: { model: state.model, reasoning: state.reasoning, fast: !!state.fast, revision },
       });
       if (applied && this.presetDraft() === draft && draft.identity === this.owner.identity() && !this.disposed)
-        this.preferredId.set(draft.editing.id);
+        this.owner.store.preferPreset(draft.editing.id);
     }
     if (!this.presetDraft() || this.presetDraft() === draft)
       this.presetSaving.set(false);
@@ -339,7 +338,7 @@ export class SessionChatPresets {
       return;
     if (saved) {
       if (!draft.editing) {
-        this.preferredId.set(draft.id);
+        this.owner.store.preferPreset(draft.id);
         this.tweakBase.set(undefined);
       }
       // An edit saves the preset first, then makes it the default against the
@@ -406,7 +405,7 @@ export class SessionChatPresets {
       identity === this.owner.identity() &&
       !this.disposed
     ) {
-      this.preferredId.set(id);
+      this.owner.store.preferPreset(id);
       this.tweakBase.set(undefined);
       this.naming.set(false);
       this.owner.focusComposer();
@@ -435,7 +434,7 @@ export class SessionChatPresets {
       !this.disposed &&
       identity === this.owner.identity()
     ) {
-      this.preferredId.set(id);
+      this.owner.store.preferPreset(id);
       this.tweakBase.set(undefined);
       this.naming.set(false);
       this.showDefaultUndo();
@@ -508,7 +507,7 @@ export class SessionChatPresets {
       type: "preset-update", expectedRevision: revision,
       ...this.presetFields(saved.id, { ...agent, preset: saved.preset }),
     })) {
-      this.preferredId.set(saved.id);
+      this.owner.store.preferPreset(saved.id);
       this.tweakBase.set(undefined);
       this.owner.store.notice.set("Preset updated");
       this.showChangeNotice(`“${saved.preset}” updated`);
@@ -528,7 +527,7 @@ export class SessionChatPresets {
     const id = crypto.randomUUID();
     const { provider, ...fields } = this.presetFields(id, { ...agent, preset: this.newName() });
     if (await this.performEdit({ type: "save-preset", ...fields, expectedProvider: provider })) {
-      this.preferredId.set(id);
+      this.owner.store.preferPreset(id);
       this.tweakBase.set(undefined);
       this.naming.set(false);
       this.owner.store.notice.set("Preset created");
@@ -636,7 +635,6 @@ export class SessionChatPresets {
     this.defaultNoticeOpen.set(false);
     this.defaultUndo.set(null);
     this.undoBusy.set(false);
-    this.preferredId.set(null);
     this.tweakBase.set(undefined);
     this.editing.set(false);
     this.naming.set(false);
