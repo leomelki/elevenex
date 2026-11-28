@@ -74,7 +74,7 @@
               [class.answer]="step.id === replyId()"
               [class.has-text]="!!step.text?.trim()"
               [class.prose]="step.id !== replyId()"
-              exAutoHeight
+              [exAutoHeight]="live()"
             >
               <div class="prose-content">
                 @if (

@@ -848,7 +848,10 @@ export class SessionChatStore {
       this.next.set(page.next ?? null);
     }
     this.historical.set(!!this.next());
-    const replacedRows = replacesTail && wasLoaded && previous.some((item, index) => item.id !== items[index]?.id);
+    // A fresh saved copy can change the height of a row while retaining its ID.
+    // Reconcile the viewport in that render, before the new height is painted.
+    const replacedRows = replacesTail && wasLoaded &&
+      (previous.length !== items.length || previous.some((item, index) => item !== items[index]));
     if (direction || evicted || replacedRows)
       this.windowRevision.update(value => value + 1);
     this.reconcileDelivery(page.state, delivered, deliveredQueued);

@@ -1,39 +1,40 @@
 import {
-  DestroyRef,
   Directive,
   ElementRef,
-  afterNextRender,
+  afterRenderEffect,
+  booleanAttribute,
   inject,
+  input,
 } from "@angular/core";
 
 /** Observe a single content wrapper, never a whole repository or message list. */
 @Directive({ selector: "[exAutoHeight]" })
 export class AutoHeightDirective {
+  readonly enabled = input(true, { alias: "exAutoHeight", transform: booleanAttribute });
   private readonly element =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
-  private readonly destroyRef = inject(DestroyRef);
-  private animation?: Animation;
-  private observer?: ResizeObserver;
 
   constructor() {
-    afterNextRender(() => {
+    afterRenderEffect((onCleanup) => {
+      if (!this.enabled()) return;
       const content = this.element.firstElementChild;
       if (!content || typeof ResizeObserver === "undefined") return;
+      let active = true;
+      let animation: Animation | undefined;
       // Projected content can be created before its portal is attached. Its
       // first visible size is a baseline, not a content change from zero.
       let previous = this.element.isConnected
         ? this.element.offsetHeight || this.element.getBoundingClientRect().height
         : undefined;
       let previousWidth = this.element.isConnected ? content.clientWidth : undefined;
-      this.observer = new ResizeObserver((entries) => {
-        // A queued observation can outlive portal detachment or destruction.
-        // Detached elements no longer inherit the motion tokens either.
-        if (this.destroyRef.destroyed) return;
+      const observer = new ResizeObserver((entries) => {
+        // A queued observation can outlive the current animation scope.
+        if (!active) return;
         if (!this.element.isConnected) {
           // Portals can reuse the same view with different content. A detached
           // view has no painted height to animate from on its next attachment.
-          this.animation?.cancel();
-          this.animation = undefined;
+          animation?.cancel();
+          animation = undefined;
           previous = undefined;
           previousWidth = undefined;
           return;
@@ -51,8 +52,8 @@ export class AutoHeightDirective {
           // animation for every wrapped reply multiplies layout work per frame.
           // ResizeObserver supplies the untransformed size without a layout read.
           previous = observedHeight === undefined ? undefined : observedHeight + chrome;
-          this.animation?.cancel();
-          this.animation = undefined;
+          animation?.cancel();
+          animation = undefined;
           return;
         }
         const painted = this.element.getBoundingClientRect().height;
@@ -61,19 +62,19 @@ export class AutoHeightDirective {
         // content clips padded cards and makes them jump when motion finishes.
         const next =
           (observedHeight ?? content.getBoundingClientRect().height / scale) + chrome;
-        const from = this.animation
+        const from = animation
           ? painted / scale
           : previous ?? next;
         previous = next;
-        this.animation?.cancel();
-        this.animation = undefined;
+        animation?.cancel();
+        animation = undefined;
         if (
           Math.abs(from - next) < 8 ||
           matchMedia("(prefers-reduced-motion: reduce)").matches ||
           !this.element.animate
         )
           return;
-        this.animation = this.element.animate(
+        animation = this.element.animate(
           [
             { height: `${from}px`, overflow: "clip", boxSizing: "border-box" },
             { height: `${next}px`, overflow: "clip", boxSizing: "border-box" },
@@ -83,15 +84,16 @@ export class AutoHeightDirective {
             easing: (style.getPropertyValue("--auto-height-easing") || style.getPropertyValue("--ease-out")).trim(),
           },
         );
-        this.animation.onfinish = () => {
-          this.animation = undefined;
+        animation.onfinish = () => {
+          animation = undefined;
         };
       });
-      this.observer.observe(content);
-    });
-    this.destroyRef.onDestroy(() => {
-      this.observer?.disconnect();
-      this.animation?.cancel();
+      observer.observe(content);
+      onCleanup(() => {
+        active = false;
+        observer.disconnect();
+        animation?.cancel();
+      });
     });
   }
 }

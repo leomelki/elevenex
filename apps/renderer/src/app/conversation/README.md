@@ -156,7 +156,9 @@ growth, without marking existing messages unread. A late scroll event from the
 previous bottom position or a transient restoration of that offset preserves
 following while layout settles. The connected session owner mounts history and
 configured controls together after its first page. A cached settled window
-renders and positions immediately while refreshing. A different
+renders and positions immediately while refreshing. Saved prose renders at its
+natural height. When a fresh saved page changes that height, the scroll owner
+positions the updated transcript before paint. A different
 session gets fresh scroll/disclosure ownership; same-session refresh and verified
 same-machine recovery retain the mounted view and reading position. Local session
 creation keeps its immediate editable welcome through the durable receipt.

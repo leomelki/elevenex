@@ -156,6 +156,8 @@ preview-only backend adapter. Its fixture never enters the production build.
   Width-driven wrapping follows the panel/window resize directly and cancels
   competing height motion. The observer's delivered sizes establish the new
   baseline; subsequent content growth at that width still animates.
+  Bind `[exAutoHeight]` to a boolean when only part of a view's lifetime should
+  animate. Disabling it releases the observer and cancels any height animation.
   A wrapper can set `--auto-height-duration` and `--auto-height-easing` using
   motion tokens to coordinate its resize with a neighbouring fold.
 - `FlipDirective` captures painted positions before keyed children update and

@@ -628,7 +628,9 @@ motion. Run it against the same preview URL.
 scroll height and unwanted reply height animations from the first painted frame
 of cold and cached openings. It covers normal motion at wide/narrow widths and
 narrow reduced motion in both themes. Its default generated-image reply catches
-collapsed Markdown margins; `ELEVENEX_SESSION_CAPTURE_PAGES` can replay a bounded
+collapsed Markdown margins. A held refresh also adds a table to an existing saved
+reply and checks that its first frame is fully laid out and pinned to the end.
+`ELEVENEX_SESSION_CAPTURE_PAGES` can replay a bounded
 recorded page through the same production components.
 
 `scenarios/session-tool-media.mjs` checks viewed images in their tool details

@@ -65,6 +65,46 @@ export default async function* (capture) {
           metadata: { sourceSession: source?.id ?? 'preview', frames } };
         await capture.component('ex-machine-workspace', owner => owner.store.selectSession({ taskId: '11', sessionId: '102' }));
       }
+      if (!source && layout !== 'narrow-reduced') {
+        await capture.component('ex-connected-workspace-demo', async owner => {
+          const result = await owner.fixture.chat.read({ taskId: 11, sessionId: 101, requestId: window.crypto.randomUUID() });
+          if (!result.ok) throw new Error('Could not prepare the refreshed reply');
+          const table = '| Step | Result |\n| --- | --- |\n' +
+            Array.from({ length: 24 }, (_, index) => `| Step ${index + 1} | Complete |`).join('\n');
+          owner.fixture.chat.seed(101, { ...result.value, items: result.value.items.map(item =>
+            item.kind === 'assistant' ? { ...item, text: `${item.text}\n\n${table}` } : item) });
+          owner.fixture.chat.holdReads(true);
+        });
+        await capture.component('ex-machine-workspace', owner => owner.store.selectSession({ taskId: '11', sessionId: '101' }));
+        assert.equal(await capture.evaluate(() => !!document.querySelector('ex-turn .answer table')), false,
+          'The previous reply should be usable immediately from cache');
+        const frames = await capture.component('ex-connected-workspace-demo', async owner => {
+          owner.fixture.chat.holdReads(false);
+          const frames = [];
+          for (let attempt = 0; frames.length < 24 && attempt < 180; attempt++) {
+            await new Promise(requestAnimationFrame);
+            const viewport = document.querySelector('ex-chat-scroll .viewport');
+            const reply = viewport?.querySelector('ex-turn:last-of-type .answer');
+            if (!reply?.querySelector('table')) continue;
+            frames.push({
+              top: reply.getBoundingClientRect().top,
+              gap: viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
+              clipped: reply.clientHeight + 1 < reply.scrollHeight,
+              animating: reply.getAnimations().some(animation =>
+                animation.effect.getKeyframes().some(frame => frame.height !== undefined)),
+            });
+          }
+          return frames;
+        });
+        assert.equal(frames.length, 24, 'The fresh saved reply should render');
+        for (const frame of frames) {
+          assert.ok(Math.abs(frame.gap) <= 1, JSON.stringify(frame));
+          assert.equal(frame.clipped || frame.animating, false, 'The saved reply should paint at full height immediately');
+          assert.ok(Math.abs(frame.top - frames[0].top) <= 1, 'The saved reply should stay in place');
+        }
+        yield { name: `${theme}-${layout}-refreshed-reply`, inspect: ['ex-chat-scroll .viewport', 'ex-turn:last-of-type .answer'],
+          metadata: { frames } };
+      }
     }
   }
 }
