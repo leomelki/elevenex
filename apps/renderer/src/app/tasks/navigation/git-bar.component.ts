@@ -74,6 +74,7 @@ export class GitBarComponent {
   readonly job = input<GitJob>();
   readonly compact = input(false);
   readonly allowedActions = input<readonly GitAction[]>();
+  readonly actionsDisabled = input(false);
   readonly quietLabel = input('Up to date');
   readonly unreachable = input<string>();
   protected readonly unreachableNote = signal('');
@@ -166,7 +167,7 @@ export class GitBarComponent {
             add: this.add(),
             del: this.del(),
           }
-        : !this.step()
+        : !this.step() && this.quietLabel()
           ? { key: "quiet", files: 0, add: 0, del: 0 }
           : null,
   );
@@ -229,6 +230,11 @@ export class GitBarComponent {
             { action: "sync", label: "Sync with main" },
           ],
   );
+  protected readonly visibleMenuItems = computed(() => {
+    const allowed = this.allowedActions();
+    return allowed ? this.menuItems().filter(item => allowed.includes(item.action)) : this.menuItems();
+  });
+  protected readonly hasMore = computed(() => !!this.job() || this.visibleMenuItems().length > 0);
 
   private readonly root =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
@@ -247,12 +253,13 @@ export class GitBarComponent {
       }
       if (!menu) this.focusedMenu = undefined;
     });
-    afterRenderEffect(() =>
+    afterRenderEffect(() => {
+      this.hasMore();
       this.motion.update({
         action: !!this.actionContent(),
         stat: !!this.statContent(),
-      }),
-    );
+      });
+    });
     afterNextRender(() => {
       this.motion.initialize({
         action: !!this.actionContent(),
@@ -276,6 +283,7 @@ export class GitBarComponent {
   }
 
   protected request(action: GitAction): void {
+    if (this.actionsDisabled()) return;
     clearTimeout(this.noteTimer); this.unreachableNote.set('');
     const machine = this.unreachable();
     if (machine) {
@@ -287,7 +295,7 @@ export class GitBarComponent {
   }
   protected primary(): void {
     const step = this.step();
-    if (this.busy()) return;
+    if (this.busy() || this.actionsDisabled()) return;
     if (step === "job") {
       const job = this.job();
       const session =

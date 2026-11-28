@@ -409,6 +409,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   workspaceDeleteProject = async (_scope: string, id: number) => { this.projectRows = this.projectRows.filter(project => project.id !== id); return success({ accepted: true as const }); };
   workspaceAddRepository = async (_scope: string, input: WorkspaceAddRepository) => success(this.detail(input.projectId));
   workspaceGit = async (_scope: string, taskId: number) => success(this.git.get(taskId) ?? { taskId, branch: this.taskRows.find(task => task.id === taskId)?.branchName ?? '', upstream: 'origin/main', ahead: 0, behind: 0, files: 48, additions: 3288, deletions: 1128, conflicted: false, changesRevision: 'c'.repeat(64) });
+  setGitSummary(summary: WorkspaceGitSummary): void { this.git.set(summary.taskId, summary); }
   workspaceClosePreview = async (_scope: string, taskId: number) => success({ taskId, sessions: this.sessionRows.filter(session => session.taskId === taskId).length, running: this.sessionRows.filter(session => session.taskId === taskId && session.status === 'running').length, terminals: 0, actions: 0, unpushed: this.git.get(taskId)?.ahead ?? 0, uncommitted: this.git.get(taskId)?.files ?? 3 });
   workspaceCommitPreview = async (_scope: string, query: WorkspaceCommitQuery) => {
     if (this.commitPreviewHeld) await new Promise<void>(resolve => {
@@ -420,10 +421,10 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     const matches = files.filter(file => file.path.includes(query.query ?? '')).sort((a,b) => Number(query.includeUnstaged || b.staged) - Number(query.includeUnstaged || a.staged));
     return success({ taskId: query.taskId, revision: 'a'.repeat(64), items: matches, nextCursor: null, total: files.length, matches: matches.length, unstaged: 34, selected: { files: selected.length, add: selected.reduce((n,file) => n + file.add,0), del: selected.reduce((n,file) => n + file.del,0), staged: selected.filter(file=>file.staged).length, unstaged: selected.filter(file=>!file.staged).length }, running: ['Guard concurrent requests'] });
   };
-  private gitFailure: 'message' | 'unknown' | null = null;
+  private gitFailure: 'message' | 'unknown' | 'pull' | null = null;
   private gitActionHeld = false;
   private readonly pendingGitActions = new Set<() => void>();
-  setGitFailure(value: 'message' | 'unknown' | null): void { this.gitFailure = value; }
+  setGitFailure(value: typeof this.gitFailure): void { this.gitFailure = value; }
   setGitActionHeld(held: boolean): void {
     this.gitActionHeld = held;
     if (!held) for (const finish of this.pendingGitActions) finish();
@@ -437,7 +438,9 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     const failure = this.gitFailure; this.gitFailure = null;
     if (failure) return { ok: false as const, error: failure === 'unknown'
       ? { code: 'outcome-unknown' as const, message: 'The operation may have completed. Refresh status before trying again.' }
-      : { code: 'http' as const, status: 409, message: 'Elevenex could not write a commit message. Enter a message above and try again.' } };
+      : { code: 'http' as const, status: 409, message: failure === 'pull'
+          ? 'Could not fast-forward the task branch. Check for divergence, worktree conflicts or local changes that would be overwritten.'
+          : 'Elevenex could not write a commit message. Enter a message above and try again.' } };
     const previous = (await this.workspaceGit(scope, input.taskId));
     if (!previous.ok) return previous;
     const summary = { ...previous.value, ...(input.type === 'commit' ? { files: input.selection?.includedSecrets.includes('.env.local') ? 0 : 1, additions: 31, deletions: 0, ahead: input.push ? 0 : 1 } : {}), ...(input.type === 'push' ? { ahead: 0 } : {}), ...(input.type === 'sync' ? { behind: 0 } : {}), ...(input.type === 'rename-branch' ? { branch: input.branchName } : {}) };

@@ -54,6 +54,8 @@
   >
     <span
       class="split"
+      [class.single]="!hasMore()"
+      [class.actions-disabled]="actionsDisabled()"
       [class.waiting]="job()?.waiting"
       cdkOverlayOrigin
       #jobOrigin="cdkOverlayOrigin"
@@ -62,7 +64,7 @@
         exButton
         class="primary"
         [variant]="job() || compact() ? 'secondary' : 'primary'"
-        [disabled]="!!busy() || !step()"
+        [disabled]="!!busy() || !step() || actionsDisabled()"
         [attr.aria-busy]="!!busy() || (!!job() && !job()?.waiting)"
         [attr.aria-expanded]="job() && !job()?.waiting ? jobOpen() : null"
         [attr.aria-haspopup]="job() ? 'dialog' : null"
@@ -123,8 +125,9 @@
       <button
         exButton
         class="more"
+        [hidden]="!hasMore()"
         [variant]="job() || compact() ? 'secondary' : 'primary'"
-        [disabled]="!!busy() || !step()"
+        [disabled]="!!busy() || !step() || actionsDisabled()"
         [cdkMenuTriggerFor]="job() ? null : menu"
         [attr.aria-expanded]="job() ? jobOpen() : null"
         [attr.aria-haspopup]="job() ? 'dialog' : 'menu'"
@@ -174,16 +177,15 @@
 </div>
 <ng-template #menu>
   <ex-dropdown-menu label="Git actions">
-    @for (item of menuItems(); track item.action) {
-      @if (!allowedActions() || allowedActions()?.includes(item.action)) {
+    @for (item of visibleMenuItems(); track item.action) {
       <button
         type="button"
         exDropdownItem
+        [disabled]="actionsDisabled()"
         (triggered)="request(item.action)"
       >
         {{ item.label }}
       </button>
-      }
     }
   </ex-dropdown-menu>
 </ng-template>

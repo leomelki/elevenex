@@ -197,6 +197,25 @@ describe('WorkspaceTaskGitService', () => {
     expect(git.summary()?.ahead).toBe(1);
   });
 
+  it('keeps a rejected pull separate from commit errors and reconciles it on an explicit status check', async () => {
+    const { git, bridge } = setup(); await settle();
+    const failure = 'The branch cannot fast-forward.';
+    let completePoll!: (result: BackendResult<WorkspaceGitSummary>) => void;
+    bridge.workspaceGit.mockReturnValueOnce(new Promise(resolve => { completePoll = resolve; }));
+    bridge.workspaceGitAction.mockResolvedValueOnce({ ok: false, error: { code: 'http', status: 409, message: failure } });
+    expect(await git.perform({ type: 'sync' })).toBe(false);
+    expect(git.pullError()).toBe(failure);
+    expect(git.error()).toBeNull();
+    expect(git.state()?.files).toBe(2);
+    const diverged = { ...summary, upstream: 'team/branch', behind: 3, ahead: 2 };
+    bridge.workspaceGit.mockResolvedValueOnce(ok(diverged));
+    await git.refresh();
+    expect(git.pullError()).toBeNull();
+    completePoll(ok(summary)); await settle();
+    expect(git.summary()).toEqual(diverged);
+    expect(bridge.workspaceGitAction).toHaveBeenCalledExactlyOnceWith('scope', { taskId: 1, type: 'sync' });
+  });
+
   it('rejects an old mutation after navigating away and returning to the same task', async () => {
     const { git, bridge, store, selected } = setup(); await settle();
     let resolve!: (value: BackendResult<WorkspaceGitSummary>) => void;

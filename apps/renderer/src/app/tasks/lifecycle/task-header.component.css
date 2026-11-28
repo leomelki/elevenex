@@ -1,6 +1,7 @@
 :host {
   display: block;
   min-width: 0;
+  container-type: inline-size;
 }
 header {
   display: flex;
@@ -41,10 +42,13 @@ h1 {
 }
 .metadata {
   gap: 6px;
-  overflow: hidden;
+  overflow: clip;
+  overflow-clip-margin: 4px;
 }
+.metadata ex-branch-chip { flex: 0 1 auto; }
 .git-status {
   display: flex;
+  flex: none;
   align-items: center;
   min-width: 0;
   max-width: 45%;
@@ -86,6 +90,9 @@ ex-icon-button,
 ex-task-stage,
 ex-git-bar {
   flex: none;
+}
+@container (max-width: 480px) {
+  .metadata .link:disabled { display: none; }
 }
 @media (max-width: 720px) {
   .meta {

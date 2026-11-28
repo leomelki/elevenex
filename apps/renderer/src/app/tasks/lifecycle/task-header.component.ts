@@ -55,6 +55,7 @@ export class TaskHeaderComponent {
   readonly canRenameBranch = input(true);
   readonly canLink = input(true);
   readonly gitAllowedActions = input<readonly GitAction[]>();
+  readonly gitActionsDisabled = input(false);
   readonly gitQuietLabel = input('Up to date');
   readonly unreachable = input<string>();
   readonly stageChange = output<TaskStage>();

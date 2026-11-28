@@ -543,6 +543,9 @@ export function registerWorkspaceIpc(
         'git-push-authentication': 'Push failed because Git could not authenticate. Check Git credentials on this machine. For an SSH machine, unlock your local SSH key and reconnect with agent forwarding available. Your commits are still saved locally.',
         'git-push-behind': 'Push was rejected because the remote branch has newer commits. Fetch and review the remote branch before trying again. Your commits are still saved locally.',
         'git-push-failed': 'Push failed. Check the remote, network connection, repository permissions and pre-push hooks. Your commits are still saved locally.',
+        'git-pull-upstream': 'The checked-out branch has no available upstream. Check its tracking branch.',
+        'git-pull-fetch': 'Could not fetch the upstream branch. Check the remote, network connection and Git credentials.',
+        'git-pull-fast-forward': 'Could not fast-forward the task branch. Check for divergence, worktree conflicts or local changes that would be overwritten.',
       },
     );
   });

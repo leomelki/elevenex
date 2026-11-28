@@ -684,6 +684,18 @@ test('commit preview is scoped, bounded and validated; optional-message commits 
     assert.doesNotMatch(result.error.message, /private Git|secret|example\.test/);
     assert.deepEqual(requests.at(-1).body, { type: 'push' });
   }
+  for (const [code, expected] of [
+    ['git-pull-upstream', 'no available upstream'],
+    ['git-pull-fetch', 'Could not fetch the upstream branch'],
+    ['git-pull-fast-forward', 'Could not fast-forward the task branch'],
+  ]) {
+    reply = { code, message: 'private Git output https://user:secret@example.test/repo' };
+    const result = await handlers.get('workspace:git-action')(event, scope, { taskId: 1, type: 'sync' });
+    assert.equal(result.ok, false);
+    assert.match(result.error.message, new RegExp(expected));
+    assert.doesNotMatch(result.error.message, /private Git|secret|example\.test/);
+    assert.deepEqual(requests.at(-1).body, { type: 'sync' });
+  }
   const count = requests.length; client.reset(42); assert.equal((await read()).error.code, 'stale-scope'); assert.equal(requests.length, count);
 });
 

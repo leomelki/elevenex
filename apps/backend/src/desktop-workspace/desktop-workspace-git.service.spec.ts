@@ -462,23 +462,49 @@ describe('desktop workspace git boundary', () => {
     expect(await git(checkout, 'symbolic-ref', '--short', 'HEAD')).toBe('task');
   });
   it('fast-forwards from upstream and preserves divergent local history when sync cannot fast-forward', async () => {
-    await writeFile(join(repository, 'remote-change'), 'remote');
-    await git(repository, 'add', '--all');
-    await git(repository, 'commit', '-m', 'Remote update');
-    await git(repository, 'push', 'origin', 'main');
+    const publisher = join(root, 'publisher');
+    await git(root, 'clone', join(root, 'remote.git'), publisher);
+    await git(publisher, 'config', 'user.email', 'test@example.test');
+    await git(publisher, 'config', 'user.name', 'Test');
+    await git(publisher, 'switch', '-c', 'shared/task-upstream');
+    await git(publisher, 'push', '-u', 'origin', 'shared/task-upstream');
+    await git(repository, 'fetch', 'origin');
+    await git(checkout, 'branch', '--set-upstream-to=origin/shared/task-upstream');
+    await writeFile(join(publisher, 'remote-change'), 'remote');
+    await git(publisher, 'add', '--all');
+    await git(publisher, 'commit', '-m', 'Remote update');
+    await git(publisher, 'push');
+    await writeFile(join(checkout, 'initial'), 'unsaved local edit');
     await service.action(taskId, { type: 'sync' });
     expect(await git(checkout, 'rev-parse', 'HEAD')).toBe(
-      await git(repository, 'rev-parse', 'HEAD'),
+      await git(publisher, 'rev-parse', 'HEAD'),
     );
+    expect(await git(checkout, 'diff', '--', 'initial')).toContain('unsaved local edit');
+    expect(await git(repository, 'rev-parse', 'main')).not.toBe(await git(checkout, 'rev-parse', 'HEAD'));
     await writeFile(join(checkout, 'local-change'), 'local');
     await git(checkout, 'add', '--all');
     await git(checkout, 'commit', '-m', 'Local update');
     const head = await git(checkout, 'rev-parse', 'HEAD');
-    await writeFile(join(repository, 'another-remote-change'), 'remote2');
-    await git(repository, 'add', '--all');
-    await git(repository, 'commit', '-m', 'Divergent update');
-    await git(repository, 'push', 'origin', 'main');
-    await expect(service.action(taskId, { type: 'sync' })).rejects.toThrow();
+    await writeFile(join(publisher, 'another-remote-change'), 'remote2');
+    await git(publisher, 'add', '--all');
+    await git(publisher, 'commit', '-m', 'Divergent update');
+    await git(publisher, 'push');
+    await expect(service.action(taskId, { type: 'sync' })).rejects.toMatchObject({
+      response: { code: 'git-pull-fast-forward' },
+    });
     expect(await git(checkout, 'rev-parse', 'HEAD')).toBe(head);
+    expect(await git(repository, 'rev-parse', 'origin/shared/task-upstream')).toBe(await git(publisher, 'rev-parse', 'HEAD'));
+    expect(await git(publisher, 'ls-remote', 'origin', 'refs/heads/task')).toBe('');
+  });
+  it('reports a missing upstream and confines failed fetch diagnostics', async () => {
+    await git(checkout, 'branch', '--unset-upstream');
+    await expect(service.action(taskId, { type: 'sync' })).rejects.toMatchObject({
+      response: { code: 'git-pull-upstream' },
+    });
+    await git(checkout, 'branch', '--set-upstream-to=origin/main');
+    await git(repository, 'remote', 'set-url', 'origin', join(root, 'missing-remote'));
+    await expect(service.action(taskId, { type: 'sync' })).rejects.toMatchObject({
+      response: { code: 'git-pull-fetch', message: 'Could not fetch the upstream branch. Check the remote, network connection and Git credentials.' },
+    });
   });
 });

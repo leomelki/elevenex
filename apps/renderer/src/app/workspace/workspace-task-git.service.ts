@@ -19,6 +19,7 @@ export class WorkspaceTaskGitService {
   readonly loading = signal(false);
   readonly busy = signal<WorkspaceGitAction['type'] | null>(null);
   readonly error = signal<string | null>(null);
+  readonly pullError = signal<string | null>(null);
   readonly uncertain = signal(false);
   private readonly phase = signal<'writing' | 'committing' | 'pushing' | null>(null);
   private phaseTimer?: ReturnType<typeof setTimeout>;
@@ -38,14 +39,37 @@ export class WorkspaceTaskGitService {
   private previewRequest?: Promise<WorkspaceCommitPreview>;
 
   constructor() {
-    let previousTask: number | undefined;
-    effect(() => { const key = this.key(); untracked(() => { const task = this.store.taskSelection()?.taskId; this.selectionEpoch++; this.revision++; clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.phase.set(null); if (previousTask !== task || !key) this.summary.set(null); previousTask = task; this.clearCommitPreview(); this.reading = false; this.loading.set(false); this.busy.set(null); this.error.set(null); this.uncertain.set(false); if (key) void this.refresh(); }); });
+    effect(() => {
+      const key = this.key();
+      untracked(() => {
+        this.selectionEpoch++;
+        this.revision++;
+        clearTimeout(this.pollTimer);
+        clearTimeout(this.phaseTimer);
+        this.phase.set(null);
+        this.summary.set(null);
+        this.clearCommitPreview();
+        this.reading = false;
+        this.loading.set(false);
+        this.busy.set(null);
+        this.error.set(null);
+        this.pullError.set(null);
+        this.uncertain.set(false);
+        if (key) void this.refresh();
+      });
+    });
     effect(() => {
       const selected = this.store.taskSelection(), scope = this.backend.state().scope?.id;
       if (selected && selected.scopeId !== scope) untracked(() => {
         this.revision++; this.previewGeneration++; this.reading = false; this.loading.set(false);
         clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer);
-        if (this.busy()) { this.uncertain.set(true); this.error.set('The git operation is unconfirmed. Check its status when the machine is back.'); }
+        const action = this.busy();
+        if (action) {
+          this.selectionEpoch++;
+          this.uncertain.set(true);
+          if (action === 'sync') this.pullError.set('The pull could not be confirmed. Check its status when the machine is back.');
+          else this.error.set('The git operation is unconfirmed. Check its status when the machine is back.');
+        }
         this.busy.set(null); this.phase.set(null);
       });
     });
@@ -57,7 +81,9 @@ export class WorkspaceTaskGitService {
 
   async refresh(background = false): Promise<void> {
     const selected = this.store.taskSelection();
-    if (!selected || !this.key() || this.reading || this.busy() || !this.current(selected.scopeId, selected.taskId)) return;
+    if (!selected || !this.key() || this.busy() || !this.current(selected.scopeId, selected.taskId)) return;
+    // An explicit pull status check can supersede a quiet poll. Only the latest read can publish.
+    if (this.reading && (background || this.loading() || !this.pullError())) return;
     clearTimeout(this.pollTimer);
     const revision = ++this.revision;
     this.reading = true;
@@ -65,10 +91,20 @@ export class WorkspaceTaskGitService {
     try {
       const result = await this.bridge.workspaceGit(selected.scopeId, selected.taskId);
       if (!this.current(selected.scopeId, selected.taskId) || revision !== this.revision) return;
-      if (result.ok) { this.acceptSummary(result.value); this.uncertain.set(false); void this.preloadCommitPreview(selected.scopeId, selected.taskId); }
-      else if (!background) this.error.set(result.error.message);
-    } catch { if (!background && this.current(selected.scopeId, selected.taskId) && revision === this.revision) this.error.set('Git status could not be loaded.'); }
+      if (result.ok) {
+        this.acceptSummary(result.value);
+        if (!background) this.pullError.set(null);
+        if (!this.pullError()) this.uncertain.set(false);
+        void this.preloadCommitPreview(selected.scopeId, selected.taskId);
+      }
+      else if (!background) this.statusReadFailed(result.error.message);
+    } catch { if (!background && this.current(selected.scopeId, selected.taskId) && revision === this.revision) this.statusReadFailed('Git status could not be loaded.'); }
     finally { if (revision === this.revision) { this.reading = false; this.loading.set(false); this.schedule(); } }
+  }
+
+  private statusReadFailed(message: string): void {
+    if (this.pullError()) this.pullError.set(`Could not check pull status. ${message}`);
+    else this.error.set(message);
   }
 
   async perform(input: GitCommand): Promise<boolean> {
@@ -76,19 +112,21 @@ export class WorkspaceTaskGitService {
     if (this.store.offline()) { this.error.set(`This git action needs ${this.store.machine()?.name ?? 'the machine'}. Nothing was sent. Try again once it’s back.`); return false; }
     if (!selected || this.busy() || this.uncertain() || !this.current(selected.scopeId, selected.taskId)) return false;
     const epoch = this.selectionEpoch;
+    const failure = input.type === 'sync' ? this.pullError : this.error;
     this.revision++; this.reading = false; this.loading.set(false);
     this.clearCommitPreview();
     clearTimeout(this.pollTimer);
     this.busy.set(input.type); this.error.set(null);
+    if (input.type === 'sync') this.pullError.set(null);
     if (input.type === 'commit') { this.phase.set(input.message ? 'committing' : 'writing'); this.watchPhase(selected.scopeId, selected.taskId, epoch); }
     try {
       const result = await this.bridge.workspaceGitAction(selected.scopeId, { ...input, taskId: selected.taskId });
       if (!this.current(selected.scopeId, selected.taskId) || epoch !== this.selectionEpoch) return false;
       if (result.ok) { this.acceptSummary(result.value); this.store.reconcileTaskBranch(selected.scopeId, selected.taskId, result.value.branch); void this.preloadCommitPreview(selected.scopeId, selected.taskId); return true; }
-      this.error.set(result.error.message);
+      failure.set(result.error.message);
       if (result.error.code === 'outcome-unknown' || result.error.code === 'transport' || result.error.code === 'timeout') this.uncertain.set(true);
-    } catch { if (this.current(selected.scopeId, selected.taskId) && epoch === this.selectionEpoch) { this.uncertain.set(true); this.error.set('The git operation could not be confirmed. Refresh its status before trying again.'); } }
-    finally { if (this.current(selected.scopeId, selected.taskId) && epoch === this.selectionEpoch) { clearTimeout(this.phaseTimer); this.phase.set(null); this.busy.set(null); if (this.error() && !this.uncertain()) void this.refresh(true); else this.schedule(); } }
+    } catch { if (this.current(selected.scopeId, selected.taskId) && epoch === this.selectionEpoch) { this.uncertain.set(true); failure.set(input.type === 'sync' ? 'The pull could not be confirmed. Refresh status before trying again.' : 'The git operation could not be confirmed. Refresh its status before trying again.'); } }
+    finally { if (this.current(selected.scopeId, selected.taskId) && epoch === this.selectionEpoch) { clearTimeout(this.phaseTimer); this.phase.set(null); this.busy.set(null); if (failure() && !this.uncertain()) void this.refresh(true); else this.schedule(); } }
     return false;
   }
 

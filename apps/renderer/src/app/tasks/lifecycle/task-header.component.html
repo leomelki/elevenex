@@ -82,6 +82,7 @@
         [job]="state.job"
         [compact]="true"
         [allowedActions]="gitAllowedActions()"
+        [actionsDisabled]="gitActionsDisabled()"
         [quietLabel]="gitQuietLabel()"
         (action)="gitAction.emit($event)"
         (jobSessionRequested)="gitJobSessionRequested.emit($event)"

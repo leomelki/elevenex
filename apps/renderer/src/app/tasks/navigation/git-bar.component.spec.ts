@@ -105,6 +105,25 @@ describe("GitBar motion ownership", () => {
     else Reflect.deleteProperty(HTMLElement.prototype, "animate");
   });
 
+  it("keeps the primary action when the owner filters out every menu item", async () => {
+    const fixture = TestBed.createComponent(GitBarComponent);
+    fixture.componentRef.setInput("ahead", 2);
+    fixture.componentRef.setInput("allowedActions", ["commit-push"]);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const primary: HTMLButtonElement = fixture.nativeElement.querySelector(".primary");
+    const more: HTMLButtonElement = fixture.nativeElement.querySelector(".more");
+    expect(primary.getAttribute("aria-label")).toBe("Push 2");
+    expect(primary.disabled).toBe(false);
+    expect(more.hidden).toBe(true);
+
+    fixture.componentRef.setInput("files", 3);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(primary.getAttribute("aria-label")).toBe("Commit 3");
+    expect(more.hidden).toBe(false);
+  });
+
   it("retains the closing action and changes its intent immediately while preserving the native button", async () => {
     const fixture = TestBed.createComponent(GitBarComponent);
     fixture.componentRef.setInput("ahead", 2);

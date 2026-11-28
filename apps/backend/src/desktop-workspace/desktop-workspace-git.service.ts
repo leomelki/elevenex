@@ -217,17 +217,7 @@ export class DesktopWorkspaceGitService {
         }
       }
       if (input.type === 'sync') {
-        const upstream = (
-          await checkout.raw([
-            'rev-parse',
-            '--abbrev-ref',
-            '--symbolic-full-name',
-            '@{u}',
-          ])
-        ).trim();
-        await this.taskGit.refresh(current.path, upstream);
-        // Explicit fast-forward only: sync never rewrites work or resolves conflicts implicitly.
-        await checkout.raw(['merge', '--ff-only', '--', upstream]);
+        await this.pull(current.path, checkout);
       }
       if (input.type === 'rename-branch') {
         const name = (input.branchName as string).trim();
@@ -269,5 +259,33 @@ export class DesktopWorkspaceGitService {
       }
       return this.summary(id);
     });
+  }
+
+  private async pull(path: string, checkout: ReturnType<typeof worktreeSimpleGit>): Promise<void> {
+    const upstream = await checkout.raw(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
+      .then(ref => ref.trim(), () => '');
+    if (!upstream) {
+      throw new ConflictException({
+        code: 'git-pull-upstream',
+        message: 'The checked-out branch has no available upstream. Check its tracking branch.',
+      });
+    }
+    try {
+      await this.taskGit.refresh(path, upstream);
+    } catch {
+      // Fetch errors may include credentials embedded in a remote URL.
+      throw new ConflictException({
+        code: 'git-pull-fetch',
+        message: 'Could not fetch the upstream branch. Check the remote, network connection and Git credentials.',
+      });
+    }
+    try {
+      await checkout.raw(['merge', '--ff-only', '--', upstream]);
+    } catch {
+      throw new ConflictException({
+        code: 'git-pull-fast-forward',
+        message: 'Could not fast-forward the task branch. Check for divergence, worktree conflicts or local changes that would be overwritten.',
+      });
+    }
   }
 }

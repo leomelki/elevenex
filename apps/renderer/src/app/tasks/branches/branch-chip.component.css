@@ -15,6 +15,7 @@
   gap: var(--space-1);
   height: 20px;
   max-width: 240px;
+  min-width: 0;
   padding: 0 6px;
   border: 0;
   border-radius: var(--radius-xs);
@@ -52,6 +53,7 @@ button:focus-visible {
 .copy {
   display: grid;
   place-items: center;
+  flex: none;
   width: 20px;
   height: 20px;
   padding: 0;

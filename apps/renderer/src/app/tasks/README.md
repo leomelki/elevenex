@@ -101,15 +101,21 @@ designed form. `WorkspacePicker.canManage` controls its new/manage commands.
 `TaskHeader.closed` hides stage/close controls for archived history.
 Project task-specific buttons with `[taskActions]` alongside **Close task**.
 The optional `[gitStatus]` projection sits beside Git actions inside the reserved
-metadata row. Owners can show bounded loading, retry or Sync controls there;
+metadata row. Owners can show bounded loading, retry or upstream controls there;
 asynchronous status must not add rows below the header and displace a conversation.
 Keep projected content to one line, with long messages truncated visually while
 retaining their accessible text.
 `TaskHeader.disabled`, `canRenameBranch`, `canLink`, `gitAllowedActions` and
 `gitQuietLabel` let a production adapter expose only supported actions.
+`gitActionsDisabled` blocks Git writes independently of the change-review button.
 `BranchChip.canRename` disables rename while keeping copy available.
 `TaskStage.disabled` blocks stage edits. `GitBar.allowedActions` filters its
-secondary menu; `quietLabel` permits an actual behind-upstream status.
+secondary menu. An empty `quietLabel` hides the quiet status when the owner supplies its own.
+The connected workspace uses **Pull** in this slot. Its count comes from the
+latest Git summary, and its tooltip names the configured upstream and checked-out
+branch. Pull fetches the tracked branch when remote and fast-forwards locally.
+Divergence and existing worktree conflicts block Pull. A rejected pull leaves
+review and commit available, with a Git status check before another pull attempt.
 Defaults preserve existing preview consumers. `CloseTask` accepts real
 `terminals`, `actions`, `busy` and `error` inputs in addition to session and
 unpushed counts; busy confirmation controls reject duplicate submissions.

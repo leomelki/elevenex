@@ -195,6 +195,12 @@ Run it against the same component preview URL.
 The connected workspace regression uses the production composition and its
 isolated typed backend adapter:
 
+`scenarios/workspace-pull.mjs` checks the production task header with a tracked
+upstream distinct from the local branch. It covers keyboard activation and
+progress, commit availability after a rejection, long branch names and divergence.
+It captures both themes and a compact reduced-motion layout. Run it against
+`pnpm desktop:preview` with `--url http://127.0.0.1:4310`.
+
 `scenarios/session-opening-scroll.mjs` checks the first paint of the default
 progressive page during session switches. `scenarios/session-loading-policy.mjs`
 uses the preview's `?chatLoading=window` override to check adaptive slow openings,

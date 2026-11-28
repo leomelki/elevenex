@@ -84,6 +84,9 @@
 .split > button:disabled {
   opacity: 1;
 }
+.split.actions-disabled > button:disabled {
+  opacity: .55;
+}
 .split > button[exButton][data-variant="primary"] {
   --running: var(--on-accent);
   --kbd-background: transparent;
@@ -127,10 +130,11 @@
   position: absolute;
   inset-inline-start: 0;
 }
-.split > button:first-child {
+.split:not(.single) > button:first-child {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
+.split > button[hidden] { display: none; }
 .split > button:last-child {
   padding-left: 6px;
   padding-right: 6px;

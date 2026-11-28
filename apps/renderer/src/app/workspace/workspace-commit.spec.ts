@@ -18,7 +18,7 @@ it('keeps failed commits open, retains their provider across session changes, an
   let complete!: (saved: boolean) => void;
   const git = {
     summary: () => ({ branch: 'work' }), commitPreview: () => null, state: () => ({ files: 1, add: 1, del: 0, ahead: 0 }),
-    error, busy, uncertain: () => false, loading: () => false,
+    error, busy, pullError: () => null, uncertain: () => false, loading: () => false,
     readCommitPreview: vi.fn(async () => ({ revision: 'checked', items: [], nextCursor: null, total: 1, matches: 1, unstaged: 1, selected: { files: 1, add: 1, del: 0, staged: 0, unstaged: 1 }, running: [] })),
     perform: vi.fn(() => { busy.set('commit'); return new Promise<boolean>(resolve => { complete = saved => { error.set(saved ? null : 'Write a message and try again.'); busy.set(null); resolve(saved); }; }); }),
   };

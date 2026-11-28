@@ -135,7 +135,7 @@ export class GitBarMotion {
       {
         element: actionSlot,
         width: showAction
-          ? primaryWidth + layoutWidth(more)
+          ? primaryWidth + (more.hidden ? 0 : layoutWidth(more))
           : 0,
         moving: true,
         closing: !showAction,

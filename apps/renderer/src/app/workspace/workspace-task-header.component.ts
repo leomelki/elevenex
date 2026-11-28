@@ -1,13 +1,13 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, output, signal } from '@angular/core';
 import { CommitPanelComponent, CloseTaskComponent, TaskHeaderComponent, type CommitIntent, type CommitFileProvider, type CloseTaskIntent, type GitAction, type TaskStage } from '../tasks';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
-import { ButtonComponent, ModalLayerComponent, SetFieldComponent } from '../ui';
+import { ButtonComponent, IconComponent, ModalLayerComponent, SetFieldComponent, StatusGlyphComponent, TooltipDirective } from '../ui';
 import { WorkspaceStore } from './workspace.store';
 import { WorkspaceTaskGitService } from './workspace-task-git.service';
 
 @Component({
   selector: 'ex-workspace-task-header',
-  imports: [CommitPanelComponent, TaskHeaderComponent, CloseTaskComponent, ButtonComponent, ModalLayerComponent, SetFieldComponent],
+  imports: [CommitPanelComponent, TaskHeaderComponent, CloseTaskComponent, ButtonComponent, IconComponent, ModalLayerComponent, SetFieldComponent, StatusGlyphComponent, TooltipDirective],
   providers: [WorkspaceTaskGitService],
   templateUrl: './workspace-task-header.component.html',
   styleUrl: './workspace-task-header.component.css',
@@ -26,6 +26,40 @@ export class WorkspaceTaskHeaderComponent {
   protected readonly closeError = signal<string | null>(null);
   protected readonly commitOpen = signal(false);
   protected readonly pushAfter = signal(false);
+  protected readonly controlsDisabled = computed(() =>
+    !!this.store.selectedCreation() || this.store.busy() || !!this.git.busy() || this.closeLoading());
+  protected readonly pull = computed(() => {
+    const task = this.store.selectedTask();
+    const summary = this.git.summary();
+    if (task?.state !== 'ready' || task.archivedAt || !summary?.upstream || !summary.behind) return null;
+
+    const { upstream, branch, behind, ahead, conflicted } = summary;
+    const pulling = this.git.busy() === 'sync';
+    const count = `${behind} ${behind === 1 ? 'commit' : 'commits'}`;
+    const offline = this.store.offline();
+    const diverged = ahead > 0;
+    const label = pulling ? 'Pulling…' : offline ? 'Offline' : conflicted ? 'Conflicts' : diverged ? 'Diverged' : 'Pull';
+    let detail = `Pull ${count} (fast-forward only).`;
+    if (pulling) detail = 'Pulling from upstream…';
+    else if (offline) detail = `Pull needs ${this.store.machine()?.name ?? 'the machine'} to be online.`;
+    else if (conflicted) detail = 'Resolve the worktree conflicts before pulling.';
+    else if (diverged) detail = `Branch has diverged: ${count} behind and ${ahead} ahead. Reconcile the branches before pulling.`;
+    else if (this.git.uncertain()) detail = 'Refresh Git status before pulling.';
+    else if (this.commitOpen()) detail = 'Close the commit panel before pulling.';
+    else if (this.git.loading()) detail = 'Checking Git status…';
+    else if (this.controlsDisabled()) detail = 'Wait for the current task operation to finish before pulling.';
+    return {
+      pulling, label, behind, upstream, branch, detail,
+      accessibleLabel: label === 'Pull' ? `Pull ${count}` : label,
+      warning: !pulling && !offline && (conflicted || diverged),
+      disabled: this.controlsDisabled() || this.commitOpen() || this.git.loading() ||
+        this.git.uncertain() || offline || conflicted || diverged,
+    };
+  });
+  protected readonly gitQuietLabel = computed(() => {
+    if (this.pull() || this.git.pullError()) return '';
+    return this.git.summary()?.upstream ? 'Up to date' : 'No upstream';
+  });
   private readonly commitTask = computed(() => {
     const selected = this.store.taskSelection();
     return selected && this.store.selectedTask()?.state === 'ready' ? { scopeId: selected.scopeId, taskId: selected.taskId } : null;
@@ -100,9 +134,17 @@ export class WorkspaceTaskHeaderComponent {
   }
   protected gitAction(action: GitAction): void {
     if (this.store.selectedTask()?.state !== 'ready') return;
+    if (this.git.busy() === 'sync' || this.git.uncertain()) return;
     if (this.store.offline()) { this.git.error.set(`This git action needs ${this.store.machine()?.name ?? 'the machine'}. Nothing was sent.`); return; }
     if (action === 'commit' || action === 'commit-push') { if (action === 'commit-push') this.pushAfter.set(true); this.commitOpen.update(open => !open); }
-    else if (action === 'push' || action === 'sync') void this.git.perform({ type: action });
+    else if (action === 'push') void this.git.perform({ type: action });
+  }
+  protected pullBranch(): void {
+    const pull = this.pull();
+    if (pull && !pull.disabled && !this.git.pullError() && !this.git.error()) void this.git.perform({ type: 'sync' });
+  }
+  protected refreshPullStatus(): void {
+    if (!this.store.offline() && !this.git.loading() && !this.git.busy()) void this.git.refresh();
   }
   protected async commit(intent: CommitIntent): Promise<void> {
     if (this.git.busy() || !intent.revision) return;
