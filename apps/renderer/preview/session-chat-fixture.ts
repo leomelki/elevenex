@@ -365,6 +365,9 @@ export class SessionChatFixture {
     mode:
       | "images"
       | "permission"
+      | "confirmation"
+      | "confirmation-expired"
+      | "unsupported-confirmation"
       | "question"
       | "running"
       | "antigravity-running"
@@ -387,6 +390,11 @@ export class SessionChatFixture {
     id = 101,
   ): void {
     const session = this.session(id);
+    if (mode === 'confirmation-expired') {
+      session.state = { ...session.state, question: null, phase: 'running' };
+      this.changed();
+      return;
+    }
     session.items = opening();
     session.state = previewChatState();
     if (mode === 'new') { session.items = []; session.state = { ...session.state, providerLocked: false }; }
@@ -451,6 +459,23 @@ export class SessionChatFixture {
         phase: "waiting",
         question: retryQuestion,
       };
+    if (mode === 'confirmation' || mode === 'unsupported-confirmation') {
+      const timestamp = new Date().toISOString();
+      session.items = [
+        item('verify-form', 'user', 'Check the signup form in the browser.', { timestamp }),
+        item('access-pending', 'assistant', 'I’ll check how the form appears in Chrome.', { timestamp }),
+      ];
+      session.state = {
+        ...session.state, provider: 'claude', model: 'sonnet', phase: 'waiting', canInterrupt: true,
+        question: {
+          id: `app-access-${this.version}`, message: 'Allow Computer Use to use "Google Chrome"?',
+          url: null, questions: [],
+          decision: mode === 'confirmation'
+            ? { kind: 'confirm', title: 'Allow Computer Use?', source: 'Computer Use', description: '' }
+            : { kind: 'unsupported' },
+        },
+      };
+    }
     if (mode === "running" || mode === "antigravity-running") {
       session.items = session.items.slice(0, 6);
       session.state = {

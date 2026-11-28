@@ -105,6 +105,12 @@ destruction release the watch. After backend identity changes, workspace
 restoration verifies the selection before opening a new watch. Reconnects and
 refreshes issue only reads.
 
+Claude form elicitations with an explicit empty object schema advertise a
+one-shot `question.decision` capability. The desktop sends an empty `answer`
+for the current request ID. The runtime consumes that request once, and the
+SDK's abort signal withdraws it from the feed. The approval card uses only
+provider-supplied scope. Older engines can omit the decision capability.
+
 ### Editing a sent message
 
 Engines mark editable saved user records with `editable: true`. Main reads

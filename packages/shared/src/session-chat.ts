@@ -355,6 +355,11 @@ export interface SessionChatState {
     readonly message: string;
     readonly questions: readonly SessionChatQuestion[];
     readonly url: string | null;
+    /** Present when the engine recognizes a one-shot form confirmation or
+     * cannot offer an answer for this elicitation. Older engines omit it. */
+    readonly decision?:
+      | { readonly kind: "confirm"; readonly title: string; readonly source: string; readonly description: string }
+      | { readonly kind: "unsupported" };
   } | null;
   /**
    * Legacy flat list kept for older desktops. Engines derive it from `work`;

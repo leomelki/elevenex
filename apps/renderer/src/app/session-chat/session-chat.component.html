@@ -87,42 +87,72 @@
       </ex-approval-card>
     }
     @for (
-      request of store.state()?.question ? [store.state()!.question!] : [];
-      track request.id
+      questionRequest of store.state()?.question ? [store.state()!.question!] : [];
+      track identity() + ':' + questionRequest.id
     ) {
-      <section class="question" #request tabindex="-1">
-        @if (request.message) {
-          <p>{{ request.message }}</p>
-        }
-        @if (request.url) {
-          <button exButton variant="secondary" (click)="openLink(request.url!)">
-            Open request
-          </button>
-        }
-        @if (questions().length) {
-          <ex-question-card
-            [questions]="questions()"
-            [disabled]="blocked()"
-            (submitted)="answer($event)"
-          />
-        }
-        <button
-          exButton
-          variant="ghost"
-          size="sm"
-          [disabled]="blocked()"
-          (click)="
-            store.perform({
-              type: 'answer',
-              id: request.id,
-              answers: {},
-              decline: true,
-            })
-          "
+      @let decision = questionRequest.decision;
+      @if (decision?.kind === 'confirm' && !questionRequest.url && !questionRequest.questions.length) {
+        <ex-approval-card
+          #request
+          data-confirmation
+          kind="confirmation"
+          [heading]="decision.title || questionRequest.message"
+          [tool]="decision.source"
+          [reason]="decision.title && decision.title !== questionRequest.message ? questionRequest.message : ''"
+          [disabled]="blocked() || store.offline() || confirmationResponse() === 'sent'"
+          [responding]="confirmationResponse() === 'sending'"
+          (focusin)="trackConfirmationFocus($event)"
+          (focusout)="trackConfirmationFocus($event)"
+          (resolve)="respondToConfirmation(questionRequest.id, $event)"
         >
-          Decline
-        </button>
-      </section>
+          @if (decision.description && decision.description !== questionRequest.message) {
+            <p class="confirmation-detail">{{ decision.description }}</p>
+          }
+          @if (confirmationResponse() === 'sending') {
+            <p class="confirmation-detail" role="status">Sending your answer…</p>
+          } @else if (confirmationResponse() === 'sent') {
+            <p class="confirmation-detail" role="status">Answer sent.</p>
+          } @else if (store.offline()) {
+            <p class="confirmation-detail" role="status">Reconnect to respond to this request.</p>
+          }
+        </ex-approval-card>
+      } @else {
+        <section class="question" #request tabindex="-1">
+          @if (questionRequest.message) {
+            <p>{{ questionRequest.message }}</p>
+          }
+          @if (!decision && questionRequest.url) {
+            <button exButton variant="secondary" (click)="openLink(questionRequest.url!)">
+              Open request
+            </button>
+          }
+          @if (!decision && questions().length) {
+            <ex-question-card
+              [questions]="questions()"
+              [disabled]="blocked()"
+              (submitted)="answer($event)"
+            />
+          } @else if (decision || !questionRequest.url) {
+            <p role="status">This request can only be declined because its response form is unavailable.</p>
+          }
+          <button
+            exButton
+            variant="ghost"
+            size="sm"
+            [disabled]="blocked() || (!!decision && store.offline())"
+            (click)="
+              store.perform({
+                type: 'answer',
+                id: questionRequest.id,
+                answers: {},
+                decline: true,
+              })
+            "
+          >
+            Decline
+          </button>
+        </section>
+      }
     }
   </div>
   <div chatComposer class="session-composer">

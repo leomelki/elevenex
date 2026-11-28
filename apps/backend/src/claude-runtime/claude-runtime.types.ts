@@ -169,6 +169,7 @@ export interface ClaudeUserInputRequest {
   isBlocking?: boolean;
   serverName: string;
   message: string;
+  decision?: 'confirm' | 'unsupported';
   mode?: 'form' | 'url';
   url?: string;
   elicitationId?: string;

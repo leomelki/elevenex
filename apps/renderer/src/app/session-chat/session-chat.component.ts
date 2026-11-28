@@ -534,6 +534,37 @@ export class SessionChatComponent {
     })),
     { equal: equalViewData },
   );
+  private readonly confirmationKey = computed(() => {
+    const request = this.store.state()?.question;
+    return request?.decision?.kind === 'confirm' ? JSON.stringify([this.identity(), request.id]) : null;
+  });
+  protected readonly confirmationResponse = linkedSignal<string | null, 'sending' | 'sent' | null>({
+    source: this.confirmationKey,
+    computation: () => null,
+  });
+  private focusedConfirmation?: { key: string; card: HTMLElement };
+
+  protected trackConfirmationFocus(event: FocusEvent): void {
+    const card = event.currentTarget;
+    const key = this.confirmationKey();
+    if (!(card instanceof HTMLElement) || !key) return;
+    if (event.type === 'focusin') this.focusedConfirmation = { key, card };
+    else if (this.focusedConfirmation?.key === key &&
+             !(event.relatedTarget instanceof Node && card.contains(event.relatedTarget)))
+      this.focusedConfirmation = undefined;
+  }
+
+  protected async respondToConfirmation(id: string, decision: 'approved' | 'denied' | 'always'): Promise<void> {
+    const key = this.confirmationKey();
+    // A live confirmation can expire during disconnection. Keep it out of the outbox.
+    if (!key || this.store.state()?.question?.id !== id || this.blocked() ||
+        this.store.offline() || this.confirmationResponse() || decision === 'always') return;
+    this.confirmationResponse.set('sending');
+    const ok = await this.store.perform({
+      type: 'answer', id, answers: {}, ...(decision === 'denied' ? { decline: true } : {}),
+    });
+    if (key === this.confirmationKey()) this.confirmationResponse.set(ok ? 'sent' : null);
+  }
 
   dragOver(event: DragEvent): void {
     if (event.defaultPrevented || !event.dataTransfer?.types.includes('Files')) return;
@@ -630,6 +661,18 @@ export class SessionChatComponent {
       opening = false;
       // Hydrated history must be positioned before paint, without scroll animation.
       untracked(() => scroll.scrollToEnd("instant"));
+    });
+    afterRenderEffect(() => {
+      const key = this.confirmationKey();
+      const focused = this.focusedConfirmation;
+      if (!focused || focused.key === key) return;
+      this.focusedConfirmation = undefined;
+      const active = this.document.activeElement;
+      if (!this.active() || (active && active !== this.document.body && !focused.card.contains(active))) return;
+      untracked(() => {
+        if (this.showWelcome()) this.focusComposer();
+        else this.chat()?.scroll()?.viewport().nativeElement.focus({ preventScroll: true });
+      });
     });
     let focusedAgent: AgentChatFocus | null = null;
     afterRenderEffect(() => {

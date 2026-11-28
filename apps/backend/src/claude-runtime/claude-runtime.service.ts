@@ -48,8 +48,8 @@ import {
   type ModelInfo,
   type SDKControlGetContextUsageResponse,
   type CanUseTool,
-  type ElicitationRequest,
   type ElicitationResult,
+  type OnElicitation,
   type HookCallback,
   type PermissionMode,
   type PermissionResult,
@@ -176,6 +176,7 @@ import {
   taskSubagent,
 } from './claude-subagents.js';
 import { ClaudeSessionRuntime } from './claude-session-runtime.js';
+import { claudeElicitationDecision } from './claude-elicitation.js';
 import {
   allowsClaudePlanUsage,
   claudeSubscriptionUsage,
@@ -1322,6 +1323,12 @@ export class ClaudeRuntimeService
       });
       await run.completionPromise.catch(() => undefined);
     }
+    const state = this.runtimeStates.get(sessionId);
+    if (state) {
+      state.pendingUserInputRequest = null;
+      for (const requestId of state.userInputRequests.keys())
+        this.settleUserInput(sessionId, state, requestId, { action: 'cancel' });
+    }
     const runtime = this.sessionRuntimes.get(sessionId);
     if (runtime) {
       await runtime.close();
@@ -2103,13 +2110,16 @@ export class ClaudeRuntimeService
   private createOnElicitation(
     sessionId: number,
     state: RuntimeState,
-  ): (request: ElicitationRequest) => Promise<ElicitationResult> {
-    return async (request): Promise<ElicitationResult> => {
+  ): OnElicitation {
+    return async (request, { signal }) => {
+      if (signal.aborted) return { action: 'cancel' };
       const requestId = randomUUID();
+      const decision = claudeElicitationDecision(request);
       const pendingRequest: ClaudeUserInputRequest = {
         requestId,
         serverName: request.serverName,
         message: request.message,
+        ...(decision ? { decision } : {}),
         mode: request.mode,
         url: request.url,
         elicitationId: request.elicitationId,
@@ -2126,16 +2136,25 @@ export class ClaudeRuntimeService
         // run rather than auto-declining just because activeRuns hasn't
         // caught up with a resumed or just-finished turn.
         const run = this.ensureActiveRunForCallback(sessionId, state);
-        if (!run) {
+        if (signal.aborted) {
+          resolve({ action: 'cancel' });
+          return;
+        }
+        if (!run || run.interruptRequested) {
           resolve({ action: 'decline' });
           return;
         }
 
+        const abort = () => this.settleUserInput(sessionId, state, requestId, { action: 'cancel' });
         state.userInputRequests = run.userInputRequests;
         state.userInputRequests.set(requestId, {
           request: pendingRequest,
-          resolve: (decision) => resolve(decision),
+          resolve: (response) => {
+            signal.removeEventListener('abort', abort);
+            resolve(response);
+          },
         });
+        signal.addEventListener('abort', abort, { once: true });
         if (!state.pendingUserInputRequest) {
           state.pendingUserInputRequest = pendingRequest;
           this.emitEvent({
@@ -3311,19 +3330,42 @@ export class ClaudeRuntimeService
     requestId: string,
     action: 'accept' | 'decline' | 'cancel' = 'accept',
     content?: UserInputContent,
+    options?: { requirePending: true },
   ): Promise<void> {
-    const run = this.activeRuns.get(sessionId);
-    const stateForRequest = this.ensureRuntimeState(sessionId);
-    const request =
-      run?.userInputRequests.get(requestId) ??
-      stateForRequest.userInputRequests.get(requestId);
-    if (!request) {
+    const state = this.ensureRuntimeState(sessionId);
+    const request = (this.activeRuns.get(sessionId)?.userInputRequests.get(requestId) ??
+      state.userInputRequests.get(requestId))?.request;
+    if (!request || this.invalidatedSessions.has(sessionId) ||
+        (options?.requirePending && state.pendingUserInputRequest?.requestId !== requestId)) {
+      if (options?.requirePending)
+        throw new ConflictException('This request is no longer pending.');
       return;
     }
+    if (action === 'accept' && request.decision === 'unsupported')
+      throw new BadRequestException('This elicitation cannot be answered by this engine.');
+    if (action === 'accept' && request.decision === 'confirm' && content && Object.keys(content).length)
+      throw new BadRequestException('This confirmation does not accept form answers.');
+    this.settleUserInput(sessionId, state, requestId, {
+      action,
+      content: request.decision === 'confirm' ? (action === 'accept' ? {} : undefined) : content,
+    });
+  }
 
+  private settleUserInput(
+    sessionId: number,
+    state: RuntimeState,
+    requestId: string,
+    decision: UserInputDecision,
+  ): void {
+    const run = this.activeRuns.get(sessionId);
+    const request = run?.userInputRequests.get(requestId) ?? state.userInputRequests.get(requestId);
+    if (!request) return;
     run?.userInputRequests.delete(requestId);
-    const state = this.ensureRuntimeState(sessionId);
     state.userInputRequests.delete(requestId);
+    request.resolve(decision);
+    if (this.invalidatedSessions.has(sessionId) || this.runtimeStates.get(sessionId) !== state ||
+        state.pendingUserInputRequest?.requestId !== requestId) return;
+
     state.pendingUserInputRequest =
       state.userInputRequests.values().next().value?.request ?? null;
     if (state.pendingUserInputRequest)
@@ -3331,7 +3373,10 @@ export class ClaudeRuntimeService
         type: 'user_input_request',
         payload: { sessionId, request: state.pendingUserInputRequest },
       });
-    state.runPhase = state.pendingUserInputRequest
+    const permission = state.pendingPermissionRequest;
+    const blockingPermission = permission && !this.childPermissionIsBackground(state, permission) &&
+      (!permission.agentId || !!run);
+    state.runPhase = state.pendingUserInputRequest || blockingPermission
       ? 'waiting'
       : run
         ? 'running'
@@ -3343,7 +3388,6 @@ export class ClaudeRuntimeService
           ? 'running'
           : 'idle';
     this.emitRunState(sessionId);
-    request.resolve({ action, content });
   }
 
   getPendingMcpAuthUrl(sessionId: number, serverName: string): string | null {
@@ -6479,7 +6523,7 @@ export class ClaudeRuntimeService
     selectedPermissionMode: ClaudePermissionMode | null,
     planMode: boolean,
     canUseTool: CanUseTool,
-    onElicitation: (request: ElicitationRequest) => Promise<ElicitationResult>,
+    onElicitation: OnElicitation,
     surface: string = 'session',
     agentAutonomyMode: string | null = null,
   ): Promise<Options> {
@@ -8918,8 +8962,6 @@ export class ClaudeRuntimeService
     }
 
     const state = this.ensureRuntimeState(sessionId);
-    const pendingUserInputRequest = state.pendingUserInputRequest;
-
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = null;
     state.canInterrupt = false;
@@ -8946,13 +8988,8 @@ export class ClaudeRuntimeService
       run.permissionRequestOrder.filter((id) => run.permissionRequests.has(id));
     this.restorePendingChildPermission(state);
 
-    if (pendingUserInputRequest) {
-      const userInput = run.userInputRequests.get(
-        pendingUserInputRequest.requestId,
-      );
-      userInput?.resolve({ action: 'cancel' });
-      run.userInputRequests.delete(pendingUserInputRequest.requestId);
-    }
+    for (const requestId of run.userInputRequests.keys())
+      this.settleUserInput(sessionId, state, requestId, { action: 'cancel' });
 
     try {
       await run.query.interrupt();

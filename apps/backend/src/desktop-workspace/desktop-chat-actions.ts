@@ -157,6 +157,7 @@ export async function executeChatAction(
       break;
     }
     case 'answer': {
+      const id = text(action.id);
       const raw = record(await provider.getRuntimeState(sessionId)),
         permission = record(raw.pendingPermissionRequest);
       const permissionQuestion =
@@ -165,8 +166,24 @@ export async function executeChatAction(
       const request = permissionQuestion
         ? permission
         : record(raw.pendingUserInputRequest);
-      if (request.requestId !== action.id)
+      if (request.requestId !== id)
         throw new BadRequestException('This question is no longer pending.');
+      if (!permissionQuestion && provider.info.id === 'claude' &&
+          (request.decision === 'confirm' || request.decision === 'unsupported')) {
+        if (action.decline !== undefined && typeof action.decline !== 'boolean')
+          throw new BadRequestException('Invalid confirmation decision.');
+        const decline = action.decline === true;
+        if (!decline && request.decision === 'unsupported')
+          throw new BadRequestException('This elicitation cannot be answered by this engine.');
+        if (!decline && (!action.answers || typeof action.answers !== 'object' ||
+            Array.isArray(action.answers) || Object.keys(action.answers).length))
+          throw new BadRequestException('This confirmation does not accept form answers.');
+        await feature('answerUserInput').answerUserInput(
+          sessionId, id, decline ? 'decline' : 'accept',
+          decline ? undefined : {}, { requirePending: true },
+        );
+        break;
+      }
       const answers = record(action.answers),
         content: Record<string, string | number | boolean | string[]> = {};
       if (Object.keys(answers).length > 20)
@@ -192,21 +209,15 @@ export async function executeChatAction(
       // Harness question protocols use question IDs (or full question text) as keys.
       if (permissionQuestion) {
         if (action.decline === true)
-          await feature('denyPermission').denyPermission(
-            sessionId,
-            text(action.id),
-          );
+          await feature('denyPermission').denyPermission(sessionId, id);
         else
           await feature('approvePermission').approvePermission(
-            sessionId,
-            text(action.id),
-            false,
-            { answers: content },
+            sessionId, id, false, { answers: content },
           );
       } else
         await feature('answerUserInput').answerUserInput(
           sessionId,
-          text(action.id),
+          id,
           action.decline === true ? 'decline' : 'accept',
           content,
         );

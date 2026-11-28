@@ -5968,7 +5968,7 @@ describe('ClaudeRuntimeService', () => {
         mode: 'url',
         url: 'https://auth.example.com/authorize',
         elicitationId: 'elicit-1',
-      });
+      }, { signal: new AbortController().signal, requestId: 'rpc-1' });
 
       await new Promise((resolve) => setImmediate(resolve));
 
@@ -5997,10 +5997,61 @@ describe('ClaudeRuntimeService', () => {
         mode: 'url',
         url: 'https://auth.example.com/authorize',
         elicitationId: 'elicit-2',
-      });
+      }, { signal: new AbortController().signal, requestId: 'rpc-2' });
 
       expect(result).toEqual({ action: 'decline' });
       expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);
+    });
+
+    it('resolves the live empty form once and cancels the next confirmation on native abort', async () => {
+      (service as any).sessionRuntimes.set(SESSION_ID, {});
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
+      const onElicitation = (service as any).createOnElicitation(SESSION_ID, state);
+      const request = {
+        serverName: 'computer-use',
+        message: 'Allow Computer Use to use "Google Chrome"?',
+        mode: 'form',
+        requestedSchema: { type: 'object', properties: {}, required: [] },
+        title: 'Allow Computer Use?',
+        displayName: 'Computer Use',
+      };
+      const first = new AbortController();
+      const second = new AbortController();
+      const accepted = onElicitation(request, { signal: first.signal, requestId: 'rpc-1' });
+      const canceled = onElicitation(request, { signal: second.signal, requestId: 'rpc-2' });
+      expect(state.pendingUserInputRequest).toMatchObject({ decision: 'confirm', title: request.title });
+      const id = state.pendingUserInputRequest.requestId;
+      await service.answerUserInput(SESSION_ID, id, 'accept', {}, { requirePending: true });
+      await expect(accepted).resolves.toEqual({ action: 'accept', content: {} });
+      const next = state.pendingUserInputRequest.requestId;
+      expect(next).not.toBe(id);
+      first.abort();
+      expect(state.pendingUserInputRequest.requestId).toBe(next);
+      await expect(service.answerUserInput(SESSION_ID, id, 'accept', {}, { requirePending: true }))
+        .rejects.toThrow('no longer pending');
+      second.abort();
+      await expect(canceled).resolves.toEqual({ action: 'cancel' });
+      expect(state.pendingUserInputRequest).toBeNull();
+      await expect(service.answerUserInput(SESSION_ID, next, 'accept', {}, { requirePending: true }))
+        .rejects.toThrow('no longer pending');
+      await expect(onElicitation(request, { signal: AbortSignal.abort(), requestId: 'rpc-3' }))
+        .resolves.toEqual({ action: 'cancel' });
+      expect(state.pendingUserInputRequest).toBeNull();
+    });
+
+    it('prevents accepting message-only elicitations with no form schema', async () => {
+      (service as any).sessionRuntimes.set(SESSION_ID, {});
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
+      const onElicitation = (service as any).createOnElicitation(SESSION_ID, state);
+      const response = onElicitation({
+        serverName: 'computer-use', message: 'Allow Computer Use to use "Google Chrome"?',
+      }, { signal: new AbortController().signal, requestId: 'rpc' });
+      expect(state.pendingUserInputRequest).toMatchObject({ decision: 'unsupported' });
+      const id = state.pendingUserInputRequest.requestId;
+      await expect(service.answerUserInput(SESSION_ID, id, 'accept', {}))
+        .rejects.toThrow('cannot be answered');
+      await service.answerUserInput(SESSION_ID, id, 'decline', undefined, { requirePending: true });
+      await expect(response).resolves.toMatchObject({ action: 'decline' });
     });
   });
   describe('native Claude worker integration', () => {

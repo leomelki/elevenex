@@ -123,18 +123,15 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state, initia
     ),
     sessionChatCancel: vi.fn(async () => undefined),
   };
+  const scope = { id: "scope", environment: { kind: "local" } };
+  const connection = signal<{ revision: number; scope: typeof scope | null }>({ revision: 1, scope });
   TestBed.configureTestingModule({
     providers: [
       SessionChatDrafts,
       { provide: ELEVENEX_BRIDGE, useValue: bridge },
       {
         provide: BackendClientService,
-        useValue: {
-          state: signal({
-            revision: 1,
-            scope: { id: "scope", environment: { kind: "local" } },
-          }),
-        },
+        useValue: { state: connection },
       },
     ],
   });
@@ -149,6 +146,7 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state, initia
     fixture,
     root: fixture.nativeElement as HTMLElement,
     bridge,
+    disconnect: () => connection.set({ revision: 2, scope: null }),
     publish: (next: SessionChatPage) => {
       page = next;
     },
@@ -160,6 +158,75 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state, initia
     ) => resolve(result),
   };
 }
+
+describe('one-shot elicitation confirmations', () => {
+  const question: NonNullable<SessionChatState['question']> = {
+    id: 'app-access', message: 'Allow Computer Use to use "Google Chrome"?',
+    url: null, questions: [],
+    decision: { kind: 'confirm', title: 'Allow Computer Use?', source: 'Computer Use', description: '' },
+  };
+
+  it.each(['allow', 'decline'])('submits a scoped %s once and keeps both decisions disabled until state catches up', async (decision) => {
+    const chatState: SessionChatState = { ...state, provider: 'claude', phase: 'waiting', question };
+    const items = decision === 'allow' ? [] : [item('prompt', 'user', 'Check Chrome')];
+    const { fixture, root, bridge, complete } = setup(items, chatState);
+    await settle(fixture);
+    const card = root.querySelector<HTMLElement>('ex-approval-card')!;
+    const [allow, decline] = Array.from(card.querySelectorAll('button'));
+    if (!allow || !decline) throw new Error('Missing confirmation controls');
+    expect(card.textContent).toContain(question.message);
+    expect(card.getAttribute('aria-label')).toBe(question.message);
+    expect(allow.textContent?.trim()).toBe('Allow');
+    expect(decline.textContent).toContain('Decline');
+    expect(document.activeElement).not.toBe(allow);
+    card.focus();
+    expect(document.activeElement).toBe(card);
+    for (const altKey of [true, false])
+      card.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', altKey, bubbles: true, cancelable: true }));
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    (decision === 'allow' ? allow : decline).click();
+    await settle(fixture);
+    expect(card.querySelector('footer')?.getAttribute('aria-busy')).toBe('true');
+    expect(card.textContent).toContain('Sending your answer');
+    expect(allow.disabled && decline.disabled).toBe(true);
+    decline.click();
+    expect(bridge.sessionChatCommand).toHaveBeenCalledExactlyOnceWith('scope', {
+      taskId: 1, sessionId: 2, action: {
+        type: 'answer', id: question.id, answers: {}, ...(decision === 'decline' ? { decline: true } : {}),
+      },
+    });
+    complete();
+    await settle(fixture);
+    expect(allow.disabled && decline.disabled).toBe(true);
+    expect(card.textContent).toContain('Answer sent');
+    fixture.componentInstance.store.state.set({ ...chatState, phase: 'idle', question: null });
+    await settle(fixture);
+    expect(root.querySelector('ex-approval-card')).toBeNull();
+    expect(document.activeElement).toBe(root.querySelector(items.length ? 'ex-chat-scroll .viewport' : 'ex-composer textarea'));
+  });
+
+  it('leaves legacy message-only requests decline-only even when the wording requests permission', async () => {
+    const { fixture, root, bridge } = setup([], { ...state, phase: 'waiting', question: { ...question, decision: undefined } });
+    await settle(fixture);
+    expect(root.querySelector('ex-approval-card')).toBeNull();
+    expect(root.querySelector('.question')?.textContent).toContain('can only be declined');
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
+
+  it('disables both choices when the scoped connection drops', async () => {
+    const { fixture, root, bridge, disconnect } = setup([], { ...state, provider: 'claude', phase: 'waiting', question });
+    await settle(fixture);
+    disconnect();
+    await settle(fixture);
+    const card = root.querySelector('ex-approval-card')!;
+    const buttons = Array.from(card.querySelectorAll('button'));
+    expect(buttons).toHaveLength(2);
+    expect(card.textContent).toContain('Reconnect to respond');
+    expect(buttons.every(button => button.disabled)).toBe(true);
+    buttons.forEach(button => button.click());
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
+});
 
 describe('workspace recovery in a saved conversation', () => {
   it('keeps history and the draft while blocking commands until the workspace returns', async () => {

@@ -1539,6 +1539,44 @@ describe('selected session chat', () => {
       answers: { 'Which target?': 'A' },
     });
   });
+
+  it('projects provider-supplied confirmation details and scopes empty answers to the live Claude request', async () => {
+    runtime.info.id = 'claude';
+    session.mockImplementation(async () => ({
+      workspaceId: 1, worktreePath: '/workspace', surface: 'session', status,
+      activeAgentProvider: 'claude', workspaceArchivedAt: null,
+    }));
+    const confirmation = {
+      requestId: 'current',
+      message: 'Allow Computer Use to use "Google Chrome"?',
+      title: 'Allow Computer Use?',
+      displayName: 'Computer Use',
+      description: 'Access requested by the Computer Use server.',
+      decision: 'confirm',
+    };
+    let pending = confirmation;
+    runtime.getRuntimeState.mockImplementation(async () => ({
+      runPhase: 'waiting', pendingUserInputRequest: pending,
+    }));
+    expect((await read())!.state.question).toEqual({
+      id: 'current', message: confirmation.message, questions: [], url: null,
+      decision: { kind: 'confirm', title: confirmation.title, source: confirmation.displayName, description: confirmation.description },
+    });
+    const answer = { type: 'answer', id: 'current', answers: {} };
+    await expect(chat.command(10, 2, answer)).rejects.toThrow('does not belong');
+    await expect(chat.command(1, 2, { ...answer, id: 'expired' })).rejects.toThrow('no longer pending');
+    await expect(chat.command(1, 2, { ...answer, answers: { extra: ['yes'] } })).rejects.toThrow('does not accept form answers');
+    await expect(chat.command(1, 2, { ...answer, decline: 'true' })).rejects.toThrow('Invalid confirmation');
+    expect(runtime.answerUserInput).not.toHaveBeenCalled();
+    await chat.command(1, 2, answer);
+    expect(runtime.answerUserInput).toHaveBeenLastCalledWith(2, 'current', 'accept', {}, { requirePending: true });
+    pending = { ...confirmation, requestId: 'next', decision: 'unsupported' };
+    expect(chatState({ pendingUserInputRequest: pending }, 'claude').question?.decision).toEqual({ kind: 'unsupported' });
+    await expect(chat.command(1, 2, { ...answer, id: 'next' })).rejects.toThrow('cannot be answered');
+    await chat.command(1, 2, { ...answer, id: 'next', decline: true });
+    expect(runtime.answerUserInput).toHaveBeenLastCalledWith(2, 'next', 'decline', undefined, { requirePending: true });
+    expect(runtime.approvePermission).not.toHaveBeenCalled();
+  });
 });
 
 describe('chat content projection', () => {

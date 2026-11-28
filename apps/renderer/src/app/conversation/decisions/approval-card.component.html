@@ -2,41 +2,38 @@
   <div>
     @if (status() === "pending") {
       <header>
-        <ex-icon name="shield" [size]="16" /><strong>{{
-          kind() === "command"
-            ? "Run this command?"
-            : kind() === "edit"
-              ? "Apply this edit?"
-              : "Allow this tool?"
-        }}</strong>
+        <ex-icon name="shield" [size]="16" /><strong>{{ title() }}</strong>
       </header>
       @if (reason()) {
         <p>{{ reason() }}</p>
       }
-      <div class="target">
-        <code>{{ target() }}</code>
-        @if (where()) {
-          <span>{{ where() }}</span>
-        }
-      </div>
+      @if (!confirmation() || target() || where()) {
+        <div class="target">
+          <code>{{ target() }}</code>
+          @if (where()) {
+            <span>{{ where() }}</span>
+          }
+        </div>
+      }
       <ng-content />
-      <footer>
+      <footer [attr.aria-busy]="responding() || null">
         <button
           exButton
           variant="primary"
           size="sm"
-          [disabled]="disabled()"
-          (click)="resolve.emit('approved')"
+          [disabled]="disabled() || responding()"
+          (click)="decide('approved')"
         >
-          Approve <ex-kbd>↵</ex-kbd>
+          {{ confirmation() ? "Allow" : "Approve" }}
+          @if (!confirmation()) { <ex-kbd>↵</ex-kbd> }
         </button>
-        @if (allowAlways()) {
+        @if (canRemember()) {
           <button
             exButton
             variant="secondary"
             size="sm"
-            [disabled]="disabled()"
-            (click)="resolve.emit('always')"
+            [disabled]="disabled() || responding()"
+            (click)="decide('always')"
           >
             Always allow <ex-kbd>⌥↵</ex-kbd>
           </button>
@@ -45,10 +42,10 @@
           exButton
           variant="ghost"
           size="sm"
-          [disabled]="disabled()"
-          (click)="resolve.emit('denied')"
+          [disabled]="disabled() || responding()"
+          (click)="decide('denied')"
         >
-          Deny <ex-kbd>Esc</ex-kbd>
+          {{ confirmation() ? "Decline" : "Deny" }} <ex-kbd>Esc</ex-kbd>
         </button>
       </footer>
     } @else {

@@ -203,12 +203,14 @@ export class ClaudeAgentRuntimeProvider
     requestId: string,
     action: 'accept' | 'decline' | 'cancel' = 'accept',
     content?: Record<string, string | number | boolean | string[]>,
+    options?: { requirePending: true },
   ) {
     return this.runtimeService.answerUserInput(
       sessionId,
       requestId,
       action,
       content,
+      options,
     );
   }
 

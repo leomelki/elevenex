@@ -836,6 +836,18 @@ test('chat accepts bounded queued handoffs from engines using the capability', (
     assert.throws(() => parseChatState({ ...chatState, dispatchingPrompts }));
 });
 
+test('chat preserves bounded confirmation details and passes only the scoped elicitation answer', () => {
+  const { parseChatAction, parseChatState } = require('../dist/backend-client/session-chat-validation');
+  const question = { id: 'elicitation', message: 'Allow Computer Use to use "Google Chrome"?', questions: [], url: null };
+  assert.deepEqual(parseChatState({ ...chatState, question }).question, question);
+  const decision = { kind: 'confirm', title: 'Allow Computer Use?', source: 'Computer Use', description: '' };
+  assert.deepEqual(parseChatState({ ...chatState, question: { ...question, decision: { ...decision, private: 'drop' } } }).question,
+    { ...question, decision });
+  assert.throws(() => parseChatState({ ...chatState, question: { ...question, decision: { ...decision, source: 'x'.repeat(1001) } } }));
+  assert.deepEqual(parseChatAction({ type: 'answer', id: question.id, answers: {}, remember: true }),
+    { type: 'answer', id: question.id, answers: {} });
+});
+
 test('delegation metadata validates identities, tool receipts and view bounds', () => {
   const { parseChatPage, parseChatState } = require('../dist/backend-client/session-chat-validation');
   const at = '2026-11-14T12:00:00.000Z';

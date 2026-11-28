@@ -102,6 +102,16 @@ export function chatState(
         message: permission.description ?? '',
       }
     : record(raw.pendingUserInputRequest);
+  const elicitationDecision = provider === 'claude' && !permissionQuestion ? question.decision : undefined;
+  const decision: NonNullable<SessionChatState['question']>['decision'] =
+    elicitationDecision === 'confirm'
+      ? {
+          kind: 'confirm',
+          title: nullable(question.title)?.trim() ?? '',
+          source: nullable(question.displayName)?.trim() || nullable(question.serverName)?.trim() || '',
+          description: typeof question.description === 'string' ? display(question.description, 4000) : '',
+        }
+      : elicitationDecision === 'unsupported' ? { kind: 'unsupported' } : undefined;
   const questions = list(question.questions)
     .slice(0, 20)
     .map((value, index) => {
@@ -234,7 +244,8 @@ export function chatState(
           id: display(question.requestId, 1000),
           message: display(question.message, 4000),
           questions,
-          url: nullable(question.url),
+          url: decision ? null : nullable(question.url),
+          ...(decision ? { decision } : {}),
         }
       : null,
   };

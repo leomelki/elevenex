@@ -612,6 +612,21 @@ export function parseChatState(value: unknown, sessionId?: number, taskId?: numb
     raw["permission"] === null ? null : chatObject(raw["permission"]);
   const question =
     raw["question"] === null ? null : chatObject(raw["question"]);
+  const rawDecision = question?.["decision"];
+  let decision: NonNullable<SessionChatState["question"]>["decision"];
+  if (rawDecision !== undefined) {
+    const value = chatObject(rawDecision);
+    if (value["kind"] === "confirm") {
+      decision = {
+        kind: "confirm",
+        title: chatText(value["title"]),
+        source: chatText(value["source"]),
+        description: chatText(value["description"], 4100),
+      };
+    } else if (value["kind"] === "unsupported") {
+      decision = { kind: "unsupported" };
+    } else throw invalid();
+  }
   if (raw["presets"] !== undefined) {
     const presets = array(raw["presets"], 24, (value) =>
       presetId(chatObject(value)["id"]),
@@ -751,6 +766,7 @@ export function parseChatState(value: unknown, sessionId?: number, taskId?: numb
       id: chatText(question["id"]),
       message: chatText(question["message"], 4100),
       url: nullable(question["url"]),
+      ...(decision ? { decision } : {}),
       questions: array(question["questions"], 20, (value) => {
         const q = chatObject(value);
         return {

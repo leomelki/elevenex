@@ -311,6 +311,7 @@ export interface AgentRuntimeProviderFeatures {
     requestId: string,
     action?: 'accept' | 'decline' | 'cancel',
     content?: Record<string, string | number | boolean | string[]>,
+    options?: { requirePending: true },
   ): Promise<void>;
   onClientAttached(sessionId: number): void;
   onClientDetached(sessionId: number): void;

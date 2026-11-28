@@ -153,6 +153,12 @@ ex-chat-loading.hydrated { --chat-loading-exit-duration: var(--dur-fast); }
 .question {
   margin-block: var(--space-4);
 }
+.confirmation-detail {
+  margin-block: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-ui-size);
+  overflow-wrap: anywhere;
+}
 @media (max-width: 760px) {
   .feedback {
     align-items: flex-start;
