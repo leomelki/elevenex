@@ -16,10 +16,13 @@ const items = [
   item('summary-progress', 'assistant', 'The changes look good. The web request is still running.'),
   ...pair('summary-following', 'bash'),
   item('summary-reply', 'assistant', 'The focused checks passed.'),
+  // Keep the web request outside the recent tool budget so its late receipt
+  // folds immediately into the older section.
+  ...pair('tail-1', 'bash'), ...pair('tail-2', 'bash'), ...pair('tail-3', 'bash'),
 ];
 
-const older = '[data-work-step="summary-read"] .group';
-const following = '[data-work-step="summary-following"] .group';
+const older = '[data-work-section="summary-read"] .group';
+const following = '[data-work-section="summary-following"] .group';
 const newest = '[data-work-step="summary-new"]';
 const preview = 'ex-connected-workspace-demo';
 

@@ -67,7 +67,7 @@ export default async function* (capture) {
   };
   const row = (id) => `[data-work-step="${id}"]`;
   const head = (id) => row(id) + " ex-tool-step .head";
-  const summary = (id) => row(id) + " .group";
+  const summary = (id) => `[data-work-section="${id}"] .group`;
   const scroll = async (selector) => {
     await capture.evaluate(
       (s) => document.querySelector(s).scrollIntoView({ block: "center" }),

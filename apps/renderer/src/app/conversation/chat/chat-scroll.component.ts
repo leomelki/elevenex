@@ -532,8 +532,10 @@ export class ChatScrollComponent {
         ? content.querySelector(`[data-chat-anchor="${CSS.escape(anchor.anchorId)}"]`) : null;
       const selector = anchor.rowId ? `[data-chat-row="${CSS.escape(anchor.rowId)}"]` : null;
       // Hydrating a prompt can change the partial turn's outer identity.
+      // Generated summary keys (like the default answer key) belong to a turn.
+      const local = anchor.rowId === '$answer' || anchor.element.hasAttribute('data-work-section');
       const element = selector
-        ? turn?.querySelector(selector) ?? (anchor.rowId === '$answer' ? null : content.querySelector(selector))
+        ? turn?.querySelector(selector) ?? (local ? null : content.querySelector(selector))
         : turn;
       if (element && element.getBoundingClientRect().height > 0) return { ...anchor, element };
     }

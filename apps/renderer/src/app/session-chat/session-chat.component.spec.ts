@@ -1667,7 +1667,7 @@ it('places images between their surrounding messages and hides them with their w
   work.click();
   await settle(fixture);
   expect(fold.hasAttribute('inert')).toBe(true);
-  const group = root.querySelector<HTMLButtonElement>('[data-work-step="generated"] button.group')!;
+  const group = root.querySelector<HTMLButtonElement>('[data-work-section="generated"] button.group')!;
   group.click();
   await settle(fixture);
   expect(fold.hasAttribute('inert')).toBe(false);

@@ -139,13 +139,18 @@ export class WorkTimelineComponent implements OnChanges {
     },
   });
   protected readonly renderedRows = computed(() => {
-    const rows = this.rows();
-    if (!this.revealWork()) return rows;
-    const mounted = this.mountedWorkRows();
-    // Retain group controls and rows that have entered a fold. An unopened
-    // group in a saved timeline needs no hidden row shells.
-    return rows.filter(row => isProse(row.step) || mounted.has(row.step.id) ||
-      (row.section?.id === row.step.id && row.section.folded.size > 0));
+    type RenderedRow = { key: string; row: WorkTimelineRow; summary?: WorkSection };
+    const mounted = this.revealWork() ? this.mountedWorkRows() : undefined;
+    const rendered: RenderedRow[] = [];
+    for (const row of this.rows()) {
+      // A window can trim the first tool while the reader is still using its
+      // summary. Give the summary its own keyed row and scroll anchor.
+      if (row.section?.items[0] === row.step)
+        rendered.push({ key: 'section:' + row.section.id, row, summary: row.section });
+      if (!mounted || mounted.has(row.step.id) || isProse(row.step))
+        rendered.push({ key: 'step:' + row.step.id, row });
+    }
+    return rendered;
   });
   private readonly lastMessageId = computed(() => {
     const steps = this.ordered();
@@ -182,7 +187,7 @@ export class WorkTimelineComponent implements OnChanges {
     if (this.revealWork() && this.expanded() && this.previousIds) {
       this.hydrated.set(new Set(this.rows()
         .filter(row => !this.previousIds?.has(row.step.id) &&
-          (this.visible(row) || this.groupVisible(row)))
+          (this.visible(row) || (row.section?.items[0] === row.step && this.groupVisible(row.section))))
         .map(row => row.step.id)));
     }
     if (this.previousIds && this.live()) {
@@ -222,19 +227,19 @@ export class WorkTimelineComponent implements OnChanges {
     const active = this.host.nativeElement.ownerDocument.activeElement;
     const focusedGroup = active instanceof HTMLElement && active.matches('.group') &&
       this.host.nativeElement.contains(active)
-      ? active.closest<HTMLElement>('[data-work-step]')?.dataset['workStep'] : undefined;
+      ? active.closest<HTMLElement>('[data-work-section]')?.dataset['chatRow'] : undefined;
     this.openGroups.update(current => {
       const next = new Set<string>();
       for (const id of current) {
-        if (sections.has(id)) next.add(id);
-        else {
-          // Prepending activity can change the first row of the same section.
-          const retained = this.previousSections.get(id)?.find(step => byStep.has(step));
-          if (!retained) continue;
-          const replacement = byStep.get(retained)!.id;
-          next.add(replacement);
-          if (id === focusedGroup) this.restoreGroupFocus(active, replacement);
-        }
+        // A page can cross a prose boundary or replace the leading section.
+        // Carry the disclosure only to a section with surviving work.
+        const surviving = this.previousSections.get(id)?.filter(step => byStep.has(step));
+        const replacement = surviving?.some(step => byStep.get(step)?.id === id) ? id
+          : surviving?.length ? byStep.get(surviving[0]!)!.id : undefined;
+        if (!replacement) continue;
+        next.add(replacement);
+        if (replacement !== id && 'section:' + id === focusedGroup)
+          this.restoreGroupFocus(active, replacement);
       }
       return next.size === current.size && [...next].every(id => current.has(id)) ? current : next;
     });
@@ -277,8 +282,8 @@ export class WorkTimelineComponent implements OnChanges {
     afterNextRender(() => {
       const host = this.host.nativeElement;
       const document = host.ownerDocument;
-      if (previous?.isConnected || document.activeElement !== document.body) return;
-      host.querySelector<HTMLButtonElement>(`[data-work-step="${CSS.escape(id)}"] .group`)
+      if (document.activeElement !== document.body && document.activeElement !== previous) return;
+      host.querySelector<HTMLButtonElement>(`[data-chat-row="${CSS.escape('section:' + id)}"] .group`)
         ?.focus({ preventScroll: true });
     }, { injector: this.injector });
   }
@@ -298,12 +303,10 @@ export class WorkTimelineComponent implements OnChanges {
     if (row.section && this.openGroups().has(row.section.id)) return true;
     return this.expanded() && !row.section?.folded.has(row.step.id);
   }
-  protected groupVisible(row: WorkTimelineRow): boolean {
+  protected groupVisible(section: WorkSection): boolean {
     return (
       (this.live() || this.expanded()) &&
-      !!row.section &&
-      row.section.id === row.step.id &&
-      row.section.folded.size > 0
+      section.folded.size > 0
     );
   }
   protected groupOpen(row: WorkTimelineRow): boolean {

@@ -55,7 +55,7 @@ export default async function* (capture) {
     await finish();
     await capture.click('ex-composer textarea');
     await finish();
-    const summary = '[data-work-step="test"] .group';
+    const summary = '[data-work-section="test"] .group';
     assert.match(await capture.evaluate(s => document.querySelector(s).getAttribute('aria-label'), summary), /1 command/);
     assert.equal(await capture.evaluate(() => [...document.querySelectorAll('ex-turn .work .fact')]
       .some(fact => fact.textContent.includes('command') && Number(getComputedStyle(fact).opacity) > 0)), false);

@@ -65,7 +65,7 @@ export default async function* (capture) {
       return {
         retained: tool.hasAttribute('data-captured-start'),
         visible: !tool.closest('ex-fold[inert]'),
-        order: [...tool.closest('ex-work-timeline').querySelectorAll('[data-chat-row]')].map(row => row.dataset.chatRow),
+        order: [...tool.closest('ex-work-timeline').querySelectorAll('[data-work-step]')].map(row => row.dataset.chatRow),
       };
     }, patch), { retained: true, visible: true, order: ['intro', 'patch', 'progress'] });
     yield { name: theme + '-patch-receipt', inspect: ['[data-chat-anchor="active:reply"]', patch] };

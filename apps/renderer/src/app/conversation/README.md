@@ -614,7 +614,9 @@ blank lines and horizontal scrolling; the complete received payload remains in
 Original data. Gutters stay visible while scrolling long lines sideways.
 `WorkStep.status='unknown'` means no completion receipt was received: it uses a
 neutral clock, stays outside activity summaries and completed-work facts, and does
-not imply failure or success. Tools retain focus and disclosure through results,
+not imply failure or success. Activity summaries have their own keyed rows and
+scroll anchors. Trimming old records from a full live window updates the count
+without replacing the summary or its focused control. Tools retain focus and disclosure through results,
 new commentary and completion; removing a focused tool restores focus to the
 work control. Each new tool starts with its own disclosure state.
 

@@ -4,7 +4,7 @@ export default async function* (capture) {
   const session = 'ex-machine-workspace ex-session-chat';
   const row = id => session + ' [data-work-step="' + id + '"]';
   const work = session + ' button.work';
-  const group = id => row(id) + ' button.group';
+  const group = id => session + ' [data-work-section="' + id + '"] button.group';
   const reveal = async selector => {
     await capture.waitFor(selector => {
       const target = document.querySelector(selector);

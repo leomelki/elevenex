@@ -4,7 +4,7 @@ const owner = 'ex-connected-workspace-demo';
 const turn = '[data-chat-anchor="retries:reply"]';
 const work = turn + ' button.work';
 const reply = '[data-chat-row="retry-final"]';
-const group = '[data-work-step="test"] .group';
+const group = '[data-work-section="test"] .group';
 const head = '[data-work-step="test"] .head';
 const body = '[data-work-step="test"] .tool-preview';
 const lazyFold = '[data-work-step="read-0"] .step-fold';

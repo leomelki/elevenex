@@ -50,7 +50,7 @@ const visible = (host: HTMLElement, id: string): boolean =>
   !head(host, id).closest(".step-fold")?.hasAttribute("inert");
 function group(host: HTMLElement, id: string): HTMLButtonElement | null {
   const control = host.querySelector<HTMLButtonElement>(
-    `[data-work-step="${id}"] .group`,
+    `[data-work-section="${id}"] .group`,
   );
   return control?.closest(".group-fold")?.hasAttribute("inert")
     ? null
@@ -142,6 +142,30 @@ describe("message-delimited work sections", () => {
       for (let index = 0; index < count; index++)
         expect(visible(host, `command-${index}`)).toBe(index >= earlier);
     }
+  });
+
+  it("keeps the collapsed summary mounted when live updates evict its oldest tools", async () => {
+    const older = Array.from({ length: 8 }, (_, n) => tool(`old-${n}`));
+    const later = [say("progress"), tool("running", { status: "running" })];
+    const { host, fixture, update } = setup(exchange([...older, ...later]));
+    const summary = group(host, "old-0")!;
+    const running = head(host, "running");
+    summary.focus();
+
+    for (let trim = 1; trim <= 3; trim++) {
+      update(exchange([...older.slice(trim), ...later, tool(`recent-${trim}`)]));
+      await settle(fixture);
+      expect(group(host, `old-${trim}`)).toBe(summary);
+      expect(summary.getAttribute("aria-expanded")).toBe("false");
+      expect(summary.getAttribute("aria-label")).toBe(`Show activity: ${8 - trim} commands`);
+      expect(document.activeElement).toBe(summary);
+      expect(visible(host, `old-${trim}`)).toBe(false);
+      expect(head(host, "running")).toBe(running);
+    }
+
+    summary.click();
+    await settle(fixture);
+    expect(visible(host, "old-3")).toBe(true);
   });
 
   it("collapses each section where it occurred, hiding earlier messages in completed history", () => {

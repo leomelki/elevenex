@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 const viewport = 'ex-session-chat ex-chat-scroll .viewport';
 const worked = 'ex-session-chat ex-turn .work';
-const section = '[data-chat-row="call-150"] .group';
+const section = '[data-work-section="call-150"] .group';
 const tool = '[data-chat-row="call-150"] ex-tool-step .head';
 const checks = [viewport, worked, section, tool];
 

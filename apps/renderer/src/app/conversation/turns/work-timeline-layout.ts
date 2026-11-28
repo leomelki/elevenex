@@ -43,6 +43,7 @@ export function workTimelineRows(
     ? Math.max(1, Math.floor(maxVisible))
     : 5;
   let pending: WorkStep[] = [];
+  let sectionId = "leading";
   const flush = (closed: boolean): void => {
     const items = pending.filter((step) => !isProse(step));
     if (!items.length) {
@@ -60,7 +61,7 @@ export function workTimelineRows(
       !isUnfinishedWork(step) && !(live && expanded && settledVisible?.has(step.id)));
     const facts = sectionSummary(folded);
     const section: WorkSection = {
-      id: items[0]!.id,
+      id: sectionId,
       items,
       folded: new Set(folded.map((step) => step.id)),
       label: facts.map((fact) => `${fact.count} ${fact.noun}`).join(" · "),
@@ -76,6 +77,7 @@ export function workTimelineRows(
     if (isProse(step) && step.text?.trim()) {
       flush(true);
       rows.push({ step });
+      sectionId = "after:" + step.id;
     } else {
       // An empty streaming reply is not a new message boundary yet.
       pending.push(step);

@@ -111,10 +111,8 @@ li {
   transition: transform var(--dur-glide) var(--ease-glide);
 }
 /*
- * A closing section swaps its step for the summary in the same row. Fold
- * normally closes faster than it opens; matching both curves here keeps the
- * row's height steady, so the swap reads as a crossfade and nothing below
- * bounces (it previously dipped ~10px mid-swap).
+ * Fold normally closes faster than it opens. Match the curves when a tool
+ * folds away and its activity summary opens or grows above it.
  */
 ex-fold.group-fold,
 ex-fold.step-fold {
