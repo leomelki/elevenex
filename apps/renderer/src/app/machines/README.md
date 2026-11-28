@@ -50,7 +50,10 @@ component-specific values that have no equivalent in the exported token scale.
 Give it a descriptive `label` and `controls`. Supply a `TemplateRef` through
 `[panel]` to grow that same surface into `MachinePanel` when `[open]` is true.
 The island uses CDK to trap focus, restores the trigger on Escape, preserves the
-destination of outside pointer input, and emits `dismissed` for either dismissal.
+destination of outside pointer input, and emits `dismissed` on dismissal.
+On Windows, a press in the native caption also dismisses the panel and restores
+the trigger. Electron handles the caption press and subsequent drag outside the
+renderer, so the desktop bridge delivers the press to the owning window.
 The panel remains a keyboard destination while all of its actions are disabled.
 The title-bar anchor stays at its resting height so
 the panel grows down over the workspace. Its trigger and projected event action

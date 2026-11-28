@@ -228,6 +228,7 @@ export interface EventContracts {
   'task-browser:frame': TaskBrowserFrame;
   'machines:changed': MachineState;
   'theme:changed': Theme;
+  'window:title-bar-pressed': void;
   'backend:changed': BackendStatus;
   'backend-client:changed': BackendClientState;
   'environment:changed': EnvironmentSnapshot;
@@ -347,6 +348,7 @@ export interface ElevenexBridge {
   writeClipboardText(...args: InvokeContracts['clipboard:write-text']['args']): Promise<InvokeContracts['clipboard:write-text']['result']>;
   gitStatus(...args: InvokeContracts['git:status']['args']): Promise<InvokeContracts['git:status']['result']>;
   onThemeChanged(listener: (theme: EventContracts['theme:changed']) => void): () => void;
+  onTitleBarPressed(listener: () => void): () => void;
   backendStatus(): Promise<BackendStatus>;
   retryBackend(): Promise<BackendStatus>;
   restartBackend(): Promise<BackendStatus>;

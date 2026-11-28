@@ -6,6 +6,29 @@ const { readFile } = require('node:fs/promises');
 const vm = require('node:vm');
 const { URLSearchParams } = require('node:url');
 
+test('observes the Windows caption press without handling other native controls', async () => {
+  const source = await readFile(require.resolve('../dist/title-bar-press'), 'utf8');
+  const hooks = new Map();
+  const window = { hookWindowMessage: (message, callback) => hooks.set(message, callback) };
+  let presses = 0;
+  for (const platform of ['darwin', 'linux', 'win32']) {
+    const exports = {};
+    vm.runInNewContext(source, { exports, process: { platform } });
+    exports.observeTitleBarPress(window, () => { presses++; });
+    assert.equal(hooks.size, platform === 'win32' ? 1 : 0);
+  }
+  const leftPress = hooks.get(0x00a1);
+  const hitTest = Buffer.alloc(8);
+  for (const control of [1, 9, 12, 20]) { // client, maximize, resize, close
+    hitTest.writeUInt32LE(control);
+    leftPress(hitTest);
+  }
+  assert.equal(presses, 0);
+  hitTest.writeUInt32LE(2);
+  assert.equal(leftPress(hitTest), undefined);
+  assert.equal(presses, 1);
+});
+
 test('clipboard IPC validates trust, arity and UTF-8 bounds, awaits native writes and unregisters', async () => {
   const handlers = new Map(), writes = [];
   const ipc = {};

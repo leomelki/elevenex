@@ -110,4 +110,34 @@ describe('Title island interaction ownership', () => {
     await fixture.whenStable();
     expect(document.activeElement).toBe(trigger);
   });
+
+  it('dismisses on a native title-bar press, restores focus, and releases the listener', async () => {
+    const onTitleBarPressed = vi.fn<(listener: () => void) => () => void>();
+    const unsubscribe = vi.fn();
+    onTitleBarPressed.mockReturnValue(unsubscribe);
+    vi.stubGlobal('elevenex', { onTitleBarPressed });
+    const fixture = TestBed.createComponent(IslandHost);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(onTitleBarPressed).toHaveBeenCalledOnce();
+    const [pressTitleBar] = onTitleBarPressed.mock.calls[0]!;
+    const host: HTMLElement = fixture.nativeElement;
+    const trigger = host.querySelector<HTMLButtonElement>('.trigger')!;
+    trigger.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const inside = host.querySelector<HTMLButtonElement>('[role="dialog"] button')!;
+    inside.focus();
+    inside.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    expect(fixture.componentInstance.open()).toBe(true);
+
+    pressTitleBar();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+
+    fixture.destroy();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
 });

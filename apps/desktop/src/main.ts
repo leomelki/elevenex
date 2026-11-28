@@ -13,6 +13,7 @@ import { randomBytes } from 'node:crypto';
 import { broadcast, handle, sendToWindow } from './ipc';
 import { APP_ORIGIN, contentSecurityPolicy, isAppUrl, isExternalUrl, rendererPath } from './security';
 import { WindowStateStore } from './window-state';
+import { observeTitleBarPress } from './title-bar-press';
 import { createApplicationBackend } from './backend/application';
 import { registerBackendIpc } from './backend/ipc';
 import { notifyRecovery } from './remote/recovery-notifications';
@@ -136,6 +137,11 @@ function createWindow(launchSelection?: EnvironmentSelection | null, editorConte
     },
   });
   const contents = window.webContents;
+  observeTitleBarPress(window, () => {
+    if (!contents.isDestroyed() && isAppUrl(contents.getURL(), devUrl)) {
+      sendToWindow(contents.id, 'window:title-bar-pressed', undefined);
+    }
+  });
   if (!browserOnly && !appContext) state.attach(window);
   const stopCodeFrames = code.attachWindow(window.webContents, devUrl);
   window.once('closed', stopCodeFrames);

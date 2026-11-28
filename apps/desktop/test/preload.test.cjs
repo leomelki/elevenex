@@ -34,7 +34,7 @@ test('preload exposes only the typed bridge and strips event objects', async () 
       };
     },
   });
-  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods, ...terminalMethods, ...appMethods, ...chatMethods, 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
+  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'onTitleBarPressed', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods, ...terminalMethods, ...appMethods, ...chatMethods, 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
   assert.equal(Object.isFrozen(bridge), true);
   await bridge.appVersion();
   await bridge.gitStatus('/workspace');
@@ -105,6 +105,11 @@ test('preload exposes only the typed bridge and strips event objects', async () 
   listeners.get('theme:changed')({ sender: 'private Electron object' }, 'dark');
   assert.deepEqual(received, [['dark']]);
   assert.equal(stop(), undefined, 'cleanup must not return an Electron emitter across the bridge');
+  const presses = [];
+  const stopTitleBar = bridge.onTitleBarPressed((...args) => presses.push(args));
+  listeners.get('window:title-bar-pressed')({ sender: 'private Electron object' }, 'unexpected payload');
+  assert.deepEqual(presses, [[]]);
+  assert.equal(stopTitleBar(), undefined);
   const stopBackend = bridge.onBackendChanged((...args) => received.push(args));
   listeners.get('backend:changed')({ sender: 'private Electron object' }, { phase: 'starting', version: 'abc' });
   assert.deepEqual(received[1], [{ phase: 'starting', version: 'abc' }]);

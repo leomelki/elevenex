@@ -50,6 +50,7 @@ export class TitleIslandComponent {
         this.dismissed.emit();
       }
     });
+    const stopTitleBarPress = window.elevenex?.onTitleBarPressed?.(() => this.dismiss());
     const motion = matchMedia('(prefers-reduced-motion: reduce)');
     const stopMotion = () => this.animation?.cancel();
     motion.addEventListener('change', stopMotion);
@@ -58,6 +59,7 @@ export class TitleIslandComponent {
       this.animation?.cancel();
       motion.removeEventListener('change', stopMotion);
       unlisten();
+      stopTitleBarPress?.();
     });
     afterRenderEffect(() => {
       const content = this.content()?.nativeElement;
@@ -96,9 +98,9 @@ export class TitleIslandComponent {
     });
   }
 
-  protected dismiss(event: Event): void {
+  protected dismiss(event?: Event): void {
     if (!this.expanded()) return;
-    event.stopPropagation();
+    event?.stopPropagation();
     this.restoreFocus = true;
     this.dismissed.emit();
   }

@@ -113,6 +113,7 @@ const bridge = Object.freeze<ElevenexBridge>({
   writeClipboardText: text => invoke('clipboard:write-text', text),
   gitStatus: (path: string) => invoke('git:status', path),
   onThemeChanged: (listener) => subscribe('theme:changed', listener),
+  onTitleBarPressed: listener => subscribe('window:title-bar-pressed', () => listener()),
   backendStatus: () => invoke('backend:status'),
   retryBackend: () => invoke('backend:retry'),
   restartBackend: () => invoke('backend:restart'),
