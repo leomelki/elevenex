@@ -471,7 +471,9 @@ export class SessionChatStore {
     this.busy.set("");
     this.historical.set(recovery && historical);
     this.checked.set(false);
-    this.cursor = recovery ? previousCursor : cached?.cursor;
+    // A selected chat gets a fresh saved tail. A replay cursor only checks
+    // runtime changes and could miss saved rows written while away.
+    this.cursor = recovery ? previousCursor : undefined;
     this.loading.set(!this.state() && !this.offline());
     void this.load(!recovery && !cached);
   }
@@ -480,7 +482,7 @@ export class SessionChatStore {
     // Opening always means the latest conversation. A paged reading window is
     // not a usable opening snapshot: showing it before the tail would jump.
     if (this.selection && state && !this.historical() && !this.next())
-      this.drafts.remember(this.selection, { items: this.items(), leadingPrompt: this.leadingPrompt(), state, cursor: this.cursor, before: this.before() });
+      this.drafts.remember(this.selection, { items: this.items(), leadingPrompt: this.leadingPrompt(), state, before: this.before() });
   }
   setDraft(value: string): void {
     this.entry.setText(value);

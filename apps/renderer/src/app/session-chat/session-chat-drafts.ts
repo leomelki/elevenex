@@ -16,6 +16,13 @@ export interface StartingSession {
   readonly error?: string;
 }
 
+interface ChatSnapshot {
+  readonly items: readonly SessionChatItem[];
+  readonly leadingPrompt: SessionChatItem | null;
+  readonly state: SessionChatState;
+  readonly before: string | null;
+}
+
 /** Bounded live entries and transcript snapshots for the connected workspace. */
 @Injectable()
 export class SessionChatDrafts {
@@ -23,7 +30,7 @@ export class SessionChatDrafts {
   private environment?: EnvironmentSelection;
   private scope = '';
   private readonly entries = new Map<number, SessionDraft>();
-  private readonly snapshots = new Map<number, { readonly items: readonly SessionChatItem[]; readonly leadingPrompt?: SessionChatItem | null; readonly state: SessionChatState; readonly cursor?: string; readonly before: string | null }>();
+  private readonly snapshots = new Map<number, ChatSnapshot>();
 
   constructor() {
     inject(DestroyRef).onDestroy(() => { this.environment = undefined; });
@@ -36,7 +43,7 @@ export class SessionChatDrafts {
     this.snapshots.clear();
   }
 
-  remember({ scopeId, sessionId }: ChatSelection, snapshot: { readonly items: readonly SessionChatItem[]; readonly leadingPrompt?: SessionChatItem | null; readonly state: SessionChatState; readonly cursor?: string; readonly before: string | null }): void {
+  remember({ scopeId, sessionId }: ChatSelection, snapshot: ChatSnapshot): void {
     if (scopeId !== this.scope) return;
     this.snapshots.delete(sessionId);
     // Five 1 MiB transcript snapshots, with the existing 320-item window cap.

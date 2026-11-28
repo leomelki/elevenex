@@ -285,6 +285,24 @@ it('releases the stream when a chat is inactive and resumes its last applied cur
   TestBed.resetTestingModule();
   expect(bridge.sessionChatUnwatch).toHaveBeenCalledTimes(2);
 });
+
+it('rechecks saved history when switching back to a cached conversation', async () => {
+  const selection = { scopeId: 'scope', taskId: 1, sessionId: 2 };
+  const prompt = item('first', 'user', 'First prompt');
+  const reply = item('first-reply', 'assistant', 'First reply');
+  const { store, bridge, receive } = setup({ stream: true });
+  receive(0, { type: 'page', delivery: 1, page: page(2, { items: [prompt, reply], cursor: 'old-tail' }) });
+  store.open({ ...selection, sessionId: 3 }, false, true);
+  store.open(selection, false, true);
+
+  expect(store.items()).toEqual([prompt, reply]);
+  expect(bridge.sessionChatWatch.mock.calls[2]?.[1].after).toBeUndefined();
+  const followUp = item('follow-up', 'user', 'Next prompt');
+  const answer = item('follow-up-reply', 'assistant', 'Latest saved reply');
+  receive(2, { type: 'page', delivery: 1, page: page(2, { items: [prompt, reply, followUp, answer] }) });
+  expect(store.exchanges().map(exchange => exchange.answer)).toEqual([reply.text, answer.text]);
+});
+
 describe("session chat ownership", () => {
   it('restores separate composer texts after relaunch and remembers explicitly clearing one', async () => {
     const localDrafts = localDraftBridge(), original = setup({ localDrafts });

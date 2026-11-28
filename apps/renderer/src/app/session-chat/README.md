@@ -365,8 +365,10 @@ Omission retains legacy 80-item pages; older engines may
 ignore the new option and continue returning those pages. Main validates the
 option and the corresponding reply bound. Active-session fallback hydration shares
 the backend's in-flight source/runtime reads; cancelled responses skip projection.
-Cached settled conversations render immediately and revalidate from their saved
-incremental cursor. When the last snapshot has a running, waiting or dispatching
+Cached settled conversations render immediately while the renderer requests the
+latest saved page, including provider writes that happened without a live event.
+A connection interruption in the selected conversation resumes from its last
+applied cursor. When the last snapshot has a running, waiting or dispatching
 turn, an online reopen paints from a fresh bounded page, so tool activity that
 changed during navigation appears on the first transcript paint. Offline
 reopening can still use the cached snapshot. The backend provider's source-history

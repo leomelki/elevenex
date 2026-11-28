@@ -476,19 +476,26 @@ describe("connected chat reply rendering", () => {
     await settle(fixture);
     const previous = fixture.componentInstance.chat()!.scroll();
     fixture.componentInstance.store.setDraft('Retain my writing');
-    bridge.sessionChatRead.mockImplementation(() => new Promise(() => undefined));
+    bridge.sessionChatRead.mockImplementationOnce(() => new Promise(() => undefined));
     fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 3 });
     await settle(fixture);
     expect(root.querySelector('ex-composer')).toBeNull();
+    let resolve!: (result: BackendResult<SessionChatPage>) => void;
+    bridge.sessionChatRead.mockImplementationOnce(() => new Promise(yes => { resolve = yes; }));
     fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 2 });
     await settle(fixture);
     expect(fixture.componentInstance.store.loading()).toBe(false);
     expect(root.querySelector('.opening')).toBeNull();
     expect(root.querySelector('ex-chat-loading .skeleton')).toBeNull();
     expect(root.querySelector('ex-turn')?.textContent).toContain('Cached reply');
-    expect(bridge.sessionChatRead.mock.calls.at(-1)?.[1].after).toBe('cursor');
+    expect(bridge.sessionChatRead.mock.calls.at(-1)?.[1].after).toBeUndefined();
     expect(fixture.componentInstance.chat()!.scroll()).not.toBe(previous);
     expect(fixture.componentInstance.composer()!.draft()).toBe('Retain my writing');
+
+    resolve({ ok: true, value: { taskId: 1, sessionId: 2, cursor: 'latest', reset: true, before: null, events: [],
+      state, items: [item('reply', 'assistant', 'Latest saved reply')] } });
+    await settle(fixture);
+    expect(root.querySelector('ex-turn')?.textContent).toContain('Latest saved reply');
   });
 
   it('opens a recently running session on fresh tool activity', async () => {
