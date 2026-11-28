@@ -13,6 +13,7 @@ import type {
   AgentAutocompleteItem,
   AgentImageInput,
   AgentProviderModelCatalogPayload,
+  AgentPromptOptions,
   AgentRuntimeProvider,
   AgentSubagentHistoryPayload,
   AgentTranscriptItem,
@@ -655,11 +656,7 @@ export class AntigravityRuntimeProvider
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
-    options?: {
-      origin?: InteractivePromptOrigin;
-      queue?: boolean;
-      waitForCompletion?: boolean;
-    },
+    options?: AgentPromptOptions,
   ): Promise<void> {
     this.assertInteractiveOrigin(options?.origin);
     if (!prompt.trim() || prompt.length > 1_000_000)
@@ -687,6 +684,7 @@ export class AntigravityRuntimeProvider
         throw new BadRequestException(
           'The Antigravity queue has too many image attachments.',
         );
+      options?.beforeDispatch?.();
       entry.pendingPrompts.push({
         id: randomUUID(),
         prompt,
@@ -696,11 +694,13 @@ export class AntigravityRuntimeProvider
       });
       if (entry.stopping) entry.queuePaused = true;
       this.emitState(entry.id);
+      options?.onAccepted?.('queued');
       return;
     }
-    const run = this.startRun(entry, session, prompt, titlePrompt, images);
+    const run = this.startRun(entry, session, prompt, titlePrompt, images, options);
     await run.receipt;
-    if (options?.waitForCompletion !== false) await run.completed;
+    if (!options?.beforeDispatch) options?.onAccepted?.('running');
+    if (options?.beforeDispatch || options?.waitForCompletion !== false) await run.completed;
   }
 
   private assertInteractiveOrigin(origin?: InteractivePromptOrigin) {
@@ -994,6 +994,7 @@ export class AntigravityRuntimeProvider
     prompt: string,
     visiblePrompt?: string,
     images?: AgentImageInput[],
+    options?: AgentPromptOptions,
   ) {
     clearTimeout(entry.idleTimer);
     entry.error = null;
@@ -1009,7 +1010,7 @@ export class AntigravityRuntimeProvider
       this.run(entry, session, prompt, visiblePrompt, images, {
         resolve: resolveReceipt,
         reject: rejectReceipt,
-      }),
+      }, options),
     );
     return { receipt, completed };
   }
@@ -1046,6 +1047,7 @@ export class AntigravityRuntimeProvider
     visiblePrompt: string | undefined,
     images: AgentImageInput[] | undefined,
     receipt: { resolve(): void; reject(error: unknown): void },
+    options?: AgentPromptOptions,
   ): Promise<void> {
     let capture: TurnChangeCapture | undefined;
     let titleJob: TitleJob | undefined;
@@ -1107,6 +1109,7 @@ export class AntigravityRuntimeProvider
           .get();
       const context = this.replayContext(entry);
       if (context) blocks.unshift({ type: 'text', text: context });
+      options?.beforeDispatch?.();
       this.openTurn(entry, new AntigravityTurn(id, user));
       entry.acceptsWake = true;
       const response = this.sendNativePrompt(entry, transport, blocks);
@@ -1122,6 +1125,7 @@ export class AntigravityRuntimeProvider
       let result: Record<string, unknown>;
       try {
         result = await response;
+        if (options?.beforeDispatch && acpText(result.stopReason)) options.onAccepted?.('running');
       } catch (error) {
         if (!entry.steerRequest) throw error;
         result = await entry.steerRequest;

@@ -21,6 +21,7 @@ interface ActiveTurn {
   resolve: () => void;
   reject: (error: unknown) => void;
   settled: boolean;
+  delivery?: { id: string; beforeDispatch: () => void; accepted?: () => void; dispatched: boolean };
 }
 
 export interface ClaudeSessionRuntimeDeps {
@@ -218,10 +219,10 @@ export class ClaudeSessionRuntime {
     await this.startPromise;
   }
 
-  submitTurn(input: SDKUserMessage, onAccepted?: () => void): Promise<void> {
+  submitTurn(input: SDKUserMessage, onAccepted?: () => void, beforeDispatch?: () => void): Promise<void> {
     const turn = this.turnChain
       .catch(() => undefined)
-      .then(() => this.runTurn(input, onAccepted));
+      .then(() => this.runTurn(input, onAccepted, beforeDispatch));
     this.turnChain = turn.catch(() => undefined);
     return turn;
   }
@@ -341,11 +342,13 @@ export class ClaudeSessionRuntime {
   private async runTurn(
     input: SDKUserMessage,
     onAccepted?: () => void,
+    beforeDispatch?: () => void,
   ): Promise<void> {
     if (this.closed) {
       throw new Error('Claude runtime is closed.');
     }
 
+    if (beforeDispatch && !input.uuid) throw new Error('Tracked Claude prompts require a message UUID.');
     this.clearIdleTimer();
     this.hasSubmittedTurnValue = true;
     this.lastUsedAtMsValue = Date.now();
@@ -356,6 +359,9 @@ export class ClaudeSessionRuntime {
         resolve,
         reject,
         settled: false,
+        ...(beforeDispatch && input.uuid ? {
+          delivery: { id: input.uuid, beforeDispatch, accepted: onAccepted, dispatched: false },
+        } : {}),
         messageIds: new Set(input.uuid ? [input.uuid] : []),
       };
       this.inputQueue.push(input);
@@ -364,12 +370,18 @@ export class ClaudeSessionRuntime {
 
     try {
       await this.ensureStarted('turn');
-      onAccepted?.();
+      if (!beforeDispatch) onAccepted?.();
       await turnPromise;
     } catch (error) {
       this.rejectActiveTurn(error);
       throw error;
     } finally {
+      if (beforeDispatch) {
+        // Initialization can fail before the SDK takes the input. Never let
+        // a later warm turn pick up a message classified as unsent.
+        const queued = this.inputQueue.indexOf(input);
+        if (queued !== -1) this.inputQueue.splice(queued, 1);
+      }
       this.lastUsedAtMsValue = Date.now();
       if (!this.closed) {
         this.scheduleIdleShutdown();
@@ -381,6 +393,11 @@ export class ClaudeSessionRuntime {
     while (!this.closed) {
       const next = this.inputQueue.shift();
       if (next) {
+        const delivery = this.activeTurn?.delivery;
+        if (delivery && next.uuid === delivery.id) {
+          delivery.beforeDispatch();
+          delivery.dispatched = true;
+        }
         yield next;
         continue;
       }
@@ -394,6 +411,14 @@ export class ClaudeSessionRuntime {
   private async pumpMessages(runtimeQuery: Query): Promise<void> {
     try {
       for await (const message of runtimeQuery) {
+        const delivery = this.activeTurn?.delivery;
+        if (delivery?.dispatched && (
+          (message.type === 'user' && message.uuid === delivery.id) ||
+          (message.type === 'result' && (message.user_message_uuid === delivery.id || message.user_message_uuids?.includes(delivery.id)))
+        )) {
+          delete this.activeTurn?.delivery;
+          delivery.accepted?.();
+        }
         if (message.type === 'result')
           for (const id of message.user_message_uuids ??
             (message.user_message_uuid ? [message.user_message_uuid] : []))

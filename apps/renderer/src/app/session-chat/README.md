@@ -80,7 +80,7 @@ windows; drag payloads retain their backend generation. The composer owns drag
 feedback, query consumption and focus. Session references have a single chip-only
 representation and never add an editable @title copy. The store owns deduplicated context (up to
 eight sessions), retained drafts and delivery recovery. Mentions clear with an
-accepted send and return to their original draft after rejection/uncertainty,
+accepted send and return to their original draft after rejection or an explicit draft restore,
 including when navigation overtakes the reply. Send carries optional numeric
 `sessionIds`; main and backend validate the bound. The backend resolves those
 identities through its existing conversation exporter only on explicit send,
@@ -134,13 +134,22 @@ Older engines omit the capability and retain their original send contract.
   configured machine, task and session. Edits reach main independently of
   backend availability, and a restart restores the text when that composer
   opens. Attachments and mention chips have a window lifetime.
-  Entries with unsaved changes or unresolved writes stay in memory. A failed
-  send restores its text ahead of any newly typed draft. Accepted sends remove
-  their submitted text and keep later edits. If the app closes during a send,
-  reopening preserves the text and asks the user to check delivery and
-  acknowledge the outcome before sending again. A new matching
-  user/queue receipt confirms delivery even if the command reply is lost;
-  running state or assistant output alone does not confirm a particular send.
+  Entries with unsaved changes or unresolved writes stay in memory. The local
+  draft stores a pending delivery ID and its text separately from newer edits
+  before dispatch. A rejected send restores its original text, files and
+  mentions ahead of later edits. Accepted sends clear the pending submission
+  and preserve later edits. Reopening and reconnecting resume a bounded read
+  of the exact request receipt. A matching transcript or queue row can wake
+  the check and preserve animation identity. Only the command reply or its
+  scoped receipt confirms delivery. Older engines and interrupted handoffs
+  may leave delivery unconfirmed. The composer releases the draft after the
+  first bounded check and retains the earlier submission in its own disclosure.
+  A positive pending receipt stays quiet while new writing can proceed.
+  An exact settlement hint, an additional passive probe, or a future
+  connection or session change wakes a scoped receipt read. The pending payload stays separate from the draft and is never
+  requeued. A late definitive rejection can be recovered explicitly as a draft.
+  The workspace outbox likewise keeps unresolved sends separate from waiting
+  writing and offers Retry only after a definitive rejection.
 - `session-chat-transcript` projects provider-neutral items into stable turns,
   pairing tools/results by tool ID and preserving commentary, reasoning,
   unknown tools, orphan results and explicit failures. Fresh prompts alone opt
@@ -847,8 +856,10 @@ Unsupported engines and read-only/historical sessions keep uploads unavailable.
 progress, explicit retries, cancellation and selection guards. Workspace-owned
 `SessionChatDrafts` keeps the selected files while navigating; pending/failed sends
 retain them with their text. Uploads never prompt the agent. The existing delivery
-reconciliation compares the full prompt, including stable attachment references;
-uncertain sends require checking delivery and never replay automatically.
+reconciliation looks up the submission ID and keeps the original attachment
+references and mention chips for draft recovery during the window lifetime.
+Reopening the app can recover submitted text. File and mention chips remain
+window-local. Delivery checks never replay the prompt.
 
 The named `sessionChatUpload` bridge carries at most 512 KiB per chunk through the
 existing per-window backend scope. The backend revalidates task/session membership
@@ -895,18 +906,16 @@ first dispatch. Expired question/permission IDs and Stop for a different or
 unidentified turn are rejected with “Nothing was sent.” Sending while a turn is
 still active enters the backend's ordinary accepted queue.
 
-Each action is claimed before IPC dispatch. Lost replies become visibly
-unconfirmed and block following writing in that conversation, never re-entering
-the waiting queue. Check delivery reads the current bounded conversation and
-compares new durable user/queue receipts with the pre-dispatch snapshot; it sends
-nothing. Without a matching receipt, the person inspects and explicitly
-acknowledges the uncertainty. Confirmed backend queue controls keep their existing
-semantics and are not blindly replayed. Changing machine or destroying the owner releases its in-memory requests. Waiting
-writing is retained per window and configured machine across app restarts. The
-main process validates and atomically journals a sending claim before IPC
-dispatch; interrupted claims restore as unconfirmed, never as waiting. SSH
-credential prompts cannot enter this journal. Restored interrupted prompts without
-a retained receipt baseline require explicit conversation inspection.
+The main process validates and atomically journals a sending claim before
+dispatch. Interrupted or ambiguous prompt claims leave the dispatchable queue.
+Automatic reads reconcile the exact request ID after a lost reply and after
+reconnect. A scoped receipt removes an accepted item or exposes a deliberate
+Retry for a rejected one. An unresolved message stays available separately under
+Earlier messages while later drafts and other queued messages can proceed.
+Older interrupted claims without a receipt keep their text in the same
+disclosure. Connection recovery releases stale reads and never dispatches those
+claims. Waiting writing is retained per window and configured machine across
+app restarts. SSH credential prompts remain outside the journal.
 
 Draft text, files, mentions and in-flight uncertainty share the retained entry
 through a same-machine scope rebind. Late command results update their original

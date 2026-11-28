@@ -74,12 +74,12 @@ export default async function* (capture) {
   }
   await capture.viewport(1440, 960); await mode('unknown');
   await capture.fill('ex-composer textarea', 'A send with uncertain delivery'); await capture.press('Enter');
-  await capture.waitFor(() => document.querySelector('ex-session-chat .feedback.error')?.textContent.includes('may have completed'));
-  await capture.waitFor(() => document.querySelector('ex-composer textarea')?.value === 'A send with uncertain delivery');
-  yield { name: 'uncertain-delivery', inspect: ['ex-session-chat .feedback', 'ex-composer'] };
-  await capture.click('ex-session-chat .feedback.error button');
-  await capture.waitFor(() => document.querySelector('ex-session-chat .feedback:not(.error) button'));
-  await capture.click('ex-session-chat .feedback:not(.error) button');
+  await capture.waitFor(() => document.querySelector('ex-session-chat .retained-sends')?.textContent.includes('may not have reached the agent'));
+  assert.equal(await capture.evaluate(() => document.querySelector('ex-composer textarea')?.value), '');
+  await capture.click('ex-session-chat .retained-sends summary');
+  yield { name: 'uncertain-delivery', inspect: ['ex-session-chat .retained-sends', 'ex-composer'] };
+  await capture.fill('ex-composer textarea', 'A new draft while delivery remains unconfirmed');
+  assert.equal(await capture.evaluate(() => document.querySelector('ex-composer button.send').disabled), false);
   await mode('history');
   await capture.component('ex-session-chat', component => component.latest());
   await capture.waitFor(() => document.querySelector('ex-chat-scroll [data-user-message]'));

@@ -426,6 +426,10 @@ test('chat drafts survive immediate shutdown, move on creation, and isolate wind
   first.attach(1, null); first.attach(2, null);
   const environment = { kind: 'local' }, target = { taskId: 11, sessionId: 22 };
   const other = { taskId: 12, sessionId: 22 }, creation = { taskId: 11, sessionId: null };
+  const pendingTarget = { taskId: 11, sessionId: 24 };
+  const pending = { text: '', pending: { id: '12345678-1234-4234-8234-123456789abc', text: '' } };
+  const retainedTarget = { taskId: 11, sessionId: 25 };
+  const retained = { text: '', retained: [{ id: null, text: 'An older interrupted draft' }, { ...pending.pending, rejected: true }] };
   const identity = first.chatDraftRead(1, environment, target).identity;
   const draft = { text: '  Write in café\n\t👩🏽‍💻  ' };
   const save = (windowId, target, draft, options) => first.chatDraftSave(windowId, environment, identity, { target, draft, ...options });
@@ -433,6 +437,8 @@ test('chat drafts survive immediate shutdown, move on creation, and isolate wind
     save(1, target, { text: 'Remove this older draft' }),
     save(1, target, { text: '' }),
     save(1, other, { text: 'Another task' }),
+    save(1, pendingTarget, pending),
+    save(1, retainedTarget, retained),
     save(1, creation, draft),
     save(1, { ...target, sessionId: 23 }, draft, { fromCreation: true }),
     save(2, target, { text: 'The other window', checkDelivery: true }),
@@ -445,6 +451,8 @@ test('chat drafts survive immediate shutdown, move on creation, and isolate wind
   assert.deepEqual(read(3, creation), { text: '' });
   assert.deepEqual(read(3, { ...target, sessionId: 23 }), draft);
   assert.deepEqual(read(3, other), { text: 'Another task' });
+  assert.deepEqual(read(3, pendingTarget), pending, 'A files-only submission keeps its receipt identity across relaunch');
+  assert.deepEqual(read(3, retainedTarget), retained);
   assert.deepEqual(read(4, target), { text: 'The other window', checkDelivery: true });
   assert.deepEqual(read(4, other), { text: '' });
 });

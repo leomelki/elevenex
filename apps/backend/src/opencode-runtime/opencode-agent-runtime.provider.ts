@@ -1015,6 +1015,7 @@ export class OpenCodeAgentRuntimeProvider
       this.interrupts.has(sessionId) ||
       active?.run
     ) {
+      options?.beforeDispatch?.();
       state.pendingPrompts = [
         ...state.pendingPrompts,
         {
@@ -1069,7 +1070,12 @@ export class OpenCodeAgentRuntimeProvider
       entry.controller.signal,
       turnController.signal,
     ]);
-    entry.run = this.run(entry, signal, prompt, titlePrompt, images).finally(
+    let acknowledge!: () => void;
+    const receipt = options?.beforeDispatch ? new Promise<void>(resolve => { acknowledge = resolve; }) : undefined;
+    entry.run = this.run(entry, signal, prompt, titlePrompt, images, options?.beforeDispatch ? {
+      beforeDispatch: options.beforeDispatch,
+      acknowledge: () => { options.onAccepted?.('running'); acknowledge(); },
+    } : undefined).finally(
       () => {
         this.queuedDispatches.clear(state);
         entry.run = null;
@@ -1096,7 +1102,8 @@ export class OpenCodeAgentRuntimeProvider
     void entry.run.catch((error) => {
       if (!entry.controller.signal.aborted) this.fail(entry, error);
     });
-    options?.onAccepted?.('running');
+    if (receipt) await Promise.race([receipt, entry.run]);
+    else options?.onAccepted?.('running');
   }
   private async steerActivePrompt(entry: RuntimeEntry, nativeId: string, prompt: string): Promise<void> {
     const { client, turnController, turnSelection } = entry;
@@ -1165,6 +1172,7 @@ export class OpenCodeAgentRuntimeProvider
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
+    delivery?: { readonly beforeDispatch: () => void; readonly acknowledge: () => void },
   ): Promise<void> {
     const state = entry.state;
     const client = entry.client!;
@@ -1237,10 +1245,12 @@ export class OpenCodeAgentRuntimeProvider
           throw new BadRequestException(
             'Choose an available primary OpenCode agent.',
           );
+        delivery?.beforeDispatch();
         entry.agent = agent.id;
         await client.selectAgent?.(state.claudeSessionId, agent.id, { signal });
         if (signal.aborted) return;
         await this.setPlanMode(state.sessionId, agent.id === 'plan');
+        delivery?.acknowledge();
         return;
       }
       const skill =
@@ -1248,6 +1258,7 @@ export class OpenCodeAgentRuntimeProvider
         entry.resources?.skills.find((skill) => skill.name === command[1]);
       const selection = { ...common, model, system: entry.system };
       entry.turnSelection = selection;
+      delivery?.beforeDispatch();
       const result =
         command?.[1] === 'compact' && client.compact
           ? (await client.compact(state.claudeSessionId, selection, { signal }),
@@ -1280,6 +1291,8 @@ export class OpenCodeAgentRuntimeProvider
                   },
                   { signal },
                 );
+      if (delivery && 'error' in result && result.error) throw new Error('OpenCode did not confirm the message.');
+      delivery?.acknowledge();
       if (signal.aborted) return;
       if (result.data) {
         const buffered = entry.transcript.putMessage(result.data.info);

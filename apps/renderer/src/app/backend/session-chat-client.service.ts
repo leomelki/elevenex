@@ -9,6 +9,8 @@ import type {
   SessionChatCatalogRead,
   SessionChatCommand,
   SessionChatCommandReply,
+  SessionChatDelivery,
+  SessionChatDeliveryRead,
   SessionChatPage,
   SessionChatRead,
   SessionChatTurnWorkReply,
@@ -84,6 +86,9 @@ export class SessionChatClient {
   }
   catalog(scope: string, input: SessionChatCatalogRead): Promise<BackendResult<SessionChatCatalog>> {
     return this.invoke(scope, false, () => this.bridge.sessionChatCatalog(scope, input));
+  }
+  delivery(scope: string, input: SessionChatDeliveryRead): Promise<BackendResult<SessionChatDelivery>> {
+    return this.invoke(scope, false, () => this.bridge.sessionChatDelivery(scope, input));
   }
   command(
     scope: string,

@@ -4,6 +4,7 @@ import { chatCatalog } from './desktop-chat-catalog.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { chatPresets, executePresetAction } from './desktop-chat-presets.js';
 import { prepareTurnChanges, preparedChangesPage, type PreparedTurnChanges } from './desktop-chat-changes.js';
+import { desktopChatDeliveryKey } from './desktop-chat-delivery.js';
 import { executeChatAction } from './desktop-chat-actions.js';
 import { assertChatEditIdle, chatEditProvider, savedChatPrompt, validateChatEditId } from './desktop-chat-edit.js';
 import { chatPromptImages } from './desktop-chat-input.js';
@@ -80,6 +81,7 @@ interface ChatFeed {
   revision: number;
   historyRevision: number;
   historyRewrite?: string;
+  settledDeliveryId?: string;
   touched: number;
   attached: boolean;
   observers: number;
@@ -138,6 +140,12 @@ export class DesktopChatService implements OnModuleDestroy {
     for (const [id, feed] of this.feeds)
       if (feed.delegatedBy === event.sessionId) this.invalidateDelegation(id);
   };
+  private readonly desktopDeliverySettled = ({ sessionId, deliveryId }: { sessionId: number; deliveryId: string }) => {
+    const feed = this.feeds.get(sessionId);
+    if (!feed) return;
+    feed.settledDeliveryId = deliveryId;
+    this.invalidate(sessionId);
+  };
   private readonly ownDelegationChanged = (event: { sessionId: number }) => this.invalidateDelegation(event.sessionId);
   private readonly stopWatchingDelegates?: () => void;
   private readonly expiry = setInterval(() => {
@@ -164,6 +172,7 @@ export class DesktopChatService implements OnModuleDestroy {
     this.sessions.on('session-launch-delivery', this.relatedSessionChanged);
     this.sessions.on('session-delegate-created', this.ownDelegationChanged);
     this.sessions.on('session-handoff-changed', this.ownDelegationChanged);
+    this.sessions.on('desktop-chat-delivery-settled', this.desktopDeliverySettled);
     this.stopWatchingDelegates = this.delegates?.onUpdate(id => this.invalidateDelegation(id));
   }
 
@@ -176,6 +185,7 @@ export class DesktopChatService implements OnModuleDestroy {
     this.sessions.off('session-launch-delivery', this.relatedSessionChanged);
     this.sessions.off('session-delegate-created', this.ownDelegationChanged);
     this.sessions.off('session-handoff-changed', this.ownDelegationChanged);
+    this.sessions.off('desktop-chat-delivery-settled', this.desktopDeliverySettled);
     this.stopWatchingDelegates?.();
     this.lifetime.abort();
     clearInterval(this.expiry);
@@ -260,6 +270,7 @@ export class DesktopChatService implements OnModuleDestroy {
     if (feed) feed.delegation = delegates;
     return {
       ...(historyRewrite ? { historyRewrite } : {}),
+      ...(feed?.settledDeliveryId ? { settledDeliveryId: feed.settledDeliveryId } : {}),
       unseenCompletionAt: session.hasUnreviewedCompletion ? session.lastCompletionAt : null,
       attachments: true,
       browserElements: provider.info.capabilities.multimodalPrompts === true,
@@ -882,6 +893,13 @@ export class DesktopChatService implements OnModuleDestroy {
       throw new ServiceUnavailableException('Could not confirm the edited message after updating the conversation.');
     }
     return { accepted: true as const };
+  }
+
+  async delivery(taskId: number, sessionId: number, deliveryId: string) {
+    const key = desktopChatDeliveryKey(sessionId, deliveryId);
+    await this.target(taskId, sessionId);
+    const receipt = this.sessions.delegationHandoffs.prompts.find(key);
+    return { taskId, sessionId, deliveryId, status: receipt?.delivery === 'dispatching' || receipt?.delivery === 'preparing' ? 'pending' : receipt?.delivery ?? null };
   }
 
   async command(taskId: number, sessionId: number, value: unknown) {

@@ -1,4 +1,4 @@
-import { elementMarker, elementMarkersIn, serializeBrowserElements } from '@elevenex/shared';
+import { elementMarker, elementMarkersIn, serializeBrowserElements, SESSION_CHAT_RETAINED_SEND_LIMIT } from '@elevenex/shared';
 import {
   DestroyRef,
   Injector,
@@ -19,6 +19,7 @@ import type {
   SessionChatTarget,
 } from "@elevenex/shared";
 import { BackendClientService } from '../backend/backend-client.service';
+import { ambiguousChatDelivery, checkChatDelivery } from './session-chat-delivery';
 import { SessionChatOutbox } from './session-chat-outbox';
 import { chatTailContext, retainChatWindow } from './session-chat-tail';
 import { SessionChatLoadingPolicy, SESSION_CHAT_SLOW_OPEN_MS } from './session-chat-loading';
@@ -39,7 +40,7 @@ interface PendingSubmission extends PendingChatPrompt {
   readonly sendOrigin?: MessageSendOrigin;
   readonly queue: boolean;
   readonly knownQueueIds: ReadonlySet<string>;
-  confirmed: boolean;
+  readonly deliveryId: string;
 }
 interface TurnArrival {
   readonly renderId: string;
@@ -79,9 +80,17 @@ export class SessionChatStore {
   private readonly selectedScope = signal<string | null>(null);
   readonly offline = computed(() => !!this.selectedScope() && this.backend.state().scope?.id !== this.selectedScope());
   readonly waiting = computed(() => { const target = this.selectedTarget(); return this.outbox?.items().filter(item => `${item.target.taskId}/${item.target.sessionId}` === target) ?? []; });
-  readonly waitingMessages = computed<readonly WaitingMessage[]>(() => this.waiting().filter(item => item.status === 'waiting' || item.status === 'sending').map(item => ({ id: item.id, text: item.label, kind: item.action.type === 'send' ? 'message' : 'action', state: item.status === 'sending' ? 'sending' : 'waiting', editable: item.action.type === 'send' && item.status === 'waiting', removable: item.status === 'waiting' })));
+  readonly waitingMessages = computed<readonly WaitingMessage[]>(() => this.waiting()
+    .filter(item => item.status === 'waiting' || item.status === 'sending' || this.outbox?.checking().has(item.id))
+    .map(item => ({
+      id: item.id, text: item.label, kind: item.action.type === 'send' ? 'message' : 'action',
+      state: item.status === 'unknown' ? 'confirming' : item.status === 'sending' ? 'sending' : 'waiting',
+      editable: item.action.type === 'send' && item.status === 'waiting', removable: item.status === 'waiting',
+    })));
   readonly waitingPending = computed(() => this.waiting().some(item => item.status === 'waiting' || item.status === 'sending'));
-  readonly waitingUncertain = computed(() => this.waiting().some(item => item.status === 'unknown'));
+  readonly waitingUncertain = computed(() => this.waiting().some(item => item.status === 'unknown' && item.action.type !== 'send'));
+  readonly waitingResidual = computed(() => this.waiting().filter(item =>
+    item.status === 'unknown' && item.action.type === 'send' && !this.outbox?.checking().has(item.id)));
   private selection: ChatSelection | null = null;
   private readonly selectedTarget = signal<string>('');
   private entry = new SessionDraft();
@@ -142,6 +151,26 @@ export class SessionChatStore {
     this.entry.mentions.update(items => items.filter(item => item.id !== id));
   }
   readonly uncertain = computed(() => this.busy() ? "" : this.activeEntry().uncertain());
+  readonly delivery = computed(() => this.activeEntry().delivery());
+  readonly sending = computed(() => this.delivery()?.checking === false);
+  private readonly deliveryHint = signal('');
+  readonly retained = computed(() => this.activeEntry().retained());
+  private readonly enginePendingReceipts = signal<ReadonlySet<string>>(new Set());
+  readonly visibleRetained = computed(() => this.retained().filter(item =>
+    this.retainedLimit() || !this.deliveryInProgress(item.id)));
+  readonly retainedUnconfirmedCount = computed(() => this.visibleRetained().filter(item => !item.rejected && !this.deliveryInProgress(item.id)).length + this.waitingResidual().length);
+  readonly retainedLimit = computed(() => this.retained().length >= SESSION_CHAT_RETAINED_SEND_LIMIT);
+  readonly submissionBlocked = computed(() => !!this.uncertain() || this.waitingUncertain() ||
+    (!this.offline() && (!!this.delivery() || this.retainedLimit())));
+  deliveryInProgress(id: string | null): boolean { return id !== null && this.enginePendingReceipts().has(id); }
+  readonly sendError = signal('');
+  private readonly retainedChecks = new Map<string, AbortController | null>();
+  private retainedScope?: ChatSelection;
+
+  removeRetained(id: string | null, restore = false): void {
+    this.entry.removeRetained(id, restore);
+  }
+
   readonly checked = signal(false);
   private readonly pending = signal<PendingSubmission | null>(null);
   private readonly pendingQueue = signal<PendingSubmission | null>(null);
@@ -168,7 +197,7 @@ export class SessionChatStore {
     if (this.readOnly()) return 'This conversation is read only.';
     if (this.offline() || this.streamError()) return 'Reconnect to edit messages.';
     if (this.loading() || !state) return 'Wait for the conversation to load.';
-    if (this.busy() || this.uncertain() || this.waitingUncertain()) return 'Check the current action before editing.';
+    if (this.busy() || this.uncertain() || this.delivery() || this.waitingUncertain()) return 'Wait for the current action before editing.';
     if (this.running() || state.canInterrupt || state.permission || state.question || state.work?.totalRunning)
       return 'Wait for the current turn and background work to finish.';
     if (this.queue().length || this.waitingPending()) return 'Resolve queued messages before editing.';
@@ -281,6 +310,35 @@ export class SessionChatStore {
   }
 
   constructor() {
+    effect(onCleanup => {
+      const entry = this.activeEntry(), pending = entry.delivery(), scope = this.selectedScope();
+      const hinted = this.deliveryHint() === pending?.id;
+      const eligible = pending && (pending.checking || hinted);
+      if (!eligible || !scope || !this.active() || !this.selection) return;
+      if (this.offline()) {
+        if (pending.checking) this.retainSend(entry, pending.id);
+        return;
+      }
+      const selection = this.selection;
+      const abort = new AbortController();
+      onCleanup(() => abort.abort());
+      void checkChatDelivery(this.client, scope, selection, pending.id, abort.signal).then(result => {
+        if (abort.signal.aborted || this.selection !== selection || this.offline() || entry.delivery()?.id !== pending.id) return;
+        if (result === 'unknown' || result === 'pending') {
+          if (pending.checking) {
+            this.setReceiptPending(pending.id, result === 'pending');
+            this.retainSend(entry, pending.id);
+          }
+          return;
+        }
+        this.settleSend(entry, pending.id, result === 'accepted', 'The message was rejected.');
+      });
+    });
+    effect(() => {
+      const entry = this.activeEntry(), retained = entry.retained();
+      const selection = this.selectedScope() && this.active() && !this.offline() ? this.selection : null;
+      untracked(() => this.syncRetainedChecks(entry, retained, selection));
+    });
     effect(() => {
       if (this.progressiveLoading()) untracked(() => {
         // Another chat may have detected the slow connection while this one
@@ -324,6 +382,7 @@ export class SessionChatStore {
     inject(DestroyRef).onDestroy(() => {
       this.outbox?.setEditing(null);
       this.remember();
+      this.syncRetainedChecks(this.entry, [], null);
       this.disposed = true;
       this.epoch++;
       this.stopRead();
@@ -347,7 +406,7 @@ export class SessionChatStore {
     this.state.set(null); this.items.set([]); this.leadingPrompt.set(null); this.trailingContext.set([]); this.before.set(null); this.next.set(null); this.historyLoading.set(false); this.historyError.set(''); this.cursor = undefined;
     this.pending.set(null); this.pendingQueue.set(null); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map());
     this.queuedDeliveries.set(new Map());
-    this.fresh.set(new Set()); this.error.set(''); this.notice.set(''); this.busy.set(''); this.checked.set(false);
+    this.fresh.set(new Set()); this.error.set(''); this.sendError.set(''); this.notice.set(''); this.busy.set(''); this.checked.set(false);
     this.defaultChange.set(undefined); this.commands.clear(); this.readOnly.set(false); this.historical.set(false); this.loading.set(false);
     this.viewRevision.update(value => value + 1);
   }
@@ -405,6 +464,7 @@ export class SessionChatStore {
     this.historyLoading.set(false); this.historyError.set('');
     if (!recovery) this.fresh.set(new Set());
     this.error.set("");
+    this.sendError.set("");
     this.notice.set("");
     this.defaultChange.set(undefined);
     this.commands.clear();
@@ -412,7 +472,7 @@ export class SessionChatStore {
     this.historical.set(recovery && historical);
     this.checked.set(false);
     this.cursor = recovery ? previousCursor : cached?.cursor;
-    this.loading.set(!this.state());
+    this.loading.set(!this.state() && !this.offline());
     void this.load(!recovery && !cached);
   }
   private remember(): void {
@@ -604,6 +664,16 @@ export class SessionChatStore {
   }
 
   private receivePage(page: SessionChatPage, reset: boolean, direction?: 'before' | 'following', preserveTail = false): void {
+    const settled = page.state.settledDeliveryId;
+    if (settled && settled !== this.state()?.settledDeliveryId && this.selection) {
+      if (this.delivery()?.id === settled) this.deliveryHint.set(settled);
+      if (this.retained().some(item => item.id === settled && !item.rejected)) {
+        this.retainedChecks.get(settled)?.abort();
+        this.retainedChecks.delete(settled);
+        this.syncRetainedChecks(this.entry, this.retained(), this.selection);
+      }
+      this.outbox?.receiptChanged(this.selection, settled);
+    }
     if (this.starting()) this.compactStart.set(!!this.draft().trim());
     this.starting.set(false);
     this.supportsFollowing = page.next !== undefined;
@@ -809,7 +879,7 @@ export class SessionChatStore {
             !item.sender && !pending.knownQueueIds.has(item.id) && item.text === pending.text,
         ))
     ) {
-      pending.confirmed = true;
+      this.deliveryHint.set(pending.deliveryId);
       this.pending.set(null);
     }
     const queued = this.pendingQueue();
@@ -827,13 +897,14 @@ export class SessionChatStore {
       this.queueRenderIds.set(renderIds);
     }
     if (queued && (queueReceipt || deliveredQueued || dispatched(queued))) {
-      queued.confirmed = true;
+      this.deliveryHint.set(queued.deliveryId);
       this.pendingQueue.set(null);
     }
   }
 
   async submit(submission: ComposerSubmission, writeDraft?: (text: string) => void): Promise<void> {
     if (this.loading() || this.draftRestoring()) return;
+    this.sendError.set('');
     const original = this.draft();
     if (this.historical()) {
       const epoch = this.epoch;
@@ -843,7 +914,7 @@ export class SessionChatStore {
       !this.selection || (!this.state() && !this.offline()) ||
       this.busy() ||
       this.readOnly() ||
-      this.uncertain() || this.waitingUncertain() || (!this.offline() && this.waitingPending()) ||
+      this.submissionBlocked() || (!this.offline() && this.waitingPending()) ||
       (!submission.text.trim() && !this.entry.files().length) ||
       this.entry.files().some(file => file.status !== "ready")
     )
@@ -873,43 +944,120 @@ export class SessionChatStore {
       if (this.outbox.enqueue(this.selection, { type: 'send', text, queue: false, ...(mentions.length ? { sessionIds: mentions.map(mention => Number(mention.id)) } : {}) }, text, null)) {
         if (this.draft() === original) { this.setDraft(''); writeDraft?.(''); }
         this.entry.files.set([]); this.entry.mentions.set([]); this.error.set('');
-      } else this.error.set('Up to 20 actions can wait in this window. Remove one before adding another.');
+      } else this.error.set('Could not queue this message. Your draft is still here.');
       return;
     }
     const state = this.state();
+    const deliveryId = crypto.randomUUID();
     const pending = {
       sendOrigin: submission.intent === "send" && !files.length && !mentions.length ? submission.sendOrigin : undefined,
       attachments: files,
       mentions: mentions.map(mention => ({ sessionId: Number(mention.id), title: mention.label })),
       media: files.map((file, index) => ({ id: String(index), path: file.path, caption: file.name.replace(/[[\]\r\n]/g, '_'), kind: file.kind, inline: false })),
-      id: "local-" + crypto.randomUUID(),
-      confirmed: false,
+      id: "local-" + deliveryId,
+      deliveryId,
       text,
       queue: submission.intent === "queue" || (state?.canSteer === false && state.queuePaused),
       timestamp: new Date().toISOString(),
       knownIds: new Set(this.visibleItems().map(item => item.id)),
       knownQueueIds: new Set(this.state()?.queue.map((item) => item.id) ?? []),
     };
-    const entry = this.entry,
-      epoch = this.epoch;
+    const entry = this.entry, selection = this.selection;
     const pendingChannel = pending.queue ? this.pendingQueue : this.pending;
     pendingChannel.set(pending);
-    if (entry.beginSend(submission.text, original)) writeDraft?.('');
-    entry.files.set([]);
-    entry.mentions.set([]);
-    const success = await this.perform({
-      type: "send",
-      text,
-      queue: pending.queue,
-      ...(mentions.length ? { sessionIds: mentions.map(mention => Number(mention.id)) } : {}),
+    this.error.set('');
+    this.notice.set('');
+    const { consumed, saved } = entry.beginSend(deliveryId, submission.text, original);
+    if (consumed) writeDraft?.('');
+    if (saved && !await saved) {
+      this.settleSend(entry, deliveryId, false, 'Could not save this message before sending.');
+      if (this.selection === selection) writeDraft?.(entry.text());
+      return;
+    }
+    if (this.backend.state().scope?.id !== selection.scopeId) {
+      this.settleSend(entry, deliveryId, false, 'Connection lost before the message was sent.');
+      if (this.selection === selection) writeDraft?.(entry.text());
+      return;
+    }
+    const result = await this.client.command(selection.scopeId, {
+      taskId: selection.taskId,
+      sessionId: selection.sessionId,
+      deliveryId,
+      action: {
+        type: 'send', text, queue: pending.queue,
+        ...(mentions.length ? { sessionIds: mentions.map(mention => Number(mention.id)) } : {}),
+      },
     });
-    if (!success) entry.files.update(current => [...files, ...current]);
-    if (!success) entry.mentions.update(current => [...mentions, ...current.filter(item => !mentions.some(mention => mention.id === item.id))]);
-    const current = epoch === this.epoch && !this.disposed;
-    const restore = !success && (!current || pendingChannel()?.id === pending.id);
-    if (restore && current) pendingChannel.set(null);
-    entry.finishSend(restore);
-    if (restore && current) writeDraft?.(entry.text());
+    if (entry.delivery()?.id !== deliveryId) return;
+    if (!result.ok && ambiguousChatDelivery(result.error)) {
+      entry.checkSend(deliveryId);
+      return;
+    }
+    this.settleSend(entry, deliveryId, result.ok, result.ok ? '' : result.error.message);
+    if (!result.ok && this.selection === selection) writeDraft?.(entry.text());
+  }
+
+  private retainSend(entry: SessionDraft, id: string): void {
+    this.clearOptimistic(id);
+    entry.retainSend(id);
+  }
+
+  private setReceiptPending(id: string, pending: boolean): void {
+    this.enginePendingReceipts.update(current => {
+      if (current.has(id) === pending) return current;
+      const next = new Set(current);
+      if (pending) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  private syncRetainedChecks(
+    entry: SessionDraft, retained: ReturnType<SessionDraft['retained']>, target: ChatSelection | null,
+  ): void {
+    if (target !== this.retainedScope) {
+      for (const check of this.retainedChecks.values()) check?.abort();
+      this.retainedChecks.clear();
+      this.enginePendingReceipts.set(new Set());
+      this.retainedScope = target ?? undefined;
+    }
+    if (!target) return;
+    const ids = new Set(retained.filter(item => !item.rejected).flatMap(item => item.id === null ? [] : [item.id]));
+    for (const [id, check] of this.retainedChecks) {
+      if (ids.has(id)) continue;
+      check?.abort();
+      this.retainedChecks.delete(id);
+      this.setReceiptPending(id, false);
+    }
+    for (const id of ids) {
+      if (this.retainedChecks.has(id)) continue;
+      const abort = new AbortController();
+      this.retainedChecks.set(id, abort);
+      // A final, passive probe catches slow handoffs after the composer is usable.
+      void checkChatDelivery(this.client, target.scopeId, target, id, abort.signal, [0, 12000]).then(result => {
+        if (abort.signal.aborted || this.selection !== target || this.offline()) return;
+        this.retainedChecks.set(id, null);
+        this.setReceiptPending(id, result === 'pending');
+        if (result === 'accepted' || result === 'failed') entry.reconcileRetained(id, result === 'failed');
+      });
+    }
+  }
+
+  private clearOptimistic(deliveryId: string): void {
+    for (const channel of [this.pending, this.pendingQueue]) {
+      if (channel()?.deliveryId === deliveryId) channel.set(null);
+    }
+  }
+
+  private settleSend(entry: SessionDraft, deliveryId: string, accepted: boolean, error: string): void {
+    if (!entry.finishSend(deliveryId, !accepted) || this.disposed || this.entry !== entry) return;
+    if (!accepted) {
+      this.clearOptimistic(deliveryId);
+      this.sendError.set(error);
+    } else if (!this.streamAvailable || (!this.stream && !this.request)) {
+      this.stopRead();
+      void this.load(false);
+    }
   }
   editPrompt(target: ChatSelection, itemId: string, revision: string, text: string): Promise<boolean> {
     if (target.scopeId !== this.selection?.scopeId || target.taskId !== this.selection.taskId ||
@@ -922,7 +1070,8 @@ export class SessionChatStore {
     const selection = this.selection;
     if (
       !selection ||
-      (this.busy() && action.type !== "stop") ||
+      action.type === 'send' ||
+      ((this.busy() || this.sending()) && action.type !== "stop") ||
       this.readOnly() ||
       (action.type === 'edit-prompt' && !!this.promptEditDisabledReason()) ||
       (this.uncertain() && action.type !== "stop")
@@ -964,7 +1113,7 @@ export class SessionChatStore {
     if (action.type === "preset-default" || action.type === "save-preset")
       this.defaultChange.set(undefined);
     this.notice.set(
-      action.type === "send" || queuedPrompt
+      queuedPrompt
         ? "Sending…"
         : action.type === "edit-prompt"
           ? "Resending message…"
@@ -975,18 +1124,13 @@ export class SessionChatStore {
     const configuration = ["provider", "preset", "save-preset", "preset-default",
       "preset-update", "preset-reorder", "preset-delete", "preset-restore"].includes(action.type);
     if (configuration) this.stopRead();
-    const pending = action.type === "send"
-      ? (action.queue ? this.pendingQueue() : this.pending())
-      : null;
     let result = await this.client.command(selection.scopeId, {
       taskId: selection.taskId,
       sessionId: selection.sessionId,
       action,
     });
-    // A durable user/queue receipt is stronger evidence than a lost HTTP reply.
-    // Running state or assistant output alone cannot identify this submission.
     const queuedReceipt = queuedPrompt && [...this.turnArrivals().values()].some(arrival => arrival.renderId === `queued-delivery:${queuedPrompt.id}`);
-    if (!result.ok && result.error.code === "outcome-unknown" && (pending?.confirmed || queuedReceipt))
+    if (!result.ok && result.error.code === "outcome-unknown" && queuedReceipt)
       result = { ok: true, value: { accepted: true } };
     if (
       result.ok ||
@@ -1023,7 +1167,7 @@ export class SessionChatStore {
       return false;
     }
     this.notice.set(
-      action.type === "send" || action.type === 'edit-prompt' || action.type === 'steer-queued' || action.type === 'resume-queue'
+      action.type === 'edit-prompt' || action.type === 'steer-queued' || action.type === 'resume-queue'
         ? ""
         : action.type === "stop"
           ? "Stop requested"
@@ -1056,7 +1200,7 @@ export class SessionChatStore {
   }
   acknowledgeUncertain(): void {
     if (this.checked()) {
-      this.entry.acknowledgeSend();
+      this.entry.uncertain.set('');
       this.error.set("");
       this.notice.set(
         "Draft retained. Check for an existing message before sending.",

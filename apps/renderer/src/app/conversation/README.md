@@ -672,9 +672,16 @@ the visible caption, independently of the video's accessible name.
 
 `Composer.waitingFor` names the unreachable machine; Enter emits a queue intent
 without a bubble flight. `waiting` supplies readonly `WaitingMessage[]` with
-`id`, `text`, optional `kind` (`message`/`action`), `state` (`waiting`/`sending`) and per-row `editable` / `removable`
-flags. `waitingAction` supplies the current recovery action label. Handle `waitingEdited`, `waitingRemoved`, `waitingEditing` and `reconnectRequested` in the
-owner. Sending and backend-accepted queues are distinct supplied states.
+`id`, `text`, optional `kind` (`message`/`action`), `state` (`waiting`, `sending`,
+or `confirming`) and per-row `editable` / `removable` flags. The normal editor
+placeholder stays in place. The toolbar shows a connection chip beside Queue,
+and outbox rows show their own status above the draft. On narrow composers the
+chip shortens to Offline while the full machine name remains accessible.
+`waitingAction` defaults to Reconnect and can supply a specific sign-in action. Handle `waitingEdited`,
+`waitingRemoved`, `waitingEditing` and `reconnectRequested` in the owner.
+`submissionDisabled` blocks Send or Queue during delivery checks while leaving
+the editor and draft controls available. `queueDisabled` can independently
+gate engine queue controls.
 `ComposerQueue.waitingFor` changes its local-waiting presentation and hides Steer;
 ordinary accepted queues keep their original controls.
 

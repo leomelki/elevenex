@@ -1761,6 +1761,39 @@ describe('CodexRuntimeService', () => {
     expect(await service.getRuntimeState(7)).toMatchObject({ runPhase: 'idle', canInterrupt: false });
   });
 
+  it('fences tracked desktop dispatch and acknowledges only the native turn/start reply', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const original = appServer.request.getMockImplementation()!;
+    const beforeDispatch = jest.fn();
+    const onAccepted = jest.fn();
+    let release!: (reply: { turn: { id: string } }) => void;
+    let started!: () => void;
+    const startedRequest = new Promise<void>(done => { started = done; });
+    appServer.request.mockImplementation(async (method, params) => {
+      if (method !== 'turn/start') return original(method, params);
+      expect(beforeDispatch).toHaveBeenCalledTimes(1);
+      started();
+      return new Promise(done => { release = done; });
+    });
+    try {
+      const send = service.submitPrompt(7, 'Verify delivery', undefined, undefined, {
+        waitForCompletion: false, beforeDispatch, onAccepted,
+      });
+      await startedRequest;
+      expect(onAccepted).not.toHaveBeenCalled();
+      wire.notificationHandler({ method: 'turn/started', params: { threadId: 'thread-1', turn: { id: 'turn-1' } } });
+      expect(onAccepted).not.toHaveBeenCalled();
+      release({ turn: { id: 'turn-1' } });
+      await send;
+      expect(onAccepted).toHaveBeenCalledTimes(1);
+      expect(onAccepted).toHaveBeenCalledWith('running');
+      wire.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
   it.each(['live', 'queued', 'existing queue', 'explicit', 'rejected', 'rejected explicit', 'unknown'] as const)(
     'delivers an agent follow-up with %s steering',
     async (delivery) => {
@@ -1895,14 +1928,14 @@ describe('CodexRuntimeService', () => {
     service.reactivateSession(7);
     await service.submitPrompt(7, 'Continue the investigation');
     expect(sessionsService.findOne).toHaveBeenCalledWith(7);
-    expect(run).toHaveBeenCalledWith(
+    expect(run.mock.calls[0]?.slice(0, 6)).toEqual([
       7,
       expect.anything(),
       '/tmp/project',
       expect.anything(),
       expect.anything(),
       undefined,
-    );
+    ]);
   });
 
   it('rechecks checkout ownership before dispatching a queued or direct prompt', async () => {

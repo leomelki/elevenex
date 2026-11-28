@@ -90,7 +90,7 @@ export class SessionChatDrafts {
   private evict(): void {
     for (const [id, draft] of this.entries) {
       if (this.entries.size < 20) break;
-      if (!draft.uncertain() && !draft.hasUnsavedText()) this.entries.delete(id);
+      if (!draft.uncertain() && !draft.delivery() && !draft.retained().some(write => write.files?.length || write.mentions?.length) && !draft.hasUnsavedText()) this.entries.delete(id);
     }
   }
 

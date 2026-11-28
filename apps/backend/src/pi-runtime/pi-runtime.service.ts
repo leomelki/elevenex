@@ -591,6 +591,7 @@ export class PiRuntimeService
       this.initializingRuns.has(sessionId) ||
       this.runtimeStates.get(sessionId)?.queuePaused
     ) {
+      options.beforeDispatch?.();
       this.queuePendingPrompt(sessionId, trimmedPrompt, images);
       options.onAccepted?.('queued');
       return;
@@ -615,6 +616,7 @@ export class PiRuntimeService
       normalizedImages,
       generation,
       onAccepted,
+      options.beforeDispatch,
     ).finally(() => {
       if (this.promptTasks.get(sessionId) === task)
         this.promptTasks.delete(sessionId);
@@ -664,6 +666,7 @@ export class PiRuntimeService
     normalizedImages: Array<Record<string, string>>,
     generation: number,
     onAccepted?: () => void,
+    beforeDispatch?: () => void,
   ): Promise<void> {
     const ownsSession = () => this.ownsSession(sessionId, generation);
     let state: PiRuntimeState | null = null;
@@ -763,6 +766,7 @@ export class PiRuntimeService
           run.interruptRequested
         )
           return;
+        beforeDispatch?.();
         await runtime.send({
           type: 'prompt',
           message: trimmedPrompt,

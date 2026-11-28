@@ -121,6 +121,7 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state, initia
           resolve = yes;
         }),
     ),
+    sessionChatDelivery: vi.fn(async () => ({ ok: false as const, error: { code: 'http', status: 404, message: 'Older engine' } })),
     sessionChatCancel: vi.fn(async () => undefined),
   };
   const scope = { id: "scope", environment: { kind: "local" } };
@@ -698,10 +699,29 @@ describe("connected chat reply rendering", () => {
 
     textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
     expect(textarea.value).toBe('');
-    complete({ ok: false, error: { code: 'outcome-unknown', message: 'Check delivery' } });
+    complete({ ok: false, error: { code: 'http', status: 400, message: 'The message was rejected.' } });
     await settle(fixture);
     expect(textarea.value).toBe('Keep this draft');
-    expect(fixture.componentInstance.store.uncertain()).toBe('Check delivery');
+    expect(root.querySelector('.feedback.error')?.textContent).toContain('The message was rejected.');
+  });
+
+  it('keeps an earlier ambiguous message outside the editable draft and shows passive copy', async () => {
+    const { fixture, root, complete } = setup();
+    await settle(fixture);
+    const textarea = root.querySelector<HTMLTextAreaElement>('ex-composer textarea')!;
+    textarea.value = 'Earlier writing';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    complete({ ok: false, error: { code: 'outcome-unknown', message: 'Lost reply' } });
+    await settle(fixture);
+    expect(textarea.value).toBe('');
+    expect(root.querySelector('.retained-sends summary')?.textContent).toContain('An earlier message may not have reached the agent');
+    expect(root.querySelector('.retained-sends')?.textContent).toContain('It’s saved separately from your draft.');
+    expect(root.querySelector('.retained-sends')?.textContent).not.toMatch(/Delivery unconfirmed|Check again|Check delivery/);
+    textarea.value = 'New writing';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle(fixture);
+    expect(root.querySelector<HTMLButtonElement>('ex-composer button.send')?.disabled).toBe(false);
   });
 
   it("keeps the live turn mounted when its durable prompt receipt arrives with completion", async () => {

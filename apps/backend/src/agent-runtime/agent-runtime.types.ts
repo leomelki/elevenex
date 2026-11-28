@@ -175,6 +175,8 @@ export interface AgentPromptOptions {
   requireSteering?: boolean;
   /** Pass false to return once the harness owns this specific prompt. */
   waitForCompletion?: boolean;
+  /** Desktop persists its dispatch fence immediately before the runtime accepts or writes this prompt. */
+  beforeDispatch?: () => void;
   onAccepted?: (disposition: AgentPromptDisposition) => void;
 }
 

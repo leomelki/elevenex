@@ -11,6 +11,8 @@ import type {
   SessionChatChangesRead,
   SessionChatChangesPage,
   SessionChatCommand,
+  SessionChatDelivery,
+  SessionChatDeliveryRead,
   SessionChatContent,
   SessionChatContentRead,
   SessionChatPromptEdit,
@@ -290,7 +292,38 @@ export class SessionChatFixture {
     this.imageState = state;
     if (state !== 'held') for (const done of [...this.waiting.values()]) done();
   }
-  private commandFailure = false;
+  private nextSendFailure: 'pending' | 'unconfirmed' | 'rejected' | null = null;
+  private readonly deliveryReceipts = new Map<string, SessionChatDelivery>();
+
+  async delivery(input: SessionChatDeliveryRead): Promise<BackendResult<SessionChatDelivery>> {
+    const { taskId, sessionId, deliveryId } = input;
+    const receipt = this.deliveryReceipts.get(deliveryId);
+    const status = receipt?.taskId === taskId && receipt.sessionId === sessionId ? receipt.status : 'unconfirmed';
+    return { ok: true, value: { taskId, sessionId, deliveryId, status } };
+  }
+
+  loseNextSend(outcome: 'pending' | 'unconfirmed' | 'rejected'): void {
+    this.nextSendFailure = outcome;
+  }
+
+  acceptLostSend(input: SessionChatCommand): void {
+    if (input.action.type !== 'send' || !input.deliveryId) throw new Error('No delivery to acknowledge.');
+    const { taskId, sessionId, deliveryId, action } = input;
+    this.deliveryReceipts.set(deliveryId, { taskId, sessionId, deliveryId, status: 'accepted' });
+    const session = this.session(sessionId);
+    session.state = { ...session.state, settledDeliveryId: deliveryId };
+    session.items = [...session.items,
+      item(deliveryId, 'user', action.text, { timestamp: new Date().toISOString() }),
+      item(deliveryId + '-reply', 'assistant', 'The follow-up finished successfully.', { timestamp: new Date().toISOString() })];
+    this.changed();
+    this.resetVersion = this.version;
+  }
+
+  contextUsage(percentage: number, id = 101): void {
+    const session = this.session(id);
+    session.state = { ...session.state, context: { tokens: percentage * 1280, limit: 128000, percentage } };
+    this.changed();
+  }
   private delayedReceipts: boolean | 'completion' = false;
   deferUserReceipts(value: boolean | 'completion'): void {
     this.delayedReceipts = value;
@@ -532,7 +565,7 @@ export class SessionChatFixture {
         text: Array.from({ length: 1600 }, (_, i) => "Verified concurrent request " + i + ": passed").join("\n"),
         truncated: true,
       };
-    if (mode === "unknown") this.commandFailure = true;
+    if (mode === 'unknown') this.loseNextSend('unconfirmed');
     session.state = {
       ...session.state,
       providerLocked: session.items.length > 0,
@@ -861,16 +894,13 @@ export class SessionChatFixture {
   async command(
     input: SessionChatCommand,
   ): Promise<BackendResult<SessionChatCommandReply>> {
-    if (this.commandFailure) {
-      this.commandFailure = false;
-      return {
-        ok: false,
-        error: {
-          code: "outcome-unknown",
-          message:
-            "The send may have completed. Check delivery before trying again.",
-        },
-      };
+    const failure = this.nextSendFailure;
+    if (failure && input.action.type === 'send') {
+      this.nextSendFailure = null;
+      if (failure === 'rejected') return { ok: false, error: { code: 'http', status: 400, message: 'The session rejected this message.' } };
+      const { taskId, sessionId, deliveryId } = input;
+      if (deliveryId) this.deliveryReceipts.set(deliveryId, { taskId, sessionId, deliveryId, status: failure });
+      return { ok: false, error: { code: 'outcome-unknown', message: 'The send reply was lost.' } };
     }
     const session = this.session(input.sessionId),
       action = input.action;

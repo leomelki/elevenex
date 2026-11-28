@@ -140,6 +140,40 @@ ex-chat-loading.hydrated { --chat-loading-exit-duration: var(--dur-fast); }
   font-size: var(--text-caption-size);
   overflow-wrap: anywhere;
 }
+.feedback.delivery-status {
+  background: transparent;
+}
+.retained-sends {
+  margin-bottom: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+.retained-sends summary {
+  width: fit-content;
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+.retained-send {
+  margin-block: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+.retained-text {
+  margin: 0;
+  max-height: 120px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  color: var(--ink);
+}
+.retained-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .feedback.error {
   background: var(--danger-soft);
   color: var(--danger);

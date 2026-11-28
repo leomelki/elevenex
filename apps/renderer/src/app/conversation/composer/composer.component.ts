@@ -146,15 +146,14 @@ export class ComposerComponent implements OnChanges {
   readonly mentionsEnabled = input(true);
   /** Drops must belong to the same connected backend generation. */
   readonly sessionMentionScope = input<string>();
+  readonly queueDisabled = input<boolean>();
   readonly waitingFor = input<string>();
-  readonly waitingAction = input('Try now');
-  readonly waitingNoun = computed(() => this.waiting().length && this.waiting().every(item => item.kind === 'message') ? 'message' : 'action');
+  readonly waitingAction = input('Reconnect');
   readonly waiting = input<readonly WaitingMessage[]>([]);
   readonly waitingRemoved = output<string>();
   readonly waitingEdited = output<QueuedMessage>();
   readonly waitingEditing = output<string | null>();
   readonly reconnectRequested = output<void>();
-  readonly waitingSending = computed(() => this.waiting().some(item => item.state === 'sending'));
   readonly queueEditable = input(true);
   readonly queueReorderable = input(true);
   readonly permission = input<string>("ask");
@@ -286,6 +285,7 @@ export class ComposerComponent implements OnChanges {
   readonly steeringEnabled = input(true);
   readonly disabled = input(false);
   readonly sending = input(false);
+  readonly submissionDisabled = input(false);
   readonly clearOnSubmit = input(true);
   readonly stoppable = input(true);
   readonly recording = input<RecordingState | false>(false);
@@ -340,6 +340,7 @@ export class ComposerComponent implements OnChanges {
       !this.canSend() ||
       this.disabled() ||
       this.sending() ||
+      this.submissionDisabled() ||
       this.recording()
     )
       return;

@@ -14,7 +14,7 @@ import {
   IconComponent,
   TickerComponent,
 } from "../../ui";
-import type { QueuedMessage } from "../conversation.models";
+import type { QueuedMessage, WaitingMessage } from "../conversation.models";
 import { displayElementMentions, elementMentionNames, encodeElementMentions } from '../element/element-mention-text';
 @Component({
   selector: "ex-composer-queue",
@@ -34,6 +34,9 @@ export class ComposerQueueComponent implements OnChanges {
   preview(text: string): string {
     const { prose, names } = this.split(text);
     return displayElementMentions(prose, names);
+  }
+  waitingLabel(item: QueuedMessage & Partial<WaitingMessage>): string {
+    return item.state === 'sending' ? 'Sending…' : item.state === 'confirming' ? 'Confirming…' : 'Queued';
   }
   private split(text: string): { prose: string; context: string; names: ReadonlyMap<number, string> } {
     const parsed = parseBrowserElements(text);

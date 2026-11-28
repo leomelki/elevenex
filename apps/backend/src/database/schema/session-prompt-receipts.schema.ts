@@ -15,7 +15,7 @@ export const sessionPromptReceipts = sqliteTable(
       onDelete: 'cascade',
     }),
     delivery: text('delivery', {
-      enum: ['dispatching', 'accepted', 'failed', 'unconfirmed'],
+      enum: ['preparing', 'dispatching', 'accepted', 'failed', 'unconfirmed'],
     }).notNull(),
     disposition: text('disposition', {
       enum: ['running', 'queued', 'steered'],

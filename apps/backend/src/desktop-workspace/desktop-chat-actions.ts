@@ -6,6 +6,7 @@ import type { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime
 import type { SessionsService } from '../sessions/sessions.service.js';
 import { record } from './desktop-chat-projection.js';
 import type { ConversationExportService } from '../agent-runtime/conversation-export.service.js';
+import { trackDesktopChatDelivery } from './desktop-chat-delivery.js';
 import { appendChatMentions } from './desktop-chat-mentions.js';
 
 /** Validate durable requests and delegate to the selected harness without replay. */
@@ -63,27 +64,26 @@ export async function executeChatAction(
       break;
     }
     case 'send': {
-      if (typeof action.queue !== 'boolean')
+      const { queue, deliveryId } = action;
+      if (typeof queue !== 'boolean')
         throw new BadRequestException('Invalid queue option.');
       if (action.sessionIds !== undefined && !exports) throw new BadRequestException('Session mentions are unavailable.');
       const input = text(action.text, SESSION_CHAT_PROMPT_LIMIT);
-      const prompt = exports
-        ? await appendChatMentions(input, action.sessionIds, exports)
-        : input;
-      const images = await chatPromptImages(input, sessionId, session.worktreePath, provider);
-      if (session.status === 'stopped') await sessions.reactivateRuntime(sessionId);
-      await provider.submitPrompt(
-        sessionId,
-        prompt,
-        provider.info.id === 'antigravity' ? input : undefined,
-        images,
-        {
+      await trackDesktopChatDelivery(sessions.delegationHandoffs?.prompts, sessionId, deliveryId, [input, queue, action.sessionIds], async (dispatch, onAccepted) => {
+        const prompt = exports
+          ? await appendChatMentions(input, action.sessionIds, exports)
+          : input;
+        const images = await chatPromptImages(input, sessionId, session.worktreePath, provider);
+        if (session.status === 'stopped') await sessions.reactivateRuntime(sessionId);
+        await provider.submitPrompt(sessionId, prompt, provider.info.id === 'antigravity' ? input : undefined, images, {
           human: true,
           ...(provider.info.id === 'antigravity' ? { origin: 'desktop-chat' } : {}),
-          queue: action.queue,
+          queue,
           waitForCompletion: false,
-        },
-      );
+          ...(dispatch ? { beforeDispatch: dispatch } : {}),
+          ...(onAccepted ? { onAccepted } : {}),
+        });
+      }, deliveryId => sessions.emit('desktop-chat-delivery-settled', { sessionId, deliveryId }));
       break;
     }
     case 'background-agent': {

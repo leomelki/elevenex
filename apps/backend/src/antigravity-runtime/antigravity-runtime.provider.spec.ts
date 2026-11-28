@@ -165,14 +165,15 @@ describe('interactive Antigravity through ACP stdio', () => {
   });
 
   it('retains background activity and accepts a permission-first wake before draining the queue', async () => {
-    const runtime = makeProvider();
+    const runtime = makeProvider(), onAccepted = jest.fn();
     await runtime.submitPrompt(
       sessionId,
       'background wake',
       undefined,
       undefined,
-      request,
+      { ...request, onAccepted },
     );
+    expect(onAccepted).toHaveBeenLastCalledWith('running');
     const working = await waitFor(
       runtime,
       (state) => state.backgroundWork.length > 0,
@@ -185,7 +186,9 @@ describe('interactive Antigravity through ACP stdio', () => {
     await runtime.submitPrompt(sessionId, 'queued', undefined, undefined, {
       ...request,
       queue: true,
+      onAccepted,
     });
+    expect(onAccepted).toHaveBeenLastCalledWith('queued');
     const waiting = await waitFor(
       runtime,
       (state) => !!state.pendingPermissionRequest,

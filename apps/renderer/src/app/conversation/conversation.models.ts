@@ -92,7 +92,7 @@ export interface ConversationMention {
 }
 export interface WaitingMessage extends QueuedMessage {
   readonly kind?: 'message' | 'action';
-  readonly state: 'waiting' | 'sending';
+  readonly state: 'waiting' | 'sending' | 'confirming';
 }
 export interface QueuedMessage {
   readonly steerable?: boolean;

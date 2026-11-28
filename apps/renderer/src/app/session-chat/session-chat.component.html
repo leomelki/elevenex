@@ -1,6 +1,6 @@
 @for (view of chatViews(); track view.revision) {
   <ex-chat-loading [pending]="opening()" [class.hydrated]="!!store.state()" label="Loading conversation…" />
-  @if (store.state() || store.starting()) {
+  @if (store.state() || store.starting() || (selection() && store.offline() && !archived())) {
 <ex-chat
   [animate.enter]="agentFocus()?.selection === selection() && !!agentFocus() ? 'agent-session-in' : ''"
   [reach]="store.offline() ? { machine: machineName(), since: outageSince() ?? 0 } : undefined"
@@ -332,27 +332,66 @@
           [disabled]="store.loading()"
           (click)="store.refresh()"
         >
-          {{ store.uncertain() ? "Check delivery" : "Reconnect" }}
+          Refresh conversation
         </button>
       </div>
     }
     @if (store.uncertain()) {
-      <div class="feedback">
-        <span
-          >Check the conversation before sending again. Your draft is
-          retained.</span
-        >
+      <div class="feedback delivery-status">
+        <span role="status">{{ store.uncertain() }}</span>
         @if (store.checked()) {
-          <button
-            exButton
-            variant="ghost"
-            size="sm"
-            (click)="store.acknowledgeUncertain()"
-          >
-            I checked · Keep draft
-          </button>
+          <button exButton variant="ghost" size="sm" (click)="store.acknowledgeUncertain()">Keep draft</button>
+        } @else {
+          <button exButton variant="ghost" size="sm" [disabled]="store.offline() || store.loading()" (click)="store.refresh()">Refresh conversation</button>
         }
       </div>
+    }
+    @if (store.delivery()?.checking) {
+      <p class="feedback delivery-status" role="status">Confirming message delivery…</p>
+    }
+    @if (store.sendError(); as reason) {
+      <div class="feedback error">
+        <span role="alert"><strong>Message wasn’t sent.</strong> {{ reason }}</span>
+        <button exButton variant="ghost" size="sm" (click)="focusComposer()">Edit draft</button>
+      </div>
+    }
+    @if (store.visibleRetained().length || store.waitingResidual().length) {
+      <details class="retained-sends">
+        <summary>
+          @switch (store.retainedUnconfirmedCount()) {
+            @case (0) { Earlier messages }
+            @case (1) { An earlier message may not have reached the agent }
+            @default { Some messages may not have reached the agent }
+          }
+        </summary>
+        @for (item of store.visibleRetained(); track item.id) {
+          <div class="retained-send">
+            <p class="retained-text">{{ item.text || 'Message with attachments' }}</p>
+            <div class="retained-actions">
+              <span>{{ item.rejected ? 'Message wasn’t sent.' : store.deliveryInProgress(item.id) ? 'The engine is still confirming delivery.' : 'This message might have reached the agent. It’s saved separately from your draft.' }}</span>
+              @if (item.rejected) {
+                <button exButton variant="ghost" size="sm" (click)="store.removeRetained(item.id, true); focusComposer()">Edit as draft</button>
+              } @else if (item.text) {
+                <button exButton variant="ghost" size="sm" (click)="copy(item.text)">Copy text</button>
+              }
+              <button exButton variant="ghost" size="sm" (click)="store.removeRetained(item.id); focusComposer()">Dismiss</button>
+            </div>
+          </div>
+        }
+        @for (item of store.waitingResidual(); track item.id) {
+          <div class="retained-send">
+            <p class="retained-text">{{ item.label }}</p>
+            <div class="retained-actions">
+              <span>This message might have reached the agent. It’s saved separately from your draft.</span>
+              <button exButton variant="ghost" size="sm" (click)="copy(item.label)">Copy text</button>
+              <button exButton variant="ghost" size="sm" (click)="store.outbox?.remove(item.id); focusComposer()">Dismiss</button>
+            </div>
+          </div>
+        }
+      </details>
+    }
+    @if (store.retainedLimit()) {
+      <p class="feedback delivery-status" role="status">Dismiss an earlier message to make room for another send.</p>
     }
     @if (store.state()?.queuePaused && store.queue().length && !store.dispatching()) {
       <div class="feedback">
@@ -383,8 +422,17 @@
     }
     @if (attachments.error()) { <p class="feedback error" role="alert">{{ attachments.error() }}</p> }
     @for (item of store.waiting(); track item.id) {
-      @if (item.status === 'unknown' || item.status === 'failed') {
-        <div class="feedback error" role="alert"><span>{{ item.label }} · {{ item.error }}</span>@if (item.status === 'unknown' && item.action.type === 'send') { <button exButton variant="ghost" size="sm" [disabled]="store.offline()" (click)="store.outbox?.check(item.id)">Check delivery</button> }<button exButton variant="ghost" size="sm" (click)="store.outbox?.remove(item.id); focusComposer()">{{ item.status === 'unknown' ? 'I checked delivery · dismiss' : 'Dismiss' }}</button></div>
+      @if (item.status === 'failed' || (item.status === 'unknown' && item.action.type !== 'send')) {
+        <div class="feedback" [class.error]="item.status === 'failed'">
+          <span [attr.role]="item.status === 'failed' ? 'alert' : 'status'">
+            @if (item.status === 'failed' && item.action.type === 'send') { <strong>Queued message wasn’t sent.</strong> }
+            {{ item.error }}
+          </span>
+          @if (item.status === 'failed' && item.action.type === 'send' && !archived() && !workspaceUnavailable()) {
+            <button exButton variant="ghost" size="sm" (click)="store.outbox?.retryRejected(item.id)">Retry</button>
+          }
+          <button exButton variant="ghost" size="sm" (click)="store.outbox?.remove(item.id); focusComposer()">Dismiss</button>
+        </div>
       }
     }
     <ex-composer
@@ -395,8 +443,9 @@
       [running]="store.running()"
       [steeringEnabled]="store.state()?.canSteer !== false"
       [disabled]="archived() || workspaceUnavailable()"
-      [sending]="!!creation() || store.loading() || store.draftRestoring() || !!store.busy() || !!store.uncertain() || store.waitingUncertain() || (!store.offline() && store.waitingPending()) || !!store.outbox?.restoring() || (!store.state() && !store.offline())"
-      [waitingAction]="reconnectAction()"
+      [sending]="!!creation() || store.loading() || store.draftRestoring() || !!store.busy() || (!store.offline() && (store.sending() || store.waitingPending())) || !!store.outbox?.restoring() || (!store.state() && !store.offline())"
+      [submissionDisabled]="store.submissionBlocked()"
+      [waitingAction]="reconnectAction() === 'Try now' ? 'Reconnect' : reconnectAction()"
       [waitingFor]="store.offline() && !creation() ? machineName() : undefined"
       [waiting]="store.waitingMessages()"
       (waitingRemoved)="store.outbox?.remove($event); focusComposer()"
@@ -413,7 +462,7 @@
         store.offline() || store.waitingPending() || !!store.uncertain() || !store.state() ||
         (store.state()?.provider === 'antigravity' && store.state()?.canInterrupt === true)
       "
-      [settingsBusy]="!!store.busy() || store.loading() || modelCatalog.loading()"
+      [settingsBusy]="!!store.busy() || store.sending() || store.loading() || modelCatalog.loading()"
       [modelsRefreshAvailable]="!!store.state()?.presetCatalogs"
       [modelsError]="modelCatalog.error()"
       (modelsRefreshRequested)="refreshModels()"
@@ -454,10 +503,11 @@
       [queueEditable]="false"
       [queueReorderable]="false"
       [queue]="store.queue()"
+      [queueDisabled]="store.offline() || !!store.busy() || store.sending() || !!store.uncertain()"
       [placeholder]="
         workspaceUnavailable() ? 'Prepare the workspace to continue' : archived()
           ? 'Restore this session to send messages'
-          : store.running()
+          : !store.offline() && store.running()
             ? (store.state()?.canSteer === false ? 'Add a follow-up…' : 'Add a follow-up · Alt Enter to steer')
             : store.state()?.sessionMentions
               ? 'Message the agent, or @ to mention a session…'

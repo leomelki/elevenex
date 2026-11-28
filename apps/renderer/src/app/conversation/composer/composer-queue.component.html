@@ -1,6 +1,7 @@
 @if (items().length) {
   <section
-    aria-label="Queued messages"
+    [attr.aria-label]="waitingFor() ? 'Waiting to send' : 'Queued messages'"
+    [class.local-outbox]="!!waitingFor()"
     cdkDropList
     [cdkDropListData]="items()"
     [cdkDropListDisabled]="disabled() || !reorderable()"
@@ -62,8 +63,10 @@
                 ⠿
               </button>
             }
-            <span class="number">{{ index + 1 }}</span>
+            @if (waitingFor()) { <ex-icon name="clock" class="waiting-icon" [size]="13" /> }
+            @else { <span class="number">{{ index + 1 }}</span> }
             <span class="text" [title]="preview(item.text)">{{ preview(item.text) }}</span>
+            @if (waitingFor()) { <span class="waiting-label" role="status">{{ waitingLabel(item) }}</span> }
             <span class="actions"
               >@if (!waitingFor()) { <ex-icon-button
                 icon="steer"
@@ -80,13 +83,16 @@
                   (pressed)="beginEdit(item)"
                 />
               }
+              @if (!waitingFor() || item.removable !== false) {
               <ex-icon-button
                 icon="x"
                 label="Remove queued message"
                 size="sm"
                 [disabled]="disabled() || item.removable === false"
                 (pressed)="remove.emit(item.id)"
-            /></span>
+              />
+              }
+            </span>
           }
         </div>
       }

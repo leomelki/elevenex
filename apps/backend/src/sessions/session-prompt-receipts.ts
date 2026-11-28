@@ -14,12 +14,16 @@ export class SessionPromptReceipts {
     private readonly changed: (sessionId: number) => void,
   ) {}
 
-  read(key: string, fingerprint: string) {
-    const receipt = this.db
+  find(key: string) {
+    return this.db
       .select()
       .from(receipts)
       .where(eq(receipts.key, key))
       .get();
+  }
+
+  read(key: string, fingerprint: string) {
+    const receipt = this.find(key);
     if (receipt && receipt.fingerprint !== fingerprint)
       throw new ConflictException({
         code: 'session_request_conflict',
@@ -99,26 +103,48 @@ export class SessionPromptReceipts {
     );
   }
 
+  beginDispatch(id: string): void {
+    const row = this.db
+      .update(receipts)
+      .set({ delivery: 'dispatching' })
+      .where(and(eq(receipts.id, id), eq(receipts.delivery, 'preparing')))
+      .returning({ id: receipts.id })
+      .get();
+    if (!row) throw new ConflictException('The desktop send no longer owns its dispatch claim.');
+  }
+
   record(
     id: string,
     delivery: 'accepted' | 'failed',
     disposition?: AgentPromptDisposition,
-  ): void {
+  ): boolean {
     const row = this.db
       .update(receipts)
       .set({ delivery, ...(disposition ? { disposition } : {}) })
       .where(
         and(
           eq(receipts.id, id),
-          inArray(receipts.delivery, ['dispatching', 'unconfirmed']),
+          inArray(receipts.delivery, delivery === 'failed' ? ['preparing', 'dispatching', 'unconfirmed'] : ['dispatching', 'unconfirmed']),
         ),
       )
       .returning({ sessionId: receipts.sessionId })
       .get();
     if (row) this.changed(row.sessionId);
+    return !!row;
+  }
+
+  markUnconfirmed(id: string): boolean {
+    const row = this.db.update(receipts).set({ delivery: 'unconfirmed' })
+      .where(and(eq(receipts.id, id), eq(receipts.delivery, 'dispatching')))
+      .returning({ sessionId: receipts.sessionId }).get();
+    if (row) this.changed(row.sessionId);
+    return !!row;
   }
 
   recover(): void {
+    // The preparing value was introduced for desktop only. Its dispatch fence
+    // has not been crossed, so a restart can resolve it without guessing.
+    this.db.update(receipts).set({ delivery: 'failed' }).where(eq(receipts.delivery, 'preparing')).run();
     // Acceptance may have reached the provider before the process stopped. Never replay it.
     this.db
       .update(receipts)

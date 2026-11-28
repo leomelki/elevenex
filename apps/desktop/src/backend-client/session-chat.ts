@@ -22,7 +22,7 @@ import {
   requestId,
 } from "./session-chat-validation";
 import { BackendRequestError, requestBackendJson } from "./transport";
-import { SESSION_CHAT_FULL_TIMELINE_BYTES, SESSION_CHAT_TURN_WORK_BATCH_BYTES, SESSION_CHAT_TURN_WORK_LIMIT } from '@elevenex/shared';
+import { isSessionChatDeliveryId, SESSION_CHAT_FULL_TIMELINE_BYTES, SESSION_CHAT_TURN_WORK_BATCH_BYTES, SESSION_CHAT_TURN_WORK_LIMIT } from '@elevenex/shared';
 
 /** Transport stays on the existing per-window lease, including capability routing and cancellation. */
 export function registerSessionChatIpc(
@@ -255,6 +255,24 @@ export function registerSessionChatIpc(
       );
     },
   );
+  const delivery = handleForWindow('session-chat:delivery', trusted, (window, ...args) => {
+    if (args.length !== 2) throw new Error('Invalid conversation receipt arguments.');
+    const scopeId = scope(args[0]), raw = chatObject(args[1]);
+    const taskId = chatId(raw['taskId']), sessionId = chatId(raw['sessionId']), deliveryId = raw['deliveryId'];
+    if (!isSessionChatDeliveryId(deliveryId)) throw new Error('Invalid conversation delivery ID.');
+    const key = 'session-chat:' + requestId(raw['requestId']);
+    return client.execute(window, scopeId, `${key}:${taskId}:${sessionId}:delivery:${deliveryId}`, false, async (endpoint, signal) => {
+      const reply = chatObject(await requestBackendJson(endpoint, {
+        path: path(taskId, sessionId) + '/delivery/' + deliveryId,
+        limit: 1024,
+      }, signal));
+      const status = reply['status'];
+      if (reply['taskId'] !== taskId || reply['sessionId'] !== sessionId || reply['deliveryId'] !== deliveryId ||
+          (status !== null && status !== 'pending' && status !== 'accepted' && status !== 'failed' && status !== 'unconfirmed'))
+        throw new BackendRequestError({ code: 'invalid-response', message: 'The machine returned an invalid conversation receipt.' });
+      return { taskId, sessionId, deliveryId, status };
+    }, 3000);
+  });
   const command = handleForWindow(
     "session-chat:command",
     trusted,
@@ -264,7 +282,10 @@ export function registerSessionChatIpc(
         raw = chatObject(args[1]),
         taskId = chatId(raw["taskId"]),
         sessionId = chatId(raw["sessionId"]),
-        action = parseChatAction(raw["action"]);
+        action = parseChatAction(raw["action"]),
+        deliveryId = raw['deliveryId'];
+      if (deliveryId !== undefined && (action.type !== 'send' || !isSessionChatDeliveryId(deliveryId)))
+        throw new Error('Invalid conversation delivery ID.');
       return client.execute(
         window,
         scopeId,
@@ -277,7 +298,7 @@ export function registerSessionChatIpc(
               {
                 path: path(taskId, sessionId),
                 method: "POST",
-                body: action,
+                body: deliveryId === undefined ? action : { ...action, deliveryId },
                 limit: 4096,
               },
               signal,
@@ -452,6 +473,7 @@ export function registerSessionChatIpc(
     toolDetails();
     catalog();
     command();
+    delivery();
     cancel();
     promptEdit();
     content();

@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
-import type { BackendClientState, BackendResult, SessionChatCommandReply, SessionChatPage } from '@elevenex/shared';
+import type { BackendClientState, BackendResult, SessionChatCommand, SessionChatCommandReply, SessionChatDelivery, SessionChatDeliveryRead, SessionChatPage } from '@elevenex/shared';
 import { BackendClientService } from '../backend/backend-client.service';
 import { SessionChatClient } from '../backend/session-chat-client.service';
 import { SessionChatOutbox } from './session-chat-outbox';
@@ -13,7 +13,9 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 async function settle() { for (let index = 0; index < 40; index++) await Promise.resolve(); }
 function setup() {
   const state = signal<BackendClientState>({ revision: 1, scope: null });
-  const client = { read: vi.fn(async () => ok(page())), command: vi.fn(async (): Promise<BackendResult<SessionChatCommandReply>> => ok({ accepted: true })), cancel: vi.fn() };
+  const delivery = vi.fn<(scope: string, input: SessionChatDeliveryRead) => Promise<BackendResult<SessionChatDelivery>>>(async () =>
+    ({ ok: false, error: { code: 'http', status: 404, message: 'Older engine' } }));
+  const client = { delivery, read: vi.fn(async () => ok(page())), command: vi.fn<(scope: string, input: SessionChatCommand) => Promise<BackendResult<SessionChatCommandReply>>>(async () => ok({ accepted: true })), cancel: vi.fn() };
   TestBed.configureTestingModule({ providers: [SessionChatOutbox, { provide: BackendClientService, useValue: { state } }, { provide: SessionChatClient, useValue: client }] });
   const outbox = TestBed.inject(SessionChatOutbox);
   const connect = async (scope = 'new') => { state.set({ revision: state().revision + 1, scope: { id: scope, environment: { kind: 'local' } } }); outbox.connect(scope); TestBed.tick(); await settle(); };
@@ -41,15 +43,18 @@ describe('Local waiting chat actions', () => {
     outbox.enqueue(target, { type: 'send', text: 'remove me', queue: false }, 'remove me', null); TestBed.tick(); await settle();
     outbox.remove(outbox.items()[0]!.id); later.resolve(ok(page())); await settle(); expect(client.command).toHaveBeenCalledTimes(1);
   });
-  it('retains an unknown result and blocks following writing in that conversation without replay', async () => {
+  it('retains an unknown result and delivers independent waiting writing without replay', async () => {
     const { outbox, client, state, connect } = setup();
     const command = deferred<BackendResult<SessionChatCommandReply>>(); client.command.mockReturnValueOnce(command.promise);
     outbox.enqueue(target, { type: 'send', text: 'one', queue: false }, 'one', null);
     outbox.enqueue(target, { type: 'send', text: 'two', queue: false }, 'two', null);
     await connect(); state.set({ revision: 3, scope: null }); TestBed.tick();
     command.resolve({ ok: false, error: { code: 'stale-scope', message: 'Changed' } }); await settle();
-    await connect('third'); expect(client.command).toHaveBeenCalledTimes(1);
-    expect(outbox.items().map(item => item.status)).toEqual(['unknown', 'waiting']);
+    await connect('third');
+    expect(client.command.mock.calls.map(([, request]) => request.action)).toEqual([
+      expect.objectContaining({ text: 'one' }), expect.objectContaining({ text: 'two' }),
+    ]);
+    expect(outbox.items().map(item => item.status)).toEqual(['unknown']);
   });
   it('rejects expired approvals and stop requests for a different turn', async () => {
     const { outbox, client, connect } = setup();
@@ -97,4 +102,43 @@ it('respects a paused backend queue when delivering waiting writing after reconn
   client.read.mockResolvedValueOnce(ok({ ...page(), state: { ...previewChatState(), queuePaused: true } }));
   outbox.enqueue(target, { type: 'send', text: 'wait for resume', queue: false }, 'wait for resume', null); await connect();
   expect(client.command).toHaveBeenCalledExactlyOnceWith('new', expect.objectContaining({ action: expect.objectContaining({ text: 'wait for resume', queue: true }) }));
+});
+
+it('resolves a lost queued submission by its journal identity after reconnect without executing it again', async () => {
+  const { outbox, client, state, connect } = setup();
+  const command = deferred<BackendResult<SessionChatCommandReply>>();
+  client.command.mockReturnValueOnce(command.promise);
+  outbox.enqueue(target, { type: 'send', text: 'Same prompt', queue: false }, 'Same prompt', null);
+  await connect();
+  const deliveryId = outbox.items()[0]!.id.slice('waiting-'.length);
+  expect(client.command).toHaveBeenCalledWith('new', expect.objectContaining({ deliveryId }));
+  state.set({ revision: 3, scope: null }); TestBed.tick();
+  command.resolve({ ok: false, error: { code: 'stale-scope', message: 'Changed' } });
+  await settle();
+  client.delivery.mockImplementation(async (_scope, input) => ok({ ...input, status: 'accepted' }));
+  await connect('recovered');
+  expect(client.delivery).toHaveBeenCalledWith('recovered', expect.objectContaining({ deliveryId, sessionId: 2 }));
+  expect(outbox.items()).toEqual([]);
+  expect(client.command).toHaveBeenCalledTimes(1);
+});
+
+it('retries only a confirmed rejection and preserves the queued payload', async () => {
+  const { outbox, client, connect } = setup();
+  const action = { type: 'send' as const, text: 'Use the attachment', queue: false, sessionIds: [18] };
+  client.command.mockResolvedValueOnce({ ok: false, error: { code: 'outcome-unknown', message: 'Lost reply' } });
+  outbox.enqueue(target, action, action.text, null);
+  await connect();
+  const id = outbox.items()[0]!.id;
+  outbox.retryRejected(id);
+  TestBed.tick(); await settle();
+  expect(client.command).toHaveBeenCalledTimes(1);
+  client.delivery.mockImplementation(async (_scope, input) => ok({ ...input, status: 'failed' }));
+  await connect('recovered');
+  expect(outbox.items()[0]?.status).toBe('failed');
+  outbox.retryRejected(id);
+  TestBed.tick(); await settle();
+  const [first, second] = client.command.mock.calls.map(([, input]) => input);
+  expect(second?.deliveryId).not.toBe(first?.deliveryId);
+  expect(second?.action).toEqual(action);
+  expect(outbox.items()).toEqual([]);
 });

@@ -484,6 +484,34 @@ describe('ClaudeSessionRuntime', () => {
     await first;
     await runtime.close();
   });
+  it('fences a tracked Claude input at SDK consumption and confirms only the exact native UUID', async () => {
+    const { runtime, queries } = createRuntime();
+    const dispatch = jest.fn(), accepted = jest.fn();
+    const turn = runtime.submitTurn({
+      type: 'user', uuid: 'tracked', parent_tool_use_id: null,
+      message: { role: 'user', content: 'Identical text' },
+    }, accepted, dispatch);
+    try {
+      await flushAsync();
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(accepted).not.toHaveBeenCalled();
+      const prompt = (query as jest.Mock).mock.calls[0][0].prompt as AsyncIterable<unknown>;
+      await expect(prompt[Symbol.asyncIterator]().next()).resolves.toMatchObject({ value: { uuid: 'tracked' } });
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      queries[0].emit({ type: 'user', uuid: 'different', message: { role: 'user', content: 'Identical text' } });
+      await flushAsync();
+      expect(accepted).not.toHaveBeenCalled();
+      queries[0].emit({ type: 'user', uuid: 'tracked', message: { role: 'user', content: 'Identical text' } });
+      await flushAsync();
+      expect(accepted).toHaveBeenCalledTimes(1);
+      queries[0].emit({ type: 'result', user_message_uuid: 'tracked' });
+      await turn;
+      expect(accepted).toHaveBeenCalledTimes(1);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it('does not let an unrelated autonomous result complete a user submission', async () => {
     const { runtime, queries } = createRuntime();
     let finished = false;

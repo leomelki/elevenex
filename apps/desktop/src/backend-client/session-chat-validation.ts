@@ -1,3 +1,4 @@
+import { isSessionChatDeliveryId } from '@elevenex/shared';
 import { parseChangeSummary } from "./session-chat-changes";
 import { parseAgentContext, parseAgentEntry, parseAgentSender, parseDelegatedWork } from './session-agent-values';
 import {
@@ -640,6 +641,7 @@ export function parseChatState(value: unknown, sessionId?: number, taskId?: numb
     provider: chatText(raw["provider"]),
     ...(activePromptId === undefined ? {} : { activePromptId }),
     ...(raw["browserElements"] === undefined ? {} : { browserElements: bool(raw["browserElements"]) }),
+    ...(raw['settledDeliveryId'] === undefined ? {} : { settledDeliveryId: chatDeliveryId(raw['settledDeliveryId']) }),
     ...(raw['historyRewrite'] === undefined ? {} : { historyRewrite: chatText(raw['historyRewrite'], 64) }),
     ...(raw["unseenCompletionAt"] === undefined ? {} : {
       unseenCompletionAt: raw["unseenCompletionAt"] === null ? null : completionAt(raw["unseenCompletionAt"]),
@@ -844,6 +846,11 @@ export function parseChatPageWindow(
     }),
   };
 }
+function chatDeliveryId(value: unknown): string {
+  if (!isSessionChatDeliveryId(value)) throw invalid();
+  return value;
+}
+
 export function parseChatAction(value: unknown): SessionChatAction {
   const raw = chatObject(value),
     type = raw["type"];

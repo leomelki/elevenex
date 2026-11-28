@@ -1,5 +1,5 @@
 import { signal } from '@angular/core';
-import type { ElevenexBridge, EnvironmentSelection, SessionChatDraftTarget } from '@elevenex/shared';
+import type { ElevenexBridge, EnvironmentSelection, SessionChatDraftTarget, SessionChatRetainedSend } from '@elevenex/shared';
 import type { ConversationAttachment, ConversationMention } from '../conversation';
 
 export interface AttachmentDraft extends ConversationAttachment { readonly file: File }
@@ -18,6 +18,11 @@ function prepend(first: string, rest: string): string {
   return first && rest ? first + '\n\n' + rest : first || rest;
 }
 
+interface SubmissionContext {
+  readonly files?: readonly AttachmentDraft[];
+  readonly mentions?: readonly ConversationMention[];
+}
+
 /** One composer entry. Files and mention chips retain their window lifetime. */
 export class SessionDraft {
   private readonly value = signal('');
@@ -34,8 +39,13 @@ export class SessionDraft {
   private dirty = false;
   private discarded = false;
   private revision = 0;
-  private pendingText = '';
-  private checkDelivery = false;
+  private readonly submission = signal<{
+    readonly id: string; readonly text: string;
+    readonly checking: boolean;
+  } & SubmissionContext | null>(null);
+  readonly delivery = this.submission.asReadonly();
+  private readonly retainedSends = signal<readonly (SessionChatRetainedSend & SubmissionContext)[]>([]);
+  readonly retained = this.retainedSends.asReadonly();
 
   bind(binding: DraftBinding): void {
     this.binding = binding;
@@ -48,35 +58,67 @@ export class SessionDraft {
     this.changed();
   }
 
-  beginSend(text: string, original: string): boolean {
-    this.pendingText = original.trim() === text.trim() ? original : text;
-    // Reading the latest history can delay submission while typing continues.
+  beginSend(id: string, text: string, original: string): { consumed: boolean; saved?: Promise<boolean> } {
     const consumed = this.text() === original;
+    this.submission.set({
+      id, text: original.trim() === text.trim() ? original : text,
+      files: this.files(), mentions: this.mentions(), checking: false,
+    });
     if (consumed) this.value.set('');
-    if (this.pendingText) this.changed();
-    return consumed;
+    this.files.set([]);
+    this.mentions.set([]);
+    const saved = this.changed();
+    return { consumed, saved };
   }
 
-  finishSend(restore: boolean): void {
-    const pending = this.pendingText;
-    this.pendingText = '';
-    if (!pending) return;
-    if (restore) this.value.update(text => prepend(pending, text));
-    this.checkDelivery = restore && !!this.uncertain();
+  checkSend(id: string): void {
+    const send = this.submission();
+    if (send?.id === id && !send.checking) this.submission.set({ ...send, checking: true });
+  }
+
+  finishSend(id: string, restore: boolean): boolean {
+    const send = this.submission();
+    if (send?.id !== id) return false;
+    this.submission.set(null);
+    if (restore) this.restoreContent(send);
+    this.changed();
+    return true;
+  }
+
+  retainSend(id: string): void {
+    const send = this.submission();
+    if (send?.id !== id || !send.checking) return;
+    const { text, files, mentions } = send;
+    this.retainedSends.update(items => [...items, { id, text, files, mentions }]);
+    this.submission.set(null);
     this.changed();
   }
 
-  acknowledgeSend(): void {
-    this.uncertain.set('');
-    if (!this.checkDelivery) return;
-    this.checkDelivery = false;
+  reconcileRetained(id: string, rejected: boolean): void {
+    this.retainedSends.update(items => rejected
+      ? items.map(item => item.id === id ? { ...item, rejected: true as const } : item)
+      : items.filter(item => item.id !== id));
     this.changed();
+  }
+
+  removeRetained(id: string | null, restore = false): void {
+    const item = this.retained().find(item => item.id === id);
+    if (!item || (restore && !item.rejected)) return;
+    this.retainedSends.update(items => items.filter(item => item.id !== id));
+    if (restore) this.restoreContent(item);
+    this.changed();
+  }
+
+  private restoreContent({ text, files, mentions }: { readonly text: string } & SubmissionContext): void {
+    this.value.update(current => prepend(text, current));
+    if (files?.length) this.files.update(current => [...files, ...current]);
+    if (mentions?.length) this.mentions.update(current => [...mentions.filter(item => !current.some(mention => mention.id === item.id)), ...current]);
   }
 
   discard(): void {
     this.discarded = true;
-    this.pendingText = '';
-    this.checkDelivery = false;
+    this.submission.set(null);
+    this.retainedSends.set([]);
     this.value.set('');
     this.changed();
   }
@@ -117,9 +159,10 @@ export class SessionDraft {
     return !!this.binding && this.dirty;
   }
 
-  private changed(): void {
+  private changed(): Promise<boolean> | undefined {
     this.dirty = true;
-    if (this.binding?.identity) void this.save(this.binding);
+    if (!this.binding) return;
+    return this.binding.identity ? this.save(this.binding) : Promise.resolve(false);
   }
 
   private restore(binding: DraftBinding): Promise<void> {
@@ -134,11 +177,12 @@ export class SessionDraft {
         if (!this.discarded) {
           // Edits can start while the local read is pending. Keep both pieces
           // of writing if the editor already contains newer text.
-          if (draft.text && draft.text !== this.text()) this.value.update(text => prepend(draft.text, text));
-          if (draft.checkDelivery) {
-            this.checkDelivery = true;
-            this.uncertain.set('This message was in progress when the app closed. Check its delivery before sending again.');
-          }
+          const text = draft.checkDelivery ? '' : draft.text;
+          if (text && text !== this.text()) this.value.update(current => prepend(text, current));
+          const retained = draft.retained ?? [];
+          this.retainedSends.set(draft.checkDelivery ? [{ id: null, text: draft.text }]
+            : draft.pending ? [...retained, draft.pending] : retained);
+          if (draft.checkDelivery || draft.pending) this.dirty = true;
         }
         if (this.dirty) void this.save(binding);
       } catch {
@@ -151,25 +195,33 @@ export class SessionDraft {
     return this.reading;
   }
 
-  private async save(binding: DraftBinding): Promise<void> {
+  private async save(binding: DraftBinding): Promise<boolean> {
     const { identity, target, fromCreation } = binding;
-    if (!identity || !binding.current()) return;
+    if (!identity || !binding.current()) return false;
     const revision = ++this.revision;
-    const text = prepend(this.pendingText, this.text());
-    const checkDelivery = !!text && (!!this.pendingText || this.checkDelivery);
+    const text = this.text();
+    const submission = this.submission();
+    const retained = this.retained().map(({ id, text, rejected }) => ({ id, text, ...(rejected ? { rejected } : {}) }));
+    const draft = {
+      text,
+      ...(submission ? { pending: { id: submission.id, text: submission.text } } : {}),
+      ...(retained.length ? { retained } : {}),
+    };
     // Offer the move only once. A subsequent creation in the same task may
     // already have a new draft by the time this write is acknowledged.
     binding.fromCreation = undefined;
     try {
       await binding.bridge.sessionChatDraftSave(binding.environment, identity, {
-        target, draft: { text, ...(checkDelivery ? { checkDelivery: true } : {}) }, ...(fromCreation ? { fromCreation } : {}),
+        target, draft, ...(fromCreation ? { fromCreation } : {}),
       });
       if (binding.current() && revision === this.revision) {
         this.dirty = false;
         this.failure.set('');
       }
+      return binding.current();
     } catch {
       if (binding.current() && revision === this.revision) this.failure.set('Could not save the chat draft on this device.');
+      return false;
     }
   }
 }

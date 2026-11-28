@@ -442,7 +442,7 @@ test('server failures after a mutation retain an unknown outcome while read and 
   const client = new BackendClient(() => local('http://127.0.0.1:3000'), () => {});
   context.after(() => client.dispose()); client.attach(1);
   const scope = client.state(1).scope.id;
-  for (const status of [500, 502, 503]) {
+  for (const status of [408, 500, 502, 503, 504]) {
     const operation = async () => { throw new BackendRequestError({ code: 'http', status, message: 'Backend request failed.' }); };
     assert.equal((await client.execute(1, scope, null, true, operation)).error.code, 'outcome-unknown');
     assert.equal((await client.execute(1, scope, 'read', false, operation)).error.code, 'http');
@@ -1463,6 +1463,18 @@ test('completed activity and tool details validate opted-in, scoped and bounded 
   assert.deepEqual((await read(timelineRead)).value.timeline, [{ ...shortCall, label: fullLabel, meta: fullMeta }, null]);
   response = valid;
   assert.equal((await read(timelineRead)).value.items.length, 1, 'A legacy engine may return ordinary work rows');
+
+  const deliveryId = '12345678-1234-4234-8234-123456789abc';
+  const deliveryInput = { taskId: 5, sessionId: 9, deliveryId, requestId: 'delivery' };
+  const delivery = handlers.get('session-chat:delivery');
+  const readDelivery = (value = deliveryInput) => delivery({ senderFrame: frame, sender }, scope, value);
+  assert.throws(() => delivery({ senderFrame: {}, sender }, scope, deliveryInput), /Untrusted/);
+  assert.throws(() => readDelivery({ ...deliveryInput, deliveryId: '../other-session' }), /Invalid/);
+  response = { taskId: 5, sessionId: 9, deliveryId, status: 'accepted', private: 'discard' };
+  assert.deepEqual(JSON.parse(JSON.stringify((await readDelivery()).value)), { taskId: 5, sessionId: 9, deliveryId, status: 'accepted' });
+  assert.equal(requests.at(-1), `/api/desktop-workspace/tasks/5/sessions/9/chat/delivery/${deliveryId}`);
+  response = { ...response, sessionId: 10 };
+  assert.equal((await readDelivery()).error.code, 'invalid-response');
 
   const chatRead = value => handlers.get('session-chat:read')({ senderFrame: frame, sender }, scope, value);
   const recent = { taskId: 5, sessionId: 9, requestId: 'recent', loadingMode: 'progressive', summarizeCompleted: true, summarizeRecent: true };

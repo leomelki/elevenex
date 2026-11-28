@@ -71,8 +71,8 @@ export class AgentUsageNoticeComponent {
           ? `${reset ? reset + " " : ""}Choose another model to continue now.`
           : reset || "Reset time unavailable."
         : context >= 0.9
-          ? "The agent may lose track of early details."
-          : "Long conversations fill the agent’s context.",
+          ? "Start a new session for work that can use fresh context."
+          : "Use a new session for a new topic.",
     };
   });
   protected readonly notice = computed(() => {

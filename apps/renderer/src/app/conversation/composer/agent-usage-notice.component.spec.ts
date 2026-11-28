@@ -6,6 +6,17 @@ import { AgentUsageComponent } from "./agent-usage.component";
 
 afterEach(() => TestBed.resetTestingModule());
 describe("quota guidance", () => {
+  it("shows a compact moderate context notice and an actionable critical notice", () => {
+    const fixture = TestBed.createComponent(AgentUsageNoticeComponent);
+    const root = fixture.nativeElement as HTMLElement;
+    const agent = { mark: "Cx", harness: "codex", model: "gpt", context: 0.76 };
+    fixture.componentRef.setInput("agent", agent);
+    fixture.detectChanges();
+    expect(root.querySelector('.notice span')?.textContent?.trim()).toBe('Context 76% full. Use a new session for a new topic.');
+    fixture.componentRef.setInput("agent", { ...agent, context: 0.94 });
+    fixture.detectChanges();
+    expect(root.querySelector('.notice.danger span')?.textContent).toContain('Start a new session');
+  });
   it("dismisses low allowance, keeps higher urgency visible and clears when replenished", () => {
     const fixture = TestBed.createComponent(AgentUsageNoticeComponent);
     const root = fixture.nativeElement as HTMLElement;

@@ -105,6 +105,26 @@ describe('browser element attachments', () => {
     owner.open(selection); expect(owner.files()[0]?.element).toEqual(snapshot.reference);
     owner.remove(owner.files()[0]!.id); expect(owner.files()).toHaveLength(0);
   });
+  it('preserves both inline pins when an unresolved send rejoins newer writing', async () => {
+    const { owner, drafts } = setup();
+    const entry = drafts.entry(selection), delivery = crypto.randomUUID();
+    expect(owner.addElement(snapshot)).toBe(1);
+    await vi.waitFor(() => expect(owner.files()[0]?.status).toBe('ready'));
+    entry.setText('Inspect ❶');
+    entry.beginSend(delivery, 'Inspect ❶', 'Inspect ❶');
+    entry.checkSend(delivery);
+    entry.retainSend(delivery);
+    const next = { ...snapshot, reference: { ...snapshot.reference, id: '33333333-3333-4333-8333-333333333333' } };
+    expect(owner.addElement(next)).toBe(2);
+    entry.setText('Also inspect ❷');
+    entry.reconcileRetained(delivery, true);
+    entry.removeRetained(delivery, true);
+    expect(entry.text()).toBe('Inspect ❶\n\nAlso inspect ❷');
+    expect(owner.files().map(file => [file.marker, file.element?.id])).toEqual([
+      [1, snapshot.reference.id], [2, next.reference.id],
+    ]);
+    await vi.waitFor(() => expect(owner.files()[1]?.status).toBe('ready'));
+  });
   it('gives each element the lowest free pin, never reusing one still on the draft', () => {
     const { owner } = setup(input => Promise.resolve({ ok: true, value: { id: input.id, offset: input.size, path: '/stored/' + input.name } }));
     const ids = ['22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333'];

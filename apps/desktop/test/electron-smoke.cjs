@@ -52,6 +52,7 @@ const chatStreamMethods = ['sessionChatWatch', 'sessionChatUnwatch', 'sessionCha
 const chatStreamCursor = 'a'.repeat(36) + ':1:0';
 const chatPromptEdit = { taskId: 1, sessionId: 2, itemId: 'saved-prompt', text: 'Original text',
   revision: 'd'.repeat(64), laterPrompts: 1, keepsContext: false };
+const chatDelivery = { taskId: 1, sessionId: 2, deliveryId: '12345678-1234-4234-8234-123456789abc', status: 'accepted' };
 const editActions = [];
 const testAppRun = { runId: '50cbfe13-ccf4-4920-864b-b3a14cde5593', taskId: 1, name: 'Electron', startedAt: 12, mode: 'stream', status: 'requested', setupIssue: 'macos-screen-recording', pendingLaunch: { executable: 'pnpm', args: ['desktop:dev'] } };
 let approvedApps = 0;
@@ -246,6 +247,7 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
         '/api/desktop-workspace/tasks/1/sessions/2/chat/turn-work': searchParams.has('timeline') ? chatTimeline : chatWork,
         '/api/desktop-workspace/tasks/1/sessions/2/chat/tool-details': searchParams.has('turnId') ? savedChatTool : chatTool,
         '/api/desktop-workspace/tasks/1/sessions/2/chat/prompt-edit': chatPromptEdit,
+        ['/api/desktop-workspace/tasks/1/sessions/2/chat/delivery/' + chatDelivery.deliveryId]: chatDelivery,
       };
       assert.equal(request.method, 'GET');
       assert.ok(Object.hasOwn(responses, pathname), `Unexpected smoke endpoint: ${pathname}`);
@@ -328,7 +330,7 @@ void (async () => {
     backend: await window.elevenex.retryBackend(),
   }))()`);
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, ...terminalMethods, ...appMethods, ...chatStreamMethods, 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatTurnWork', 'sessionChatToolDetails', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatPromptEdit', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserConfigure', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'].sort());
+  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, ...terminalMethods, ...appMethods, ...chatStreamMethods, 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatTurnWork', 'sessionChatToolDetails', 'sessionChatDelivery', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatPromptEdit', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserConfigure', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'].sort());
   assert.equal(typeof bridge.version, 'string');
   assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
   assert.equal(bridge.invalidRejected, true);
@@ -400,6 +402,10 @@ void (async () => {
   assert.deepEqual(await window.webContents.executeJavaScript(
     `window.elevenex.sessionChatToolDetails(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(savedToolRequest)})`),
   { ok: true, value: savedChatTool });
+  const deliveryRead = { taskId, sessionId, deliveryId: chatDelivery.deliveryId, requestId: 'receipt' };
+  assert.deepEqual(await window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatDelivery(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(deliveryRead)})`),
+  { ok: true, value: chatDelivery });
   const editRead = { taskId, sessionId, itemId: chatPromptEdit.itemId, requestId: 'read-edit' };
   const editAction = { type: 'edit-prompt', itemId: chatPromptEdit.itemId, revision: chatPromptEdit.revision, text: 'Revised text' };
   assert.deepEqual(await window.webContents.executeJavaScript(

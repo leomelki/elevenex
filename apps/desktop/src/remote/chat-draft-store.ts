@@ -1,4 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
+import { isSessionChatDeliveryId, SESSION_CHAT_RETAINED_SEND_LIMIT } from '@elevenex/shared';
 import type { SessionChatDraftEdit, SessionChatDraftTarget, SessionChatDraftText } from '@elevenex/shared';
 import { AtomicJsonFile } from '../atomic-json-file';
 import { object } from './validation';
@@ -30,11 +31,36 @@ export function draftTarget(value: unknown): SessionChatDraftTarget {
 }
 
 function draftText(value: unknown): SessionChatDraftText {
-  const { text, checkDelivery } = object(value, ['text', 'checkDelivery']);
-  if (typeof text !== 'string' || text.length > 256_000 || (checkDelivery !== undefined && (checkDelivery !== true || !text))) {
+  const { text, checkDelivery, pending, retained } = object(value, ['text', 'checkDelivery', 'pending', 'retained']);
+  if (typeof text !== 'string' || text.length > 256_000 ||
+      (checkDelivery !== undefined && (checkDelivery !== true || !text || pending !== undefined || retained !== undefined))) {
     throw new Error('Invalid chat draft text or draft exceeds its size limit.');
   }
-  return { text, ...(checkDelivery === true ? { checkDelivery } : {}) };
+  const ids = new Set<string | null>();
+  const parsedPending = pending === undefined ? undefined : (() => {
+    const { id, text: submitted } = object(pending, ['id', 'text']);
+    if (!isSessionChatDeliveryId(id) || typeof submitted !== 'string' ||
+        submitted.length > 64_000 || text.length + submitted.length > 256_000)
+      throw new Error('Invalid pending conversation delivery.');
+    ids.add(id);
+    return { id, text: submitted };
+  })();
+  if (retained !== undefined && (!Array.isArray(retained) || retained.length + Number(!!parsedPending) > SESSION_CHAT_RETAINED_SEND_LIMIT))
+    throw new Error('Invalid retained conversation deliveries.');
+  const parsedRetained = Array.isArray(retained) ? retained.map(value => {
+    const { id, text: submitted, rejected } = object(value, ['id', 'text', 'rejected']);
+    if ((id !== null && !isSessionChatDeliveryId(id)) || ids.has(id) || typeof submitted !== 'string' ||
+        submitted.length > (id === null ? 256_000 : 64_000) ||
+        (rejected !== undefined && (rejected !== true || id === null)))
+      throw new Error('Invalid retained conversation delivery.');
+    ids.add(id);
+    return { id, text: submitted, ...(rejected === true ? { rejected: true as const } : {}) };
+  }) : [];
+  return {
+    text, ...(checkDelivery === true ? { checkDelivery } : {}),
+    ...(parsedPending ? { pending: parsedPending } : {}),
+    ...(parsedRetained.length ? { retained: parsedRetained } : {}),
+  };
 }
 
 export function draftEdit(value: unknown): SessionChatDraftEdit {
@@ -73,7 +99,7 @@ export class ChatDraftStore {
             typeof identity !== 'string' || !/^[a-f0-9]{64}$/.test(identity)) throw new Error('Invalid chat draft scope.');
         const saved: SavedDraft = { slot, identity, target: draftTarget(target), draft: draftText(draft) };
         const id = key(saved, saved.target), record = this.record(saved);
-        if (!record.draft.text || this.records.has(id)) throw new Error('Invalid saved chat draft.');
+        if ((!record.draft.text && !record.draft.pending && !record.draft.retained?.length) || this.records.has(id)) throw new Error('Invalid saved chat draft.');
         this.records.set(id, record);
         this.bytes += record.bytes;
       }
@@ -97,7 +123,7 @@ export class ChatDraftStore {
     const source = fromCreation ? key(scope, { taskId: target.taskId, sessionId: null }) : undefined;
     const previous = this.records.get(id);
     const moved = source ? this.records.get(source) : undefined;
-    const next = draft.text ? this.record({ ...scope, target, draft }) : undefined;
+    const next = draft.text || draft.pending || draft.retained?.length ? this.record({ ...scope, target, draft }) : undefined;
     const bytes = this.bytes - (previous?.bytes ?? 0) - (moved?.bytes ?? 0) + (next?.bytes ?? 0);
     const count = this.records.size - Number(!!previous) - Number(!!moved) + Number(!!next);
     if (bytes > maxBytes || count > maxDrafts) throw new Error('Chat drafts exceed their local storage limit.');

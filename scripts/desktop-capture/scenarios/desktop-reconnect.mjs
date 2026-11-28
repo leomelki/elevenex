@@ -91,7 +91,7 @@ export default async function* (capture) {
     await capture.component('ex-reconnect-demo', component => component.platform.ready());
     await capture.waitFor(() => !document.querySelector('.workspace-frame.ex-offline'));
     await capture.waitFor(() => !document.querySelector('.waiting-task'));
-    await capture.waitFor(() => !document.querySelector('ex-composer .waiting-line'));
+    await capture.waitFor(() => !document.querySelector('ex-composer .offline-chip, ex-composer .local-outbox'));
     const accepted = await capture.component('ex-reconnect-demo', component => ({ chat: component.platform.sentChatActions, tasks: component.platform.sentTaskCreates, git: component.platform.sentGitActions, sessions: component.platform.sentSessionCreates }));
     assert.equal(accepted.chat.length, 1); assert.equal(accepted.chat[0].action.text, 'Edited while disconnected.');
     assert.equal(accepted.sessions.filter(input => input.taskId === 11).length, 1);

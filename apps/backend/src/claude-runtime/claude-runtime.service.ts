@@ -2607,6 +2607,7 @@ export class ClaudeRuntimeService
         trimmedPrompt,
         validatedImages,
         options.human,
+        options.beforeDispatch,
       );
       options.onAccepted?.('queued');
       return;
@@ -2849,6 +2850,7 @@ export class ClaudeRuntimeService
               options.human,
             ),
             () => options.onAccepted?.('running'),
+            options.beforeDispatch,
           );
         }
       } catch (error) {
@@ -2928,6 +2930,7 @@ export class ClaudeRuntimeService
     prompt: string,
     images: ClaudeImageInput[],
     human = false,
+    beforeDispatch?: () => void,
   ): Promise<void> {
     const generation = this.sessionGenerations.get(sessionId);
     const existingSession = await this.sessionsService.findOne(sessionId);
@@ -2936,6 +2939,7 @@ export class ClaudeRuntimeService
         existingSession.status === 'archived')
       throw new ConflictException('This session was closed. Reopen its task before continuing.');
     const existingState = this.ensureSessionState(sessionId, existingSession);
+    beforeDispatch?.();
     existingState.pendingPrompts = [
       ...existingState.pendingPrompts,
       {

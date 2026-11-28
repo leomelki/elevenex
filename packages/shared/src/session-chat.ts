@@ -288,6 +288,8 @@ export interface SessionChatModelQuota {
 export interface SessionChatState {
   /** Changes after the engine replaces saved history in this conversation. */
   readonly historyRewrite?: string;
+  /** Wake hint for an exact receipt read. This field alone does not carry an outcome. */
+  readonly settledDeliveryId?: string;
   /** Durable transcript prompt ID for the current foreground turn, when known. */
   readonly activePromptId?: string;
   /** Present on engines supporting mark-seen; null means no unseen completion. */
@@ -600,6 +602,19 @@ export type SessionChatAction =
   | { readonly type: "permission-mode"; readonly mode: string };
 export interface SessionChatCommand extends SessionChatTarget {
   readonly action: SessionChatAction;
+  /** Stable identity for one send, across lost replies and reconnects. */
+  readonly deliveryId?: string;
+}
+export interface SessionChatDeliveryRead extends SessionChatTarget {
+  readonly deliveryId: string;
+  readonly requestId: string;
+}
+export interface SessionChatDelivery extends SessionChatTarget {
+  readonly deliveryId: string;
+  readonly status: 'pending' | 'accepted' | 'failed' | 'unconfirmed' | null;
+}
+export function isSessionChatDeliveryId(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 }
 export interface SessionChatContentRead extends SessionChatTarget {
   readonly requestId: string;

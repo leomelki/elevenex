@@ -1709,7 +1709,7 @@ export class CodexRuntimeService
   }
 
   private queuePromptIfBusy(
-    sessionId: number, prompt: string, images: AgentImageInput[],
+    sessionId: number, prompt: string, images: AgentImageInput[], beforeDispatch?: () => void,
   ): boolean {
     if (this.unconfirmedStops.has(sessionId)) {
       this.emitRunState(sessionId);
@@ -1719,6 +1719,7 @@ export class CodexRuntimeService
       this.activeRuns.has(sessionId) ||
       this.runtimeStates.get(sessionId)?.queuePaused
     ) {
+      beforeDispatch?.();
       const state = this.ensureRuntimeState(sessionId);
       state.pendingPrompts = [
         ...state.pendingPrompts,
@@ -1745,7 +1746,7 @@ export class CodexRuntimeService
     images?: AgentImageInput[],
     options: AgentPromptOptions = {},
   ): Promise<void> {
-    const { onAccepted } = options;
+    const { onAccepted, beforeDispatch } = options;
     const generation = this.sessionGenerations.get(sessionId) ?? 0;
     this.assertNotRewinding(sessionId);
     const trimmedPrompt = prompt.trim();
@@ -1773,7 +1774,7 @@ export class CodexRuntimeService
     }
     if (options?.requireSteering)
       throw new ConflictException('No active turn can accept live steering.');
-    if (this.queuePromptIfBusy(sessionId, trimmedPrompt, validatedImages)) {
+    if (this.queuePromptIfBusy(sessionId, trimmedPrompt, validatedImages, beforeDispatch)) {
       onAccepted?.('queued');
       return;
     }
@@ -1829,7 +1830,7 @@ export class CodexRuntimeService
     const resolvedWorktreePath = worktreePath;
     this.assertNotRewinding(sessionId);
     // A concurrent cold send can claim the turn while we load its session.
-    if (this.queuePromptIfBusy(sessionId, trimmedPrompt, validatedImages)) {
+    if (this.queuePromptIfBusy(sessionId, trimmedPrompt, validatedImages, beforeDispatch)) {
       onAccepted?.('queued');
       return;
     }
@@ -1899,7 +1900,7 @@ export class CodexRuntimeService
     const ownsSession = () => !this.invalidatedSessions.has(sessionId) &&
       generation === (this.sessionGenerations.get(sessionId) ?? 0) && this.runtimeStates.get(sessionId) === state;
 
-    onAccepted?.('running');
+    if (!beforeDispatch) onAccepted?.('running');
     let stagedImageDir: string | null = null;
     let changeCapture: TurnChangeCapture | undefined;
     let completed = false;
@@ -1924,6 +1925,8 @@ export class CodexRuntimeService
         turnInput,
         abortController.signal,
         changeCapture,
+        beforeDispatch,
+        beforeDispatch ? () => onAccepted?.('running') : undefined,
       )) {
         if (!ownsSession() || this.activeRuns.get(sessionId) !== activeRun) {
           break;
@@ -3898,6 +3901,8 @@ export class CodexRuntimeService
     >,
     signal: AbortSignal,
     changeCapture?: TurnChangeCapture,
+    beforeDispatch?: () => void,
+    accepted?: () => void,
   ): AsyncGenerator<CodexTurnEvent> {
     this.appServer.addRef();
     const queue: CodexTurnEvent[] = [];
@@ -4392,6 +4397,7 @@ export class CodexRuntimeService
       await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
       if (signal.aborted || activeRun?.interruptRequested) return;
       contextModel = state.selectedModel ?? this.codexDefaultModel ?? 'unknown';
+      beforeDispatch?.();
       turnStartSent = true;
       const turnStart = await this.appServer.request<CodexTurnStartResult>(
         'turn/start',
@@ -4411,7 +4417,8 @@ export class CodexRuntimeService
         },
       );
       const startedTurnId = turnStart.turn?.id;
-      if (typeof startedTurnId === 'string') {
+      if (typeof startedTurnId === 'string' && startedTurnId) {
+        accepted?.();
         turnIdFilter = startedTurnId;
         if (activeRun) {
           activeRun.turnId = startedTurnId;

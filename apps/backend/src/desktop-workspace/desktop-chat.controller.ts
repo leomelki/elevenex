@@ -20,6 +20,15 @@ import { resourceId } from './desktop-workspace.service.js';
 @Controller('desktop-workspace/tasks/:taskId/sessions/:sessionId/chat')
 export class DesktopChatController {
   constructor(private readonly chat: DesktopChatService, private readonly attachments: DesktopChatAttachments, private readonly sessions: SessionsService) {}
+  @Get('delivery/:deliveryId')
+  delivery(
+    @Param('taskId') task: string,
+    @Param('sessionId') session: string,
+    @Param('deliveryId') deliveryId: string,
+  ) {
+    return this.chat.delivery(resourceId(task), resourceId(session), deliveryId);
+  }
+
   @Get('events')
   events(
     @Param('taskId') task: string,

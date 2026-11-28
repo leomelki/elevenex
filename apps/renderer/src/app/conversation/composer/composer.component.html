@@ -7,15 +7,14 @@
 >
   <div class="input-height" exAutoHeight>
     <div class="contents">
-      @if (waitingFor() || waiting().length) {
-        <div class="waiting-line" role="status"><ex-icon name="server" [size]="13" /><span>@if (waitingSending()) { Sending waiting actions… } @else if (!waitingFor() && waiting().length) { Checking waiting writing… } @else { {{ waiting().length ? waiting().length + (waiting().length === 1 ? ' ' + waitingNoun() + ' waits' : ' ' + waitingNoun() + 's wait') : 'Writing waits' }} for {{ waitingFor() || 'the machine' }} · nothing sent yet }</span>@if (waitingFor()) { <button exButton size="sm" variant="ghost" (click)="reconnectRequested.emit()">{{ waitingAction() }}</button> }</div>
+      @if (waiting().length) {
         <ex-composer-queue [items]="waiting()" (editingChanged)="waitingEditing.emit($event)" [waitingFor]="waitingFor() || 'the machine'" [reorderable]="false" (remove)="waitingRemoved.emit($event)" (edited)="waitingEdited.emit($event)" />
       }
       <ex-composer-queue
         [items]="queue()"
         [editable]="queueEditable()"
         [reorderable]="queueReorderable()"
-        [disabled]="disabled() || sending()"
+        [disabled]="disabled() || (queueDisabled() ?? sending())"
         (steer)="queueSteer.emit($event)"
         (remove)="queueRemove.emit($event)"
         (edited)="queueEdited.emit($event)"
@@ -43,7 +42,7 @@
       @if (richMode()) {
         <ex-element-editor [value]="draft()" [files]="elementFiles()" [disabled]="disabled()" [sending]="sending()"
           [pickAvailable]="elementPickAvailable()" [initialSelection]="initialEditorSelection" [autofocus]="editorAutofocus"
-          [placeholder]="waitingFor() ? 'Write now, it sends when ' + waitingFor() + ' is back…' : placeholder()"
+          [placeholder]="placeholder()"
           [controls]="mentions()?.listId() || null" [activeOption]="mentions()?.activeOptionId() || null"
           (changed)="updateRich($event)" (keyed)="onKey($event)" (removed)="removeElementById($event)"
           (retry)="attachmentRetry.emit($event)" (repick)="elementRepick.emit($event)" (mention)="insertElement($event)" />
@@ -75,7 +74,7 @@
         [attr.aria-activedescendant]="mentions()?.activeOptionId() || null"
         rows="2"
         [disabled]="disabled()"
-        [placeholder]="waitingFor() ? 'Write now, it sends when ' + waitingFor() + ' is back…' : placeholder()"
+        [placeholder]="placeholder()"
         [value]="draft()"
         (input)="update($event)"
         (keydown)="onKey($event)"
@@ -102,7 +101,7 @@
       }
     </div>
   </div>
-  <div class="bar">
+  <div class="bar" [class.offline-bar]="!!waitingFor()" [class.compact-offline-settings]="!!waitingFor() && settingsDisabled()">
     @if (showSettings() && modeAvailable()) {
       <ex-mode-toggle
         [value]="mode()"
@@ -165,6 +164,16 @@
       </ex-presence>
     }
     <span class="grow"></span>
+    @if (waitingFor(); as machine) {
+      <div class="offline-chip" [title]="machine + ' is offline'">
+        <ex-icon name="server" [size]="14" />
+        <span role="status">
+          <span class="offline-machine">{{ machine }} is offline</span>
+          <span class="offline-short" aria-hidden="true">Offline</span>
+        </span>
+        <button exButton variant="ghost" class="offline-reconnect" (click)="reconnectRequested.emit()">{{ waitingAction() }}</button>
+      </div>
+    }
     @if (attachmentsEnabled()) {
       <input #fileInput type="file" multiple hidden (change)="filesChosen($event)" />
       <ex-icon-button icon="attach" label="Attach files (⌘U)" [disabled]="disabled() || sending()" (pressed)="chooseFiles()" />
@@ -199,18 +208,20 @@
       variant="primary"
       #sendButton
       class="send"
+      [class.queue-send]="!!waitingFor()"
       type="button"
-      [disabled]="disabled() || sending() || !canSend() || !!recording()"
+      [disabled]="disabled() || sending() || submissionDisabled() || !canSend() || !!recording()"
       [attr.aria-busy]="sending()"
       [attr.aria-label]="
-        running()
+        waitingFor() ? 'Queue message (Enter)' : running() && steeringEnabled()
           ? 'Queue message (Enter), or Alt Enter to steer'
-          : 'Send message (Enter)'
+          : running() ? 'Queue message (Enter)' : 'Send message (Enter)'
       "
-      [title]="running() ? steeringEnabled() ? 'Queue · ↵, Steer · ⌥↵' : 'Queue · ↵' : 'Send · ↵'"
+      [title]="waitingFor() ? 'Queue · ↵' : running() ? steeringEnabled() ? 'Queue · ↵, Steer · ⌥↵' : 'Queue · ↵' : 'Send · ↵'"
       (click)="send()"
     >
-      <ex-icon [name]="running() ? 'layers' : 'arrow-up'" [size]="16" />
+      @if (waitingFor()) { <ex-icon name="clock" [size]="14" /> Queue }
+      @else { <ex-icon [name]="running() ? 'layers' : 'arrow-up'" [size]="16" /> }
     </button>
   </div>
 </div>

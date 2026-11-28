@@ -213,6 +213,7 @@ export class BackendClient {
           mutation &&
           (!(error instanceof BackendRequestError) ||
             error.detail.code !== 'http' ||
+            error.detail.status === 408 ||
             (error.detail.status ?? 500) >= 500)
         )
           return {

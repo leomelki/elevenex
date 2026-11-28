@@ -58,6 +58,24 @@ describe("Composer public interactions", () => {
     expect(sent[1]?.sendOrigin).toBeUndefined();
     expect(sent[2]?.sendOrigin).toBeUndefined();
   });
+  it("keeps the ordinary editor offline and explicitly queues through the keyboard", () => {
+    fixture.componentRef.setInput("waitingFor", "dev-box");
+    fixture.componentRef.setInput("placeholder", "Message the agent…");
+    fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    const send = root.querySelector<HTMLButtonElement>("button.send")!;
+    const statuses = root.querySelectorAll(".offline-chip [role=status]");
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]?.textContent).toContain("dev-box is offline");
+    expect(root.querySelector(".offline-chip button")?.textContent?.trim()).toBe("Reconnect");
+    expect(send.disabled).toBe(true);
+    const textarea = type("Send when connected");
+    expect(textarea.placeholder).toBe("Message the agent…");
+    expect(send.textContent?.trim()).toBe("Queue");
+    expect(send.disabled).toBe(false);
+    press(textarea, { altKey: true });
+    expect(sent).toEqual([expect.objectContaining({ intent: "queue", text: "Send when connected" })]);
+  });
   it("allows ready attachments without text and blocks unfinished uploads", () => {
     fixture.componentRef.setInput('attachmentsEnabled', true);
     fixture.componentRef.setInput('attachments', [{ id: 'file', path: '/file', name: 'clip.webm', kind: 'video', status: 'uploading' }]);

@@ -138,8 +138,8 @@ action accepts up to eight distinct positive `sessionIds`. Main validates and
 preserves only those IDs; the backend resolves them through the existing
 conversation exporter before submitting, with bounded inline snapshots and no
 renderer-supplied transcript/path. Snapshots remain in durable prompt history;
-ordinary desktop message/queue projections hide the context blocks so pending
-receipts still match the original text. No new transport, unrestricted read or
+ordinary desktop message/queue projections hide the context blocks to keep the
+rendered message readable. No new transport, unrestricted read or
 automatic retry is introduced; omitted IDs preserve existing callers.
 User transcript items may also contain bounded `mentions` (session ID/title
 only) derived from saved prompt headers. Main validates these optional fields;
@@ -616,8 +616,34 @@ identity rejects stale saves after SSH destination changes. It writes a private
 retain their unchanged settings format. A durable sending claim precedes
 dispatch; relaunch restores such claims as unknown. No renderer storage or
 credential persistence is introduced.
-Dispatched prompts and mutations never replay on connection recovery. Unknown
-prompt outcomes use a read-only durable-receipt check plus explicit inspection.
+Dispatched prompts and mutations never replay on connection recovery. Desktop
+chat sends carry an optional delivery UUID. The backend reserves it with an
+input fingerprint in the existing prompt receipt ledger, scoped to the session
+and namespaced away from agent requests. Tracked providers cross an atomic
+dispatch fence at their handoff boundary. Restart converts an interrupted
+preparation into a definite failure and keeps crossed fences without a
+receipt unresolved. The new preparation value uses the existing SQLite text
+column. Legacy commands with no delivery UUID keep their prior behavior.
+Codex records acceptance from its matching native turn-start response.
+Claude fences SDK input consumption and matches a native user replay or result
+to the exact message UUID. Antigravity and OpenCode can wait through the native
+result. Pi uses its runtime's prompt acknowledgement. Queue acknowledgement denotes
+acceptance into the engine's volatile queue. It is not durable queue execution
+across an engine restart.
+
+`sessionChatDelivery` is a named, cancellable read scoped to the current
+window, task, session and delivery UUID. The backend checks session membership
+and reads one indexed row. A live feed can hint at a settled ID, including after
+foreground polling ends. The client verifies the outcome with an indexed read.
+A live pending receipt stays distinct from an unresolved outcome. Older engines
+can accept the original send contract and return 404 on the receipt route.
+A missing row can also follow a restored or replaced ledger. Neither missing
+records nor transcript text establish that another dispatch would be safe.
+A remote handoff can take effect before the engine commits acceptance.
+The current providers do not share a durable, restart-queryable idempotency
+contract for that interval. Only an exact receipt settles it automatically.
+Direct drafts and outbox entries retain the submitted identity separately
+from later writing. Unknown requests stay outside the dispatchable queue.
 New backend `taskRequests: true` capability adds `workspaceTaskRequest(scope,
 {repoId, requestId})`, mapped to GET `desktop-workspace/task-requests`. Main checks
 the trusted sender, current scope, bounded request ID, repository ID and response

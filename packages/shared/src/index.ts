@@ -12,10 +12,11 @@ import type { TaskTerminalAttachment, TaskTerminalAttach, TaskTerminalStreamWrit
 export type * from './task-terminal';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
-import type { SessionChatAgentRead, SessionChatAgentPage, SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent, SessionChatPromptEditRead, SessionChatPromptEdit } from './session-chat';
+import type { SessionChatAgentRead, SessionChatAgentPage, SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatDelivery, SessionChatDeliveryRead, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent, SessionChatPromptEditRead, SessionChatPromptEdit } from './session-chat';
 import type { SessionChatTurnWorkReply, SessionChatTurnWorkRead, SessionChatToolDetailsReply, SessionChatToolDetailsRead } from './session-chat';
 import type { SessionChatStreamEvent, SessionChatWatch } from './session-chat';
 export type * from './session-chat';
+export { isSessionChatDeliveryId } from './session-chat';
 export { sessionChatToolCategory, sessionChatToolStatus, SESSION_CHAT_TOOL_CATEGORIES, SESSION_CHAT_TURN_FILES_LIMIT, SESSION_CHAT_TURN_REPLY_LIMIT, SESSION_CHAT_TURN_WORK_LIMIT, SESSION_CHAT_TURN_WORK_MAX_LIMIT, SESSION_CHAT_TURN_WORK_BATCH_BYTES } from './session-chat';
 export { SESSION_CHAT_TURN_TIMELINE_BYTES, SESSION_CHAT_TURN_TIMELINE_SLOTS, SESSION_CHAT_TOOL_LABEL_LIMIT, SESSION_CHAT_TOOL_META_LIMIT } from './session-chat';
 export { SESSION_CHAT_FULL_TIMELINE_BYTES, SESSION_CHAT_FULL_TIMELINE_SLOTS } from './session-chat';
@@ -26,6 +27,7 @@ export type { SessionChatPromptEdit, SessionChatPromptEditRead } from './session
 export { sessionChatToolHeading } from './session-chat-tool-heading';
 import type { SessionChatDraftEdit, SessionChatDraftSnapshot, SessionChatDraftTarget } from './session-chat-draft';
 export type * from './session-chat-draft';
+export { SESSION_CHAT_RETAINED_SEND_LIMIT } from './session-chat-draft';
 import type { ChatAttachmentUpload, ChatAttachmentReceipt } from './chat-attachments';
 export type * from './chat-attachments';
 import type { WorkspaceCommitPreview, WorkspaceCommitQuery } from './workspace-commit';
@@ -128,6 +130,7 @@ export interface InvokeContracts {
   'session-chat:acknowledge': { args: [scopeId: string, watchId: string, delivery: number]; result: void };
   'session-chat:turn-work': { args: [scopeId: string, input: SessionChatTurnWorkRead]; result: BackendResult<SessionChatTurnWorkReply> };
   'session-chat:tool-details': { args: [scopeId: string, input: SessionChatToolDetailsRead]; result: BackendResult<SessionChatToolDetailsReply> };
+  'session-chat:delivery': { args: [scopeId: string, input: SessionChatDeliveryRead]; result: BackendResult<SessionChatDelivery> };
   'session-chat:command': { args: [scopeId: string, input: SessionChatCommand]; result: BackendResult<SessionChatCommandReply> };
   'session-chat:cancel': { args: [scopeId: string, requestId: string]; result: void };
   'session-chat:media': { args: [scopeId: string, input: SessionChatMediaRead]; result: BackendResult<SessionChatMedia> };
@@ -320,6 +323,7 @@ export interface ElevenexBridge {
   onSessionChatStream(listener: (event: SessionChatStreamEvent) => void): () => void;
   sessionChatTurnWork(scopeId: string, input: SessionChatTurnWorkRead): Promise<BackendResult<SessionChatTurnWorkReply>>;
   sessionChatToolDetails(scopeId: string, input: SessionChatToolDetailsRead): Promise<BackendResult<SessionChatToolDetailsReply>>;
+  sessionChatDelivery(scopeId: string, input: SessionChatDeliveryRead): Promise<BackendResult<SessionChatDelivery>>;
   sessionChatCommand(scopeId: string, input: SessionChatCommand): Promise<BackendResult<SessionChatCommandReply>>;
   sessionChatCancel(scopeId: string, requestId: string): Promise<void>;
   sessionChatMedia(scopeId: string, input: SessionChatMediaRead): Promise<BackendResult<SessionChatMedia>>;

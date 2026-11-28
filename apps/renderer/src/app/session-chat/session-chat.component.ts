@@ -161,7 +161,7 @@ export class SessionChatComponent {
   readonly workspaceUnavailable = input(false);
   readonly active = input(true);
   readonly machineName = input('the machine');
-  readonly reconnectAction = input('Try now');
+  readonly reconnectAction = input('Reconnect');
   readonly outageSince = input<number | null>(null);
   readonly reconnectRequested = output<void>();
   readonly mentionItems = input<readonly ConversationMention[]>([]);
@@ -258,7 +258,7 @@ export class SessionChatComponent {
     },
   );
   readonly message = computed(
-    () => this.store.error() || this.store.uncertain() || this.store.streamError() || this.store.state()?.error || "",
+    () => this.store.error() || this.store.streamError() || this.store.state()?.error || "",
   );
   protected readonly opening = computed(() => !!this.selection() && this.active() && this.store.loading() &&
     !this.store.state() && !this.store.starting() && !this.store.offline() && !this.message());
@@ -288,6 +288,7 @@ export class SessionChatComponent {
     () =>
       (this.store.offline() && !this.store.outbox) ||
       !!this.store.busy() ||
+      this.store.sending() ||
       !!this.store.uncertain() ||
       this.archived() ||
       this.workspaceUnavailable() ||
@@ -296,7 +297,7 @@ export class SessionChatComponent {
   readonly activityDisabledReason = computed(() => this.workspaceUnavailable() ? 'Prepare the workspace to continue.' : this.archived() ? 'This session is archived. Activity is read only.'
     : this.store.offline() ? 'Reconnect to control this work.'
     : this.store.uncertain() ? 'Check the previous action’s outcome before another action.'
-    : this.store.busy() ? 'An action is in progress.' : '');
+    : this.store.busy() || this.store.sending() ? 'An action is in progress.' : '');
   private readonly modelLimits = computed(
     () => sessionModelLimits(this.store.state()?.modelQuota, this.usageTime()),
     { equal: equalViewData },

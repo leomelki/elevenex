@@ -65,11 +65,13 @@ export class SessionChatAttachments {
    * The same snapshot added twice keeps its pin and upload.
    */
   addElement(snapshot: BrowserElementSnapshot): number | null {
-    if (!this.entry() || !this.selection) { this.error.set('Open an active conversation before adding the snapshot.'); return null; }
+    const entry = this.entry();
+    if (!entry || !this.selection) { this.error.set('Open an active conversation before adding the snapshot.'); return null; }
     if (!snapshot.jpeg) { this.error.set(snapshot.error || 'Snapshot unavailable. Point at the element again.'); return null; }
     const existing = this.files().find(file => file.element?.id === snapshot.reference.id);
     if (existing?.marker) return existing.marker;
-    const used = new Set(this.files().map(file => file.marker));
+    // A rejected send can rejoin this draft with its original inline pins.
+    const used = new Set([...this.files(), ...(entry.delivery()?.files ?? []), ...entry.retained().flatMap(item => item.files ?? [])].map(file => file.marker));
     const marker = Array.from({ length: MAX_BROWSER_ELEMENTS }, (_, index) => index + 1).find(n => !used.has(n));
     if (!marker) { this.error.set(`Point at up to ${MAX_BROWSER_ELEMENTS} elements in one message.`); return null; }
     const bytes = Uint8Array.from(atob(snapshot.jpeg), char => char.charCodeAt(0));

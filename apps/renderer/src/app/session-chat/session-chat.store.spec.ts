@@ -93,6 +93,8 @@ function setup(options: { initial?: Promise<BackendResult<SessionChatPage>>; pro
     sessionChatRead: vi.fn(async (_scope, input) => ok(page(input.sessionId))),
     sessionChatTurnWork: vi.fn<ElevenexBridge['sessionChatTurnWork']>(async () =>
       ({ ok: false, error: { code: 'transport', message: 'No activity fixture.' } })),
+    sessionChatDelivery: vi.fn<ElevenexBridge['sessionChatDelivery']>(async () =>
+      ({ ok: false, error: { code: 'http', status: 404, message: 'Older engine' } })),
     sessionChatCommand: vi.fn<NonNullable<ElevenexBridge["sessionChatCommand"]>>(async () => ok({ accepted: true as const })),
     sessionChatCancel: vi.fn(async () => undefined),
     sessionChatWatch: vi.fn<ElevenexBridge['sessionChatWatch']>(async () => ok({ accepted: true })),
@@ -104,7 +106,7 @@ function setup(options: { initial?: Promise<BackendResult<SessionChatPage>>; pro
     }),
   } satisfies Pick<
     ElevenexBridge,
-    "sessionChatRead" | "sessionChatTurnWork" | "sessionChatCommand" | "sessionChatCancel" |
+    "sessionChatRead" | "sessionChatTurnWork" | "sessionChatDelivery" | "sessionChatCommand" | "sessionChatCancel" |
     "sessionChatWatch" | "sessionChatUnwatch" | "sessionChatAcknowledge" | "onSessionChatStream"
   >;
   if (options.initial) bridge.sessionChatRead.mockImplementationOnce(() => options.initial!);
@@ -138,7 +140,7 @@ function localDraftBridge() {
     sessionChatDraftSave: vi.fn<DraftBridge['sessionChatDraftSave']>(async (_environment, _identity, edit) => {
       if (edit.fromCreation) records.delete(key(edit.target.taskId, null));
       const target = key(edit.target.taskId, edit.target.sessionId);
-      if (edit.draft.text) records.set(target, edit.draft);
+      if (edit.draft.text || edit.draft.pending || edit.draft.retained?.length) records.set(target, edit.draft);
       else records.delete(target);
     }),
   };
@@ -359,28 +361,31 @@ describe("session chat ownership", () => {
     expect(store.draft()).toBe('');
     store.setDraft('Next idea');
     const saved = async () => (await localDrafts.sessionChatDraftRead({ kind: 'local' }, { taskId: 1, sessionId: 2 })).draft;
-    expect(await saved()).toEqual({ text: 'Ready to send\n\nNext idea', checkDelivery: true });
+    expect(await saved()).toEqual({ text: 'Next idea', pending: { id: expect.any(String), text: 'Ready to send' } });
     command.resolve(ok({ accepted: true as const }));
     await sending;
     expect(await saved()).toEqual({ text: 'Next idea' });
     expect(store.draft()).toBe('Next idea');
   });
 
-  it('restores an interrupted send as text requiring a delivery check', async () => {
+  it('keeps a pre-receipt interrupted send separate from a usable draft after relaunch', async () => {
     const localDrafts = localDraftBridge();
+    const target = { taskId: 1, sessionId: 2 };
     await localDrafts.sessionChatDraftSave({ kind: 'local' }, 'test-machine', {
-      target: { taskId: 1, sessionId: 2 }, draft: { text: 'Review delivery', checkDelivery: true },
+      target, draft: { text: 'An earlier message', checkDelivery: true },
     });
     const { store, bridge } = setup({ localDrafts, scopeId: 'relaunched' });
-    await settle();
-    expect(store.draft()).toBe('Review delivery');
-    expect(store.uncertain()).toContain('Check its delivery');
+    await settle(); TestBed.tick();
+    expect(store.draft()).toBe('');
+    expect(store.retained()).toEqual([{ id: null, text: 'An earlier message' }]);
+    expect(store.submissionBlocked()).toBe(false);
+    store.setDraft('A new message');
     await store.submit({ text: store.draft(), intent: 'send', context: [] });
-    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
-    await store.refresh();
-    store.acknowledgeUncertain();
+    expect(bridge.sessionChatCommand).toHaveBeenCalledExactlyOnceWith('relaunched', expect.objectContaining({
+      action: { type: 'send', text: 'A new message', queue: false },
+    }));
     expect(localDrafts.sessionChatDraftSave).toHaveBeenLastCalledWith({ kind: 'local' }, 'test-machine', {
-      target: { taskId: 1, sessionId: 2 }, draft: { text: 'Review delivery' },
+      target, draft: { text: '', retained: [{ id: null, text: 'An earlier message' }] },
     });
   });
 
@@ -632,9 +637,9 @@ describe("session chat ownership", () => {
     bridge.sessionChatRead.mockResolvedValueOnce({ ok: false, error: { code: 'http', status: 404, message: 'Missing chat' } });
     await vi.advanceTimersByTimeAsync(80);
     expect(store.error()).toContain('Chat is unavailable');
-    bridge.sessionChatCommand.mockResolvedValueOnce({ ok: false, error: { code: 'http', status: 503, message: 'Backend request failed.' } });
+    bridge.sessionChatCommand.mockResolvedValueOnce({ ok: false, error: { code: 'http', status: 400, message: 'The message was rejected.' } });
     await store.submit({ text: 'Rejected prompt', intent: 'send', context: [] });
-    expect(store.error()).toBe('Backend request failed.');
+    expect(store.sendError()).toBe('The message was rejected.');
     expect(store.draft()).toBe('Rejected prompt');
   });
 
@@ -798,13 +803,13 @@ describe("session chat ownership", () => {
     expect(action.text.startsWith('Align ❶\n\n<elevenex_browser_elements_v1>')).toBe(true);
     expect(action.text).toContain('"marker":"❶"');
     expect(parseBrowserElements(action.text).elements[0]).toMatchObject({ marker: 1, attachment: 'element.jpg', imageIndex: 1, reference: { id: reference.id } });
-    expect(entry.files()[0]?.element?.id).toBe(reference.id);
-    expect(store.uncertain()).toBe('Check delivery');
+    expect(entry.delivery()?.files?.[0]?.element?.id).toBe(reference.id);
+    expect(store.delivery()?.checking).toBe(true);
     const writes = bridge.sessionChatCommand.mock.calls.length;
     store.open({ scopeId: 'scope', taskId: 1, sessionId: 3 }, false); await settle();
     expect(drafts.entry({ scopeId: 'scope', taskId: 1, sessionId: 3 }).files()).toHaveLength(0);
     store.open({ scopeId: 'scope', taskId: 1, sessionId: 2 }, false); await settle();
-    expect(store.uncertain()).toBeTruthy(); expect(entry.files()[0]?.element).toEqual(reference);
+    expect(store.delivery()?.checking).toBe(true); expect(entry.delivery()?.files?.[0]?.element).toEqual(reference);
     expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(writes);
   });
 
@@ -884,13 +889,83 @@ describe("session chat ownership", () => {
     bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, queue
       ? { state: { ...state, queue: [{ id: "queued", text: "Do the work" }] } }
       : { items: [item("delivered", "user", "Do the work")] })));
+    bridge.sessionChatDelivery.mockImplementation(async (_scope, input) => ok({ ...input, status: 'accepted' }));
     await store.refresh();
+    TestBed.tick(); await settle();
     write.resolve({ ok: false, error: { code: "outcome-unknown", message: "Check delivery" } });
     await sending;
-    expect(store.uncertain()).toBe("");
+    expect(store.delivery()).toBeNull();
     expect(store.error()).toBe("");
     expect(store.busy()).toBe("");
     expect(store.draft()).toBe("Next thought");
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])('checks the exact request after a lost reply and keeps a newer draft (queue=%s)', async queue => {
+    const { store, bridge } = setup(); await settle();
+    const repeated = item('old-prompt', 'user', 'Repeat this');
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [repeated] })));
+    await store.refresh();
+    const receipt = deferred<Awaited<ReturnType<ElevenexBridge['sessionChatDelivery']>>>();
+    bridge.sessionChatDelivery.mockReturnValueOnce(receipt.promise);
+    bridge.sessionChatCommand.mockResolvedValueOnce({ ok: false, error: { code: 'timeout', message: 'Timed out' } });
+    await store.submit({ text: 'Repeat this', intent: queue ? 'queue' : 'send', context: [] });
+    store.setDraft('Next message');
+    TestBed.tick(); await settle();
+    const command = bridge.sessionChatCommand.mock.lastCall![1];
+    expect(bridge.sessionChatDelivery).toHaveBeenCalledWith('scope', expect.objectContaining({
+      taskId: 1, sessionId: 2, deliveryId: command.deliveryId,
+    }));
+    expect(store.delivery()?.checking).toBe(true);
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [
+      repeated, item('new-prompt', 'user', 'Repeat this.'), item('reply', 'assistant', 'Done'),
+    ] })));
+    await store.refresh();
+    expect(store.delivery()).not.toBeNull();
+    receipt.resolve(ok({ taskId: 1, sessionId: 2, deliveryId: command.deliveryId ?? '', status: 'accepted' }));
+    await settle();
+    expect(store.delivery()).toBeNull();
+    expect(store.draft()).toBe('Next message');
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it('checks an interrupted send on reopen and restores only a definitively rejected submission', async () => {
+    const localDrafts = localDraftBridge();
+    const deliveryId = crypto.randomUUID();
+    await localDrafts.sessionChatDraftSave({ kind: 'local' }, 'test-machine', {
+      target: { taskId: 1, sessionId: 2 }, draft: { text: 'New writing', pending: { id: deliveryId, text: 'Original message' } },
+    });
+    const { store, bridge } = setup({ localDrafts, scopeId: 'relaunched' });
+    bridge.sessionChatDelivery.mockImplementation(async (_scope, input) => ok({ ...input, status: 'failed' }));
+    await settle(); TestBed.tick(); await settle();
+    expect(bridge.sessionChatDelivery).toHaveBeenCalledWith('relaunched', expect.objectContaining({ deliveryId }));
+    expect(store.delivery()).toBeNull();
+    expect(store.draft()).toBe('New writing');
+    expect(store.retained()).toEqual([{ id: deliveryId, text: 'Original message', rejected: true }]);
+    store.removeRetained(deliveryId, true);
+    expect(store.draft()).toBe('Original message\n\nNew writing');
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
+
+  it('rechecks a lost send only against the recovered scope and discards the old read', async () => {
+    const { store, bridge, scope } = setup(); await settle();
+    const earlier = deferred<Awaited<ReturnType<ElevenexBridge['sessionChatDelivery']>>>();
+    bridge.sessionChatDelivery.mockReturnValueOnce(earlier.promise);
+    bridge.sessionChatCommand.mockResolvedValueOnce({ ok: false, error: { code: 'outcome-unknown', message: 'Lost reply' } });
+    await store.submit({ text: 'Sent once', intent: 'send', context: [] });
+    TestBed.tick(); await settle();
+    const input = bridge.sessionChatDelivery.mock.lastCall![1];
+    scope.set({ revision: 2, scope: null }); TestBed.tick();
+    expect(bridge.sessionChatCancel).toHaveBeenCalledWith('scope', input.requestId);
+    earlier.resolve(ok({ ...input, status: 'failed' }));
+    const next = { taskId: 1, sessionId: 2, scopeId: 'recovered' };
+    TestBed.inject(SessionChatDrafts).rebind('scope', next.scopeId);
+    scope.set({ revision: 3, scope: { id: next.scopeId, environment: { kind: 'local' } } });
+    bridge.sessionChatDelivery.mockImplementation(async (_scope, input) => ok({ ...input, status: 'accepted' }));
+    store.open(next, false); TestBed.tick(); await settle();
+    expect(bridge.sessionChatDelivery).toHaveBeenLastCalledWith(next.scopeId, expect.objectContaining({ deliveryId: input.deliveryId }));
+    expect(store.delivery()).toBeNull();
+    expect(store.draft()).toBe('');
     expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
   });
 
@@ -907,33 +982,74 @@ describe("session chat ownership", () => {
     await store.refresh();
     write.resolve({ ok: false, error: { code: "outcome-unknown", message: "Check delivery" } });
     await sending;
-    expect(store.uncertain()).toBe("Check delivery");
-    expect(store.draft()).toBe("Do the work");
+    expect(store.delivery()?.checking).toBe(true);
+    expect(store.draft()).toBe("");
     expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
   });
 
-  it("blocks uncertain sends across navigation and never replays them on read recovery", async () => {
-    const { store, bridge } = setup();
-    await settle();
-    bridge.sessionChatCommand.mockResolvedValueOnce({
-      ok: false,
-      error: { code: "outcome-unknown", message: "Check delivery" },
-    });
-    await store.submit({ text: "Do the work", intent: "send", context: [] });
-    expect(store.uncertain()).toBe("Check delivery");
-    expect(store.draft()).toBe("Do the work");
-    store.open({ scopeId: "scope", taskId: 1, sessionId: 3 }, false);
-    await settle();
-    store.open({ scopeId: "scope", taskId: 1, sessionId: 2 }, false);
-    await settle();
-    expect(store.draft()).toBe("Do the work");
-    expect(store.uncertain()).toBeTruthy();
-    await store.refresh();
-    await store.submit({ text: "Do the work", intent: "send", context: [] });
-    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
-    store.acknowledgeUncertain();
-    expect(store.uncertain()).toBe("");
+  it('releases the composer after bounded checks and reconciles a late receipt without replaying', async () => {
+    const { store, bridge } = setup(); await settle();
+    let accepted = false;
+    bridge.sessionChatDelivery.mockImplementation(async (_scope, input) => ok({ ...input, status: accepted ? 'accepted' : null }));
+    bridge.sessionChatCommand.mockResolvedValueOnce({ ok: false, error: { code: 'outcome-unknown', message: 'Lost reply' } });
+    await store.submit({ text: 'Earlier message', intent: 'send', context: [] });
+    const deliveryId = bridge.sessionChatCommand.mock.lastCall?.[1].deliveryId;
+    store.setDraft('New writing');
+    TestBed.tick(); await settle();
+    expect(store.submissionBlocked()).toBe(true);
+    await vi.advanceTimersByTimeAsync(6000);
+    TestBed.tick(); await settle();
+    expect(store.retained()).toEqual([expect.objectContaining({ id: deliveryId, text: 'Earlier message' })]);
+    expect(store.submissionBlocked()).toBe(false);
+    store.removeRetained(deliveryId ?? null, true);
+    expect(store.draft()).toBe('New writing');
+    await store.submit({ text: store.draft(), intent: 'send', context: [] });
+    expect(bridge.sessionChatCommand.mock.calls.map(([, input]) => input.action))
+      .toEqual([expect.objectContaining({ text: 'Earlier message' }), expect.objectContaining({ text: 'New writing' })]);
+    accepted = true;
+    await vi.advanceTimersByTimeAsync(12000);
+    expect(store.retained()).toEqual([]);
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(2);
   });
+
+  it('keeps a positively pending receipt out of the uncertainty UI after the foreground window', async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatDelivery.mockImplementation(async (_scope, input) => ok({ ...input, status: 'pending' }));
+    bridge.sessionChatCommand.mockResolvedValueOnce({ ok: false, error: { code: 'outcome-unknown', message: 'Lost reply' } });
+    await store.submit({ text: 'Still in handoff', intent: 'send', context: [] });
+    const deliveryId = bridge.sessionChatCommand.mock.lastCall?.[1].deliveryId;
+    TestBed.tick(); await settle();
+    await vi.advanceTimersByTimeAsync(6000); TestBed.tick(); await settle();
+    expect(store.retained()).toHaveLength(1);
+    expect(store.visibleRetained()).toHaveLength(0);
+    expect(store.submissionBlocked()).toBe(false);
+    bridge.sessionChatDelivery.mockImplementation(async (_scope, input) => ok({ ...input, status: 'unconfirmed' }));
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { state: { ...state, settledDeliveryId: deliveryId } })));
+    await store.refresh(); await settle();
+    expect(store.visibleRetained()).toHaveLength(1);
+    expect(store.submissionBlocked()).toBe(false);
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it('wakes a parked message only for its exact settled ID and verifies the outcome by reading the ledger', async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatCommand.mockResolvedValueOnce({ ok: false, error: { code: 'outcome-unknown', message: 'Lost reply' } });
+    await store.submit({ text: 'Park this send', intent: 'send', context: [] });
+    TestBed.tick(); await settle(); TestBed.tick(); await settle();
+    const deliveryId = bridge.sessionChatCommand.mock.lastCall?.[1].deliveryId;
+    expect(store.retained()).toHaveLength(1);
+    const reads = bridge.sessionChatDelivery.mock.calls.length;
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { state: { ...state, settledDeliveryId: crypto.randomUUID() } })));
+    await store.refresh();
+    expect(bridge.sessionChatDelivery).toHaveBeenCalledTimes(reads);
+    bridge.sessionChatDelivery.mockImplementationOnce(async (_scope, input) => ok({ ...input, status: 'accepted' }));
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { state: { ...state, settledDeliveryId: deliveryId } })));
+    await store.refresh(); await settle();
+    expect(bridge.sessionChatDelivery).toHaveBeenCalledTimes(reads + 1);
+    expect(store.retained()).toEqual([]);
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects old backend scopes before dispatching a mutation", async () => {
     const { store, bridge, scope } = setup();
     await settle();
@@ -952,6 +1068,7 @@ describe("session chat ownership", () => {
     expect(bridge.sessionChatCommand).toHaveBeenLastCalledWith("scope", {
       taskId: 1,
       sessionId: 2,
+      deliveryId: expect.any(String),
       action: { type: "send", text: "Wait for me", queue: true },
     });
     await store.submit({
@@ -962,6 +1079,7 @@ describe("session chat ownership", () => {
     expect(bridge.sessionChatCommand).toHaveBeenLastCalledWith("scope", {
       taskId: 1,
       sessionId: 2,
+      deliveryId: expect.any(String),
       action: { type: "send", text: "Change direction", queue: false },
     });
     bridge.sessionChatRead.mockResolvedValueOnce(

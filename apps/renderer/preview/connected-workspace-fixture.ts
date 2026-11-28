@@ -20,6 +20,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   sessionChatCatalog = (_scope: string, input: import('@elevenex/shared').SessionChatCatalogRead) => this.chat.catalog(input);
   sessionChatChanges = (_scope: string, input: import('@elevenex/shared').SessionChatChangesRead) => this.chat.changes(input);
   sessionChatAgent = (_scope: string, input: import('@elevenex/shared').SessionChatAgentRead) => this.chat.agent(input);
+  sessionChatDelivery = (_scope: string, input: import('@elevenex/shared').SessionChatDeliveryRead) => this.chat.delivery(input);
   sessionChatRead = (_scope: string, input: import('@elevenex/shared').SessionChatRead) => this.chat.read(input);
   sessionChatTurnWork = (_scope: string, input: import('@elevenex/shared').SessionChatTurnWorkRead) => this.chat.turnWork(input);
   sessionChatToolDetails = (_scope: string, input: import('@elevenex/shared').SessionChatToolDetailsRead) => this.chat.toolDetails(input);

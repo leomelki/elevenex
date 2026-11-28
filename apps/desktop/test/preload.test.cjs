@@ -9,7 +9,7 @@ const remote = require('./remote-contract.cjs');
 const machines = require('./machine-contract.cjs');
 const workspace = require('./workspace-contract.cjs');
 const chatMethods = ['taskBrowserConfigure', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'];
-chatMethods.push('sessionChatTurnWork', 'sessionChatToolDetails', 'sessionChatPromptEdit');
+chatMethods.push('sessionChatTurnWork', 'sessionChatToolDetails', 'sessionChatDelivery', 'sessionChatPromptEdit');
 chatMethods.push('sessionChatWatch', 'sessionChatUnwatch', 'sessionChatAcknowledge', 'onSessionChatStream');
 
 test('preload exposes only the typed bridge and strips event objects', async () => {
@@ -69,9 +69,11 @@ test('preload exposes only the typed bridge and strips event objects', async () 
   await bridge.sessionChatRead('scope', target);
   await bridge.sessionChatMedia('scope', { ...target, itemId: 'item', mediaId: '0' });
   await bridge.sessionChatContent('scope', { ...target, itemId: 'item', part: 'text', offset: 0 });
+  const delivery = { ...target, deliveryId: '12345678-1234-4234-8234-123456789abc' };
+  await bridge.sessionChatDelivery('scope', delivery);
   await bridge.sessionChatCommand('scope', { taskId: 1, sessionId: 2, action: { type: 'stop' } });
   await bridge.sessionChatCancel('scope', 'read');
-  assert.deepEqual(calls, [['session-chat:changes', 'scope', { ...target, turnId: 'reply', offset: 0 }], ['session-chat:catalog', 'scope', { ...target, provider: 'claude' }], ['session-chat:read', 'scope', target], ['session-chat:media', 'scope', { ...target, itemId: 'item', mediaId: '0' }], ['session-chat:content', 'scope', { ...target, itemId: 'item', part: 'text', offset: 0 }], ['session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'stop' } }], ['session-chat:cancel', 'scope', 'read']]);
+  assert.deepEqual(calls, [['session-chat:changes', 'scope', { ...target, turnId: 'reply', offset: 0 }], ['session-chat:catalog', 'scope', { ...target, provider: 'claude' }], ['session-chat:read', 'scope', target], ['session-chat:media', 'scope', { ...target, itemId: 'item', mediaId: '0' }], ['session-chat:content', 'scope', { ...target, itemId: 'item', part: 'text', offset: 0 }], ['session-chat:delivery', 'scope', delivery], ['session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'stop' } }], ['session-chat:cancel', 'scope', 'read']]);
   calls.length = 0;
   const work = { ...target, turnId: 'prompt', revision: 'a'.repeat(64), offset: 0 };
   const details = { ...target, item: { id: 'call', revision: 'b'.repeat(64) } };

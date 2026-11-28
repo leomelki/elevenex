@@ -138,3 +138,19 @@ textarea {
     transition: none;
   }
 }
+
+.local-outbox {
+  padding: 0 var(--space-2);
+}
+.local-outbox .item {
+  gap: var(--space-2);
+}
+.waiting-icon,
+.waiting-label {
+  flex: none;
+  color: var(--ink-muted);
+}
+.waiting-label {
+  font-size: var(--text-caption-size);
+}
+.local-outbox .actions:empty { display: none; }
