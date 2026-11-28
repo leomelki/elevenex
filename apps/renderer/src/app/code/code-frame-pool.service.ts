@@ -32,7 +32,7 @@ export class CodeFramePool {
       // this document and preserve the live frame, workers and unsaved buffers.
       container.append(ref.location.nativeElement); ref.changeDetectorRef.detectChanges();
       this.frames.set(url, ref);
-    } else {
+    } else if (ref.location.nativeElement.parentElement !== container) {
       container.moveBefore(ref.location.nativeElement, null);
     }
     const host: HTMLElement = ref.location.nativeElement;

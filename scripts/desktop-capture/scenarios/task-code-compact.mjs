@@ -76,6 +76,8 @@ export default async function* (capture) {
     assert.equal(await capture.evaluate(() => !!document.querySelector('ex-code-panel .launch-card')), false);
     assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel')?.getAttribute('aria-busy')), 'true');
     yield {name:'iframe-loading-without-fallback',inspect:['ex-code-panel','.editor-surface','iframe']};
+    const composer = 'ex-composer textarea';
+    await capture.fill(composer, 'Writing while Code loads');
     holdBootstrap = false; resumeBootstrap();
     const waitMain = async (predicate, message) => { const deadline = Date.now() + 45000; while (!await predicate()) { if (Date.now() > deadline) throw new Error(message); await new Promise(resolve => setTimeout(resolve, 40)); } };
     await waitMain(() => capture.evaluate(() => !!document.querySelector('ex-workspace-panels .browse-files')), 'Compact editor did not open');
@@ -84,6 +86,13 @@ export default async function* (capture) {
     assert.ok(frame); assert.equal(capture.window.contentView.children.length, 0);
     await waitMain(()=>frame.executeJavaScript('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16'),'Empty compact workbench did not show its tree');
     await capture.waitFor(() => !document.querySelector('ex-code-panel .frame-container.loading') && document.querySelector('ex-code-panel')?.getAttribute('aria-busy') === 'false');
+    await capture.press('End');
+    await capture.cdp('Input.insertText', { text: ' and after it loads' });
+    assert.equal(await capture.evaluate((selector) => {
+      const input = document.querySelector(selector);
+      return document.activeElement === input && input.value === 'Writing while Code loads and after it loads';
+    }, composer), true, 'Startup or passive Files layout took focus from the composer');
+    yield { name: 'composer-retains-focus-after-code-startup', inspect: [composer, 'ex-code-panel iframe'] };
     for (const theme of ['light','dark']) {
       await capture.theme(theme);
       yield {name:`${theme}-empty-editor-files`,inspect:['ex-code-panel','ex-workspace-panels .browse-files','iframe']};
@@ -126,12 +135,23 @@ export default async function* (capture) {
     await waitNative('innerWidth === 432 && document.querySelector(".part.sidebar").getBoundingClientRect().width === 0');
     const editor = await frame.executeJavaScript('document.querySelector(".monaco-editor .view-lines").getBoundingClientRect().toJSON()');
     const iframe = await capture.rect('ex-code-panel iframe');
+    const chrome = await capture.rect('ex-workspace-panels .panel-head');
+    const chromePoint = { x: chrome.x + 2, y: chrome.y + chrome.height / 2 };
+    await capture.cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...chromePoint, button: 'left', buttons: 1, clickCount: 1 });
+    for (const fraction of [0.25, 0.5, 0.75, 1]) {
+      await capture.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: chromePoint.x + fraction * 50, y: chromePoint.y + fraction * 100, button: 'left', buttons: 1 });
+    }
+    await capture.cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: chromePoint.x + 50, y: chromePoint.y + 100, button: 'left', clickCount: 1 });
+    assert.equal(await capture.evaluate(() => window.getSelection()?.isCollapsed), true, 'Dragging from Code chrome selected host content');
+    yield { name: 'code-chrome-drag-without-host-selection', inspect: ['ex-workspace-panels .panel-head', 'ex-code-panel iframe'] };
     const editorPoint = { x: iframe.x + editor.x + 12, y: iframe.y + editor.y + 8 };
     await capture.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...editorPoint });
     for (const type of ['mousePressed', 'mouseReleased']) {
       await capture.cdp('Input.dispatchMouseEvent', { type, ...editorPoint, button: 'left', clickCount: 1 });
     }
     await waitNative('document.activeElement === document.querySelector(".monaco-editor textarea.inputarea")');
+    await press('ArrowRight', 'ArrowRight', 39, 8);
+    await waitNative('!!document.querySelector(".monaco-editor .selected-text")');
     const findSelector = '.part.auxiliarybar .action-label[aria-label^="Find file"]';
     const findHitPoint = async () => {
       const button = await frame.executeJavaScript(`(() => {
@@ -249,10 +269,12 @@ export default async function* (capture) {
       await waitNative('document.activeElement === document.querySelector(".monaco-editor textarea.inputarea")');
       await capture.cdp('Input.insertText', { text: '// compact panel save verification\n' });
       await waitNative('document.querySelector(".monaco-editor")?.textContent.includes("verification")');
+      await frame.executeJavaScript('window.codeResizeDocument = document');
       await capture.click('ex-workspace-panels [aria-label="Expand side panel"]'); await finish();
       await waitNative('(document.querySelector(".part.sidebar")?.getBoundingClientRect().width ?? 0) > 0');
       await waitNative('!document.body.classList.contains("elevenex-compact-files")');
       assert.equal(capture.window.webContents.mainFrame.frames.find(child => child.url === frame.url), frame);
+      assert.equal(await frame.executeJavaScript('window.codeResizeDocument === document'), true);
       await capture.click('ex-workspace-panels [role="tab"][aria-label="Browser"]'); await finish();
       await capture.click('ex-workspace-panels [role="tab"][aria-label="Code"]'); await finish();
       assert.equal(capture.window.webContents.mainFrame.frames.find(child => child.url === frame.url), frame);
@@ -271,6 +293,8 @@ export default async function* (capture) {
       }
       await capture.click('ex-workspace-panels [aria-label="Return to chat"]'); await finish();
       await waitNative('(document.querySelector(".part.sidebar")?.getBoundingClientRect().width ?? 0) === 0');
+      assert.equal(capture.window.webContents.mainFrame.frames.find(child => child.url === frame.url), frame);
+      assert.equal(await frame.executeJavaScript('window.codeResizeDocument === document'), true);
       assert.equal(await frame.executeJavaScript('document.querySelector(".monaco-editor")?.textContent.includes("verification")'), true);
       assert.equal(await capture.evaluate(() => !!document.querySelector('ex-workspace-panels .save-file')), false);
       await waitMain(async () => (await readFile(path, 'utf8')) === original + '// compact panel save verification\n', 'Auto-save did not reach the actual task');

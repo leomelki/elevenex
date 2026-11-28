@@ -25,6 +25,8 @@ export interface CodeOpenFile {
   readonly path: string;
   /** Resolve a Markdown file link on the task's machine. Omitted paths are task-relative. */
   readonly fromChat?: true;
+  /** Open the literal live file named in Changes, with no Markdown parsing. */
+  readonly fromChanges?: true;
   readonly line?: number;
   readonly column?: number;
 }

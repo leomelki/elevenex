@@ -35,8 +35,32 @@ function localPath(workspace: CodeWorkspace, text: string): string {
   return resolve(workspace.root, text);
 }
 
-export async function resolveCodeLink(workspace: CodeWorkspace, value: unknown) {
+export async function resolveCodeLink(workspace: CodeWorkspace, value: unknown, mode: 'markdown' | 'literal-file' = 'markdown') {
   const link = codeText(value);
+  const target = async (text: string, line?: number, column?: number) => {
+    const actual = await physicalPath(localPath(workspace, text));
+    const info = await lstat(actual);
+    if (mode === 'literal-file' && !info.isFile()) throw new NotFoundException('Changed file does not exist.');
+    if (!info.isDirectory() && !info.isFile()) throw new BadRequestException('Only regular files and folders are supported.');
+    const type = info.isDirectory() ? 2 : 1;
+    const child = relative(workspace.root, actual);
+    const position = { type, line: line ?? 1, column: column ?? 1 };
+    if (!isAbsolute(child) && child !== '..' && !child.startsWith('..' + sep))
+      return { ...position, kind: 'workspace', path: virtualPath(child) };
+    if (!basename(actual)) throw new BadRequestException('Link to a specific file or folder.');
+    return { ...position, kind: 'external', path: actual, name: basename(actual), fingerprint: fingerprint(info) };
+  };
+
+  if (mode === 'literal-file') {
+    // An external relative path can depend on the agent's working directory.
+    // Changes carries the recorded path, so resolve only explicit absolute
+    // paths and worktree-relative paths that stay under the worktree.
+    const absolute = isAbsolute(link) && (process.platform !== 'win32' || /^[a-z]:[\\/]/i.test(link));
+    if ((!absolute && /^[\\/]/.test(link)) || link.split(/[\\/]/).includes('..'))
+      throw new BadRequestException('The changed file needs an unambiguous path.');
+    return target(link);
+  }
+
   let path: string;
   let fragment = '';
   try {
@@ -49,19 +73,6 @@ export async function resolveCodeLink(workspace: CodeWorkspace, value: unknown) 
       path = decodeURIComponent(link);
     }
   } catch { throw new BadRequestException('Invalid file link.'); }
-
-  const target = async (text: string, line?: number, column?: number) => {
-    const actual = await physicalPath(localPath(workspace, text));
-    const info = await lstat(actual);
-    if (!info.isDirectory() && !info.isFile()) throw new BadRequestException('Only regular files and folders are supported.');
-    const type = info.isDirectory() ? 2 : 1;
-    const child = relative(workspace.root, actual);
-    const position = { type, line: line ?? 1, column: column ?? 1 };
-    if (!isAbsolute(child) && child !== '..' && !child.startsWith('..' + sep))
-      return { ...position, kind: 'workspace', path: virtualPath(child) };
-    if (!basename(actual)) throw new BadRequestException('Link to a specific file or folder.');
-    return { ...position, kind: 'external', path: actual, name: basename(actual), fingerprint: fingerprint(info) };
-  };
 
   const location = /^(.*?)(?::(\d+)(?::(\d+))?|#L(\d+)(?:C(\d+))?(?:-L\d+(?:C\d+)?)?)$/.exec(path + fragment);
   if (!fragment) {

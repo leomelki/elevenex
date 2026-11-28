@@ -30,7 +30,7 @@ export class CodeWorkspaceController {
   async describe(@Param('taskId', ParseIntPipe) taskId: number, @Query('taskIncarnation') expectedStorage?: string) {
     if (expectedStorage !== undefined && !/^[a-f0-9]{64}$/.test(expectedStorage)) throw new BadRequestException('Invalid task identity.');
     const { identity, storageIdentity, name, branch } = await this.authorization.workspace(taskId, undefined, true, expectedStorage);
-    return { version: 1, taskId, identity, storageIdentity, name, branch, fileLinks: true };
+    return { version: 1, taskId, identity, storageIdentity, name, branch, fileLinks: true, literalFileLinks: true };
   }
   @Post(':taskId/:operation')
   async operation(@Param('taskId', ParseIntPipe) taskId: number, @Param('operation') operation: string, @Body() body: unknown, @Req() request: Request, @Res({ passthrough: true }) response: Response): Promise<unknown> {
@@ -53,6 +53,7 @@ export class CodeWorkspaceController {
           case 'upload-commit': return await this.transfers.commit(workspace, input, async () => { cancellation.signal.throwIfAborted(); await this.authorization.assertCurrent(workspace); }, cancellation.signal);
           case 'upload-abort': return await this.transfers.abort(workspace, input);
           case 'link-resolve': return await resolveCodeLink(workspace, input.path);
+          case 'link-resolve-file': return await resolveCodeLink(workspace, input.path, 'literal-file');
           case 'link-stat': case 'link-read': case 'link-directory':
             return await readCodeLink(operation, input, cancellation.signal);
           case 'stat': return await codeStat(workspace, input.path);

@@ -33,23 +33,29 @@ export function action(value: unknown): CodeAction {
   if (value !== 'browse-files' && value !== 'dismiss-files' && value !== 'find-file' && value !== 'search-text' && value !== 'save') throw new Error('Invalid editor action');
   return value;
 }
+export function isTaskRelativeFile(path: string): boolean {
+  return !/^(?:[\\/]|[a-z]:)/i.test(path) &&
+    !path.split(/[\\/]/).some(part => !part || part === '..' || part === '.' || part.toLowerCase() === '.git');
+}
 export function file(value: unknown): CodeOpenFile {
   const raw = object(value), path = string(raw['path']);
-  const fromChat = raw['fromChat'];
-  if (Object.keys(raw).some(k => !['path', 'line', 'column', 'fromChat'].includes(k)) || !path ||
-      fromChat !== undefined && (fromChat !== true || raw['line'] !== undefined || raw['column'] !== undefined) ||
-      (fromChat ? Array.from(path).some(character => character.charCodeAt(0) < 32) : path.startsWith('/') || path.split('/').some(p => p === '..' || p === '.' || p.toLowerCase() === '.git') || /(?:^|[\\/])\.\.?(?:[\\/]|$)/.test(path)))
+  const fromChat = raw['fromChat'], fromChanges = raw['fromChanges'];
+  const linked = fromChat === true || fromChanges === true;
+  if (Object.keys(raw).some(k => !['path', 'line', 'column', 'fromChat', 'fromChanges'].includes(k)) || !path ||
+      fromChat !== undefined && fromChat !== true || fromChanges !== undefined && fromChanges !== true ||
+      fromChat && fromChanges || linked && (raw['line'] !== undefined || raw['column'] !== undefined) ||
+      (linked ? Array.from(path).some(character => character.charCodeAt(0) < 32) : path.startsWith('/') || path.split('/').some(p => p === '..' || p === '.' || p.toLowerCase() === '.git') || /(?:^|[\\/])\.\.?(?:[\\/]|$)/.test(path)))
     throw new Error('Invalid Code path');
-  const result: CodeOpenFile = { path, ...(fromChat ? { fromChat: true } : {}), ...(raw['line'] === undefined ? {} : { line: number(raw['line'], 10_000_000) }), ...(raw['column'] === undefined ? {} : { column: number(raw['column'], 10_000_000) }) };
+  const result: CodeOpenFile = { path, ...(fromChat ? { fromChat: true } : {}), ...(fromChanges ? { fromChanges: true } : {}), ...(raw['line'] === undefined ? {} : { line: number(raw['line'], 10_000_000) }), ...(raw['column'] === undefined ? {} : { column: number(raw['column'], 10_000_000) }) };
   if (result.line !== undefined && (!Number.isInteger(result.line) || result.line < 1) || result.column !== undefined && (!Number.isInteger(result.column) || result.column < 1)) throw new Error('Invalid file position');
   return result;
 }
-export interface WorkspaceDescriptor { readonly version: 1; readonly taskId: number; readonly identity: string; readonly storageIdentity: string; readonly name: string; readonly branch: string; readonly fileLinks?: boolean }
+export interface WorkspaceDescriptor { readonly version: 1; readonly taskId: number; readonly identity: string; readonly storageIdentity: string; readonly name: string; readonly branch: string; readonly fileLinks?: boolean; readonly literalFileLinks?: boolean }
 export function descriptor(value: unknown, taskId: number): WorkspaceDescriptor {
   const raw = object(value), identity = string(raw['identity'], 64);
   if (raw['version'] !== 1 || raw['taskId'] !== taskId || !/^[a-f0-9]{64}$/.test(identity)) throw invalidResponse();
   const storageIdentity = raw['storageIdentity'] === undefined ? identity : revision(raw['storageIdentity']);
-  return { version: 1, taskId, identity, storageIdentity, name: string(raw['name'], 256), branch: string(raw['branch'], 256), ...(raw['fileLinks'] === true ? { fileLinks: true } : {}) };
+  return { version: 1, taskId, identity, storageIdentity, name: string(raw['name'], 256), branch: string(raw['branch'], 256), ...(raw['fileLinks'] === true ? { fileLinks: true } : {}), ...(raw['literalFileLinks'] === true ? { literalFileLinks: true } : {}) };
 }
 const list = (value: unknown, max: number): unknown[] => { if (!Array.isArray(value) || value.length > max) throw invalidResponse(); return value; };
 const bool = (value: unknown): boolean => { if (typeof value !== 'boolean') throw invalidResponse(); return value; };

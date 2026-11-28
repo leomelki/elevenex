@@ -33,19 +33,29 @@ async function wait(predicate, message, timeout = 30_000) {
 }
 app.whenReady().then(async () => {
   root = await mkdtemp(join(tmpdir(), 'elevenex-new-code-'));
-  await mkdir(join(root, 'profile')); app.setPath('userData', join(root, 'profile'));
+  const links = process.argv.includes('--chat-links');
+  let profile = join(root, 'profile');
+  if (links && process.platform === 'win32') {
+    // Chromium keeps its profile locked until Electron exits on Windows.
+    // Keep it outside the disposable Git fixture so teardown can remove the fixture.
+    const artifacts = join(process.cwd(), 'artifacts');
+    await mkdir(artifacts, { recursive: true });
+    profile = await mkdtemp(join(artifacts, 'code-links-smoke-profile-'));
+  } else await mkdir(profile);
+  app.setPath('userData', profile);
   const repository = join(root, 'repository'), worktree = join(root, 'task');
   await mkdir(repository); await execute('git', ['init', repository]);
   await execute('git', ['-C', repository, 'symbolic-ref', 'HEAD', 'refs/heads/main']);
   const large = process.argv.includes('--large');
-  const links = process.argv.includes('--chat-links');
   const htmlPreview = process.argv.includes('--html-preview');
   const linkedFolder = join(root, 'linked-notes'), linkedFile = join(linkedFolder, 'outside.md');
+  const changedFile = join(root, 'changed%20#L2.txt');
   if (links) {
     await mkdir(join(repository, 'src'));
     await writeFile(join(repository, 'src', 'nested.ts'), 'export const nested = true;');
     await mkdir(linkedFolder);
     await writeFile(linkedFile, '# External notes\nRead-only content\n');
+    await writeFile(changedFile, 'Literal Changes contents');
   }
   if (large) { for (let folder = 0; folder < 120; folder++) { const path = join(repository, `group-${folder}`); await mkdir(path); await Promise.all(Array.from({ length: 100 }, (_, index) => writeFile(join(path, `module-${folder * 100 + index}.ts`), `export const needle${folder * 100 + index} = ${folder * 100 + index};\n`))); } }
   await writeFile(join(repository, 'hello.ts'), 'export const message = "hello workbench";\n');
@@ -68,17 +78,22 @@ app.whenReady().then(async () => {
   await execute('git', ['-C', repository, '-c', 'user.name=Code test', '-c', 'user.email=code@example.invalid', 'commit', '-m', 'fixture']);
   await execute('git', ['-C', repository, 'worktree', 'add', '-b', 'code-smoke', worktree]);
   const workspace = { taskId: 1, identity: 'a'.repeat(64), storageIdentity: 'c'.repeat(64), root: await realpath(worktree), name: 'Code workbench smoke', branch: 'code-smoke' };
+  let literalResolutionBarrier;
   search = new CodeSearch(); watches = new CodeWatch(search); transfers = new CodeTransfers();
   server = createServer(async (request, response) => {
     response.setHeader('Content-Type', 'application/json');
     try {
-      if (request.method === 'GET') { response.end(JSON.stringify({ version: 1, ...workspace, root: undefined, fileLinks: links })); return; }
+      if (request.method === 'GET') { response.end(JSON.stringify({ version: 1, ...workspace, root: undefined, fileLinks: links, literalFileLinks: links })); return; }
       const chunks = []; for await (const chunk of request) chunks.push(chunk);
       const input = JSON.parse(Buffer.concat(chunks).toString());
       assert.equal(input.identity, workspace.identity);
       const op = request.url.split('/').at(-1);
       let value;
       if (op === 'link-resolve') value = await resolveCodeLink(workspace, input.path);
+      else if (op === 'link-resolve-file') {
+        await literalResolutionBarrier?.();
+        value = await resolveCodeLink(workspace, input.path, 'literal-file');
+      }
       else if (op === 'link-directory' || op === 'link-stat' || op === 'link-read') value = await readCodeLink(op, input, new AbortController().signal);
       else if (op === 'read') value = await files.codeRead(workspace, input.path);
       else if (op === 'stat') value = await files.codeStat(workspace, input.path);
@@ -106,8 +121,11 @@ app.whenReady().then(async () => {
     } catch (error) { response.statusCode = error.getStatus?.() ?? (error.code === 'ENOENT' ? 404 : 500); response.end(JSON.stringify(error.getResponse?.() ?? { error: error.message })); }
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  window = new BrowserWindow({ width: 1250, height: 900, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
-  protocol.handle('app', () => new globalThis.Response('<html><body><div id=editor style="height:780px"></div></body></html>', {headers:{'Content-Type':'text/html'}}));
+  window = new BrowserWindow({ width: 1250, height: 900, webPreferences: {
+    sandbox: true, contextIsolation: true, nodeIntegration: false,
+    ...(links ? { partition: 'code-links-smoke' } : {}),
+  } });
+  window.webContents.session.protocol.handle('app', () => new globalThis.Response('<html><body><div id=editor style="height:780px"></div></body></html>', {headers:{'Content-Type':'text/html'}}));
   await window.loadURL('app://elevenex/'); window.show();
   const client = new BackendClient(() => ({ url: `http://127.0.0.1:${server.address().port}`, version: 'b'.repeat(40), headers: {}, identity: 'smoke', environment: { kind: 'local' } }), () => {});
   client.attach(window.webContents.id);
@@ -140,7 +158,8 @@ app.whenReady().then(async () => {
     // Stop Chromium's profile writer before removing its files. The workbench
     // may have just persisted configuration or hot-exit state during shutdown.
     const session = window.webContents.session;
-    window.destroy(); await session.clearStorageData();
+    window.destroy();
+    if (session.isPersistent()) await session.clearStorageData();
     watches.onModuleDestroy(); search.onModuleDestroy(); await transfers.onModuleDestroy();
     await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -295,21 +314,45 @@ app.whenReady().then(async () => {
       const result = await code.openFile(window.webContents.id, target, { path, fromChat: true });
       assert.equal(result.ok, true, JSON.stringify(result));
     };
-    await openLink('./src/');
-    await wait(() => frame.executeJavaScript('document.querySelector(".explorer-folders-view")?.innerText.includes("nested.ts")'), 'Workspace folder did not expand');
     await openLink(join(worktree, 'hello.ts') + ':1:8');
     await wait(() => frame.executeJavaScript('/Ln 1, Col 8/.test(document.body.innerText) && !!document.querySelector(".tab[aria-label*=hello]")'), 'Absolute task file did not open at its position');
     await openLink(require('node:url').pathToFileURL(linkedFile).href + '#L2');
     await wait(() => frame.executeJavaScript('!!document.querySelector(".tab[aria-label*=outside]") && /Ln 2, Col 1/.test(document.body.innerText)'), 'Outside file did not open at its position');
-    await frame.executeJavaScript('document.querySelector(".monaco-editor textarea.inputarea").focus()');
+    const changed = await code.openFile(window.webContents.id, target, { path: changedFile, fromChanges: true });
+    assert.equal(changed.ok, true, JSON.stringify(changed));
+    await wait(() => frame.executeJavaScript(
+      '/Literal\\s+Changes\\s+contents/.test(document.querySelector(".monaco-editor .view-lines")?.textContent ?? "")'
+    ), 'The exact external Changes file did not open');
+    const missing = await code.openFile(window.webContents.id, target, { path: linkedFile + '#L2', fromChanges: true });
+    assert.equal(missing.ok, false, 'A missing Changes file must not jump to a similarly named file');
+    let beganResolution, finishResolution;
+    const resolving = new Promise(resolve => { beganResolution = resolve; });
+    const blocked = new Promise(resolve => { finishResolution = resolve; });
+    literalResolutionBarrier = () => { beganResolution(); return blocked; };
+    try {
+      const stale = code.openFile(window.webContents.id, target, { path: linkedFile, fromChanges: true });
+      await resolving;
+      code.release(window.webContents.id, target);
+      assert.equal((await code.open(window.webContents.id, target)).ok, true);
+      await code.present(window.webContents.id, target, { visible: true, compact: true });
+      finishResolution();
+      assert.equal((await stale).ok, false, 'An old resolution may not open a file after reacquiring the same task');
+    } finally {
+      literalResolutionBarrier = undefined;
+      finishResolution();
+    }
     window.webContents.debugger.attach('1.3');
     try {
       await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+      await code.focus(window.webContents.id, target);
+      await wait(() => frame.executeJavaScript('document.hasFocus() && document.activeElement?.classList.contains("inputarea")'), 'The linked editor did not receive explicit focus');
       await window.webContents.debugger.sendCommand('Input.insertText', { text: 'unexpected edit' });
       assert.equal(await frame.executeJavaScript('!!document.querySelector(".tab.dirty") || document.body.innerText.includes("unexpected edit")'), false);
+      await openLink('./src/');
+      await wait(() => frame.executeJavaScript('document.querySelector(".explorer-folders-view")?.innerText.includes("nested.ts")'), 'Workspace folder did not expand');
+      await openLink(linkedFolder);
+      await wait(() => frame.executeJavaScript('Array.from(document.querySelectorAll("[role=treeitem]")).some(item => item.textContent.includes("outside.md"))'), 'Outside folder did not expand');
     } finally { window.webContents.debugger.detach(); }
-    await openLink(linkedFolder);
-    await wait(() => frame.executeJavaScript('Array.from(document.querySelectorAll("[role=treeitem]")).some(item => item.textContent.includes("outside.md"))'), 'Outside folder did not expand');
     await finish('CHAT_LINKS_SMOKE_OK');
     return;
   }
@@ -317,7 +360,7 @@ app.whenReady().then(async () => {
   await wait(() => view.webContents.executeJavaScript('!!document.querySelector(".monaco-editor") && !!document.querySelector(".tab[aria-label*=hello], .tab[title*=hello]")'), 'File did not open', 45_000);
   metrics.usableFileMs = Math.round(performance.now() - started); console.log('Usable file ms:', metrics.usableFileMs);
   // Real keyboard commands into the VS Code iframe.
-  window.focus(); view.webContents.focus();
+  await code.focus(window.webContents.id, target);
   await view.webContents.executeJavaScript("import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('workbench.action.focusActiveEditorGroup'))");
   console.log('EDITOR_LAYOUT', await view.webContents.executeJavaScript('JSON.stringify({size:[innerWidth,innerHeight],editor:document.querySelector(".monaco-editor")?.getBoundingClientRect().toJSON(),inputs:[...document.querySelectorAll("textarea,[contenteditable=true]")].map(e=>e.outerHTML.slice(0,180))})'));
   await view.webContents.executeJavaScript('document.querySelector(".monaco-editor textarea.inputarea").focus()');

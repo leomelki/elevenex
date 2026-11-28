@@ -206,12 +206,20 @@ beside or underneath the iframe. Short
 windows scroll launch/recovery actions into reach.
 Shortcuts show only the desktop platform's keys. No redundant task identity row consumes editor height.
 
-Explicit expansion, opening a file and programmatic focus hand off to the current
-task only after main acknowledges its visible frame presentation. Stale acknowledgments
-cannot steal focus after switching tasks. Restoring an existing wide panel does
-not introduce an extra focus jump. A dedicated window uses `standalone` to omit
-its own detach control and focus its retained workbench on launch. Returning to
-chat uses the shell's existing focus restoration.
+Opening a file, retrying startup and explicit focus can hand off to the current
+task after main acknowledges its visible frame presentation. Later host input,
+window blur, or task changes cancel the handoff. The child workbench can retain
+focus and receive it through native input or the parent iframe. Passive startup
+and layout commands leave focus with the host. A dedicated window uses
+`standalone` to omit its own detach control and can focus its workbench on launch.
+Returning to chat uses the shell's existing focus restoration.
+
+Changes opens the exact live file recorded in Review. Worktree-relative paths
+stay in the current task, and absolute paths outside it use the same scoped,
+read-only single-file grants as chat links. Changes treats percent escapes and
+line suffixes as filename characters. A missing file, an ambiguous external
+relative path, or a directory cannot open through this action. Older engines
+retain the worktree-relative open path.
 
 Toolbar intents cross a fixed `CodeAction` union (`browse-files`, `dismiss-files`,
 `find-file`, `search-text`, `save`), validated in main and restricted to the visible owned task and current

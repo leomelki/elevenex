@@ -55,7 +55,7 @@
       <div workspaceChanges #workspaceChanges class="review-content">
         @if (selectedReview(); as target) {
           @if (shell.panelPresent() && panel() === 'changes' && active()) {
-            <ex-session-chat-review [unreachable]="store.offline() ? machine().name : undefined" (reconnectRequested)="reconnectRequested.emit()" [target]="target" (openFileRequested)="openCode($event)" [wide]="shell.panelWide()" (wideChange)="wideReview.set($event)" (exitRequested)="wideReview.set(false)" />
+            <ex-session-chat-review [unreachable]="store.offline() ? machine().name : undefined" (reconnectRequested)="reconnectRequested.emit()" [target]="target" (openFileRequested)="openCode(target, $event)" [wide]="shell.panelWide()" (wideChange)="wideReview.set($event)" (exitRequested)="wideReview.set(false)" />
           }
         } @else {
           <p class="review-hint">Choose Review beneath an agent reply to see its changes.</p>

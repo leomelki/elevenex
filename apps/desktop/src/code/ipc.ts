@@ -8,7 +8,10 @@ export function registerCodeIpc(code: CodeSurfaces, trusted: TrustedSender): () 
     handleForWindow('code:present', trusted, (windowId, ...args) => { if (args.length !== 2) throw new Error('Code needs presentation state'); return code.present(windowId, target(args[0]), presentation(args[1])); }),
     handleForWindow('code:layout', trusted, (windowId, ...args) => { if (args.length !== 2) throw new Error('Code needs layout bounds'); return code.layout(windowId, target(args[0]), bounds(args[1])); }),
     handleForWindow('code:action', trusted, (windowId, ...args) => { if (args.length !== 2) throw new Error('Code needs an editor action'); return code.action(windowId, target(args[0]), action(args[1])); }),
-    handleForWindow('code:focus', trusted, (windowId, ...args) => { if (args.length !== 1) throw new Error('Code needs a target'); return code.focus(windowId, target(args[0])); }),
+    handleForWindow('code:focus', trusted, (windowId, ...args) => {
+      if (args.length !== 1 && (args.length !== 2 || args[1] !== true)) throw new Error('Code needs a target and an optional focused-frame confirmation');
+      return code.focus(windowId, target(args[0]), args[1] === true);
+    }),
     handleForWindow('code:recover', trusted, (windowId, ...args) => { if (args.length !== 1) throw new Error('Code needs a target'); return code.recover(windowId, target(args[0])); }),
     handleForWindow('code:detach', trusted, (windowId, ...args) => { if (args.length !== 1) throw new Error('Code needs a target'); return code.detach(windowId, target(args[0])); }),
     handleForWindow('code:release', trusted, (windowId, ...args) => { if (args.length !== 1) throw new Error('Code needs a target'); code.release(windowId, target(args[0])); }),

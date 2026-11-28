@@ -29,6 +29,16 @@ describe('task-owned Code state', () => {
     expect(fixture.bridge.codeOpenFile).not.toHaveBeenCalled();
     TestBed.resetTestingModule(); expect(fixture.stop).toHaveBeenCalledOnce();
   });
+  it('keeps the live frame ready when an earlier acquisition reply arrives late', async () => {
+    const fixture = setup(); fixture.store.select(target);
+    const frameUrl = 'https://w-' + 'a'.repeat(32) + '.' + 'b'.repeat(32) + '.code.elevenex.invalid/';
+    const pending = fixture.store.open();
+    const ready = { ...state, frameUrl };
+    fixture.emit({ target, state: ready });
+    fixture.resolve({ ok: true, value: { ...ready, phase: 'loading' } });
+    await pending;
+    expect(fixture.store.state()).toBe(ready);
+  });
   it('retains the editor and reports a failed recovery without an unhandled rejection', async () => {
     const fixture = setup(); fixture.store.select(target); fixture.store.adopt(state);
     await fixture.store.recover(); expect(fixture.store.state()).toEqual(state); expect(fixture.store.error()).toContain('could not reconnect');

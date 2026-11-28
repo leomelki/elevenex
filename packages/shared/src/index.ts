@@ -92,7 +92,7 @@ export interface InvokeContracts {
   'code:recover': { args: [target: CodeTarget]; result: BackendResult<CodeSurfaceState> };
   'code:detach': { args: [target: CodeTarget]; result: void };
   'code:action': { args: [target: CodeTarget, action: CodeAction]; result: void };
-  'code:focus': { args: [target: CodeTarget]; result: void };
+  'code:focus': { args: [target: CodeTarget, frameAlreadyFocused?: true]; result: void };
   'code:release': { args: [target: CodeTarget]; result: void };
   'task-terminal:open-port': { args: [scopeId: string, input: TaskTerminalTarget & { readonly port: number }]; result: BackendResult<{ readonly accepted: true; readonly url?: string }> };
   'task-terminal:copy-port': { args: [scopeId: string, input: TaskTerminalTarget & { readonly port: number }]; result: BackendResult<{ readonly accepted: true; readonly url: string }> };
@@ -281,7 +281,7 @@ export interface ElevenexBridge {
   codeRecover(target: CodeTarget): Promise<BackendResult<CodeSurfaceState>>;
   codeDetach(target: CodeTarget): Promise<void>;
   codeAction(target: CodeTarget, action: CodeAction): Promise<void>;
-  codeFocus(target: CodeTarget): Promise<void>;
+  codeFocus(target: CodeTarget, frameAlreadyFocused?: true): Promise<void>;
   codeRelease(target: CodeTarget): Promise<void>;
   taskTerminalOpenPort(scopeId: string, input: TaskTerminalTarget & { readonly port: number }): Promise<BackendResult<{ readonly accepted: true; readonly url?: string }>>;
   taskTerminalCopyPort(scopeId: string, input: TaskTerminalTarget & { readonly port: number }): Promise<BackendResult<{ readonly accepted: true; readonly url: string }>>;

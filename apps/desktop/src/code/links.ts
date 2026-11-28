@@ -27,14 +27,14 @@ export class CodeLinks {
   private readonly grants = new Map<string, ExternalGrant>();
   constructor(private readonly client: BackendClient, private readonly signal: AbortSignal) {}
   clear(): void { this.grants.clear(); }
-  resolve(lease: LinkLease, path: string) {
+  resolve(lease: LinkLease, path: string, literalFile = false) {
     return this.client.execute(lease.windowId, lease.scopeId, null, false, async (endpoint, signal): Promise<ResolvedLink> => {
       const raw = object(await requestBackendJson(endpoint, {
-        path: '/api/code-workspaces/' + lease.taskId + '/link-resolve', method: 'POST',
+        path: '/api/code-workspaces/' + lease.taskId + (literalFile ? '/link-resolve-file' : '/link-resolve'), method: 'POST',
         body: { identity: lease.generation, path }, limit: 32 * 1024,
       }, signal));
       const resolved = string(raw['path']), line = raw['line'], column = raw['column'], type = raw['type'];
-      if ((type !== 1 && type !== 2) || !isPosition(line) || !isPosition(column)) throw invalidResponse();
+      if ((type !== 1 && (literalFile || type !== 2)) || !isPosition(line) || !isPosition(column)) throw invalidResponse();
       if (raw['kind'] === 'workspace' && /^\/(?!\/)/.test(resolved) && !resolved.split('/').some(p => p === '.' || p === '..' || p.toLowerCase() === '.git'))
         return { kind: 'workspace', path: resolved, type, line, column };
       const name = string(raw['name']), fingerprint = string(raw['fingerprint'], 64);

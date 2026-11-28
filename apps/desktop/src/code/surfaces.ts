@@ -8,11 +8,11 @@ import { CodeArtifact } from './artifact';
 import { CodeProtocol } from './protocol';
 import { CodeFrame } from './frame';
 import { CodeFrameRouter } from './frame-router';
-import { descriptor, type WorkspaceDescriptor } from './validation';
+import { descriptor, isTaskRelativeFile, type WorkspaceDescriptor } from './validation';
 interface Surface {
   readonly key: string; readonly environment: EnvironmentSelection; readonly configurationIdentity: string; readonly frame: CodeFrame; readonly host: CodeProtocol;
   state: CodeSurfaceState; startup?: ReturnType<typeof setTimeout>; wasReady?: boolean; failedStartup?: boolean; crashed?: boolean; closing?: Promise<boolean>; owner: number; target: CodeTarget; used: number; reconcileExplorer?: boolean; layoutRevision?: number; compact?: boolean; presentation?: Promise<unknown>;
-  visible?: boolean; detached?: BrowserWindow;
+  visible?: boolean; detached?: BrowserWindow; fileSelection?: symbol;
 }
 const failure = (message: string): BackendResult<never> => ({ ok: false, error: { code: 'unavailable', message } });
 /** Application-owned task leases. DOM-owned frames are retained across Angular mounts. */
@@ -172,36 +172,41 @@ export class CodeSurfaces {
     if (this.owned(windowId, target, local) !== surface || (!local && this.client.state(windowId).scope?.id !== target.scopeId) || !surface.host.active || !surface.visible) throw new Error('Code selection changed.');
     await surface.frame.command(commands[action]);
   }
-  async focus(windowId: number, target: CodeTarget): Promise<void> {
+  async focus(windowId: number, target: CodeTarget, frameAlreadyFocused = false): Promise<void> {
+    if (frameAlreadyFocused) {
+      const surface = this.owned(windowId, target, true);
+      if (surface?.wasReady && surface.visible) await surface.frame.focus(true);
+      return;
+    }
     const offered = this.offered.get(windowId);
     const surface = this.owned(windowId, target, true) ?? (offered?.target.scopeId === target.scopeId && offered.target.taskId === target.taskId ? this.surfaces.get(offered.key) : undefined);
     if (surface) { BrowserWindow.fromWebContents(this.ownerContents(surface.owner))?.focus(); if (surface.wasReady) await surface.frame.focus(); }
   }
   async openFile(windowId: number, target: CodeTarget, file: CodeOpenFile): Promise<BackendResult<{ readonly accepted: true }>> {
-    if (!file.fromChat) {
+    const linked = file.fromChat || file.fromChanges;
+    if (!linked) {
       const current = await this.open(windowId, target, true);
       if (!current.ok) return current;
     }
     const surface = this.owned(windowId, target);
     if (!surface || this.client.state(windowId).scope?.id !== target.scopeId) return failure('Open Code for the current task first.');
-    if (!await surface.host.whenReady()) return failure('Editor is still opening. Try opening the file again.');
+    const desired = this.desired.get(windowId);
+    const fileSelection = surface.fileSelection = Symbol();
     const generation = surface.host.workspace.identity;
-    const currentSelection = () => {
-      const desired = this.desired.get(windowId);
-      return desired?.scopeId === target.scopeId && desired.taskId === target.taskId &&
-        this.client.state(windowId).scope?.id === target.scopeId && this.owned(windowId, target) === surface &&
-        surface.host.workspace.identity === generation;
-    };
+    const transport = surface.host.revision;
+    const currentSelection = () => desired?.scopeId === target.scopeId && desired.taskId === target.taskId &&
+      this.desired.get(windowId) === desired && surface.fileSelection === fileSelection &&
+      this.client.state(windowId).scope?.id === target.scopeId && this.owned(windowId, target) === surface &&
+      surface.host.workspace.identity === generation && surface.host.revision === transport &&
+      (!linked || surface.visible === true);
+    if (!currentSelection()) return failure('Code selection changed.');
+    if (!await surface.host.whenReady()) return failure('Editor is still opening. Try opening the file again.');
     if (!currentSelection()) return failure('Code selection changed.');
     try {
-      if (file.fromChat) {
-        this.ownerContents(windowId).focus();
-        await surface.frame.focusWindow();
-        if (!currentSelection() || !surface.visible) return failure('Code selection changed.');
-      }
-      if (file.fromChat && surface.host.workspace.fileLinks) {
-        const result = await surface.host.links.resolve({ windowId, ...target, generation }, file.path);
-        if (!currentSelection() || !surface.visible) return failure('Code selection changed.');
+      const workspace = surface.host.workspace;
+      if (file.fromChanges ? workspace.literalFileLinks : file.fromChat && workspace.fileLinks) {
+        const result = await surface.host.links.resolve({ windowId, ...target, generation }, file.path, file.fromChanges);
+        if (!currentSelection()) return failure('Code selection changed.');
         if (!result.ok) return failure(result.error.status === 404 ? 'The linked path was not found on this machine.' : 'The linked file or folder could not be opened.');
         const link = result.value;
         if (link.kind === 'external') {
@@ -213,6 +218,7 @@ export class CodeSurfaces {
       } else {
         // Older engines can still open plain task-relative links.
         const path = file.fromChat ? decodeURIComponent(file.path).replace(/^\.\//, '') : file.path;
+        if (linked && !isTaskRelativeFile(path)) return failure('This path requires file link support on the task machine.');
         await surface.frame.command('elevenex.code.open-file', path, file.line ?? 1, file.column ?? 1);
       }
       if (!currentSelection()) return failure('Code selection changed.');
@@ -252,7 +258,10 @@ export class CodeSurfaces {
     const desire = this.desired.get(windowId);
     if (desire?.scopeId === target.scopeId && desire.taskId === target.taskId) this.desired.delete(windowId);
     const surface = this.owned(windowId, target);
-    if (surface && !surface.detached) this.hide(surface);
+    if (surface && !surface.detached) {
+      surface.host.cancelReadyWaiters();
+      this.hide(surface);
+    }
   }
   releaseWindow(windowId: number, cleanup: () => void): void {
     this.active.delete(windowId); this.windowContexts.delete(windowId); this.offered.delete(windowId);

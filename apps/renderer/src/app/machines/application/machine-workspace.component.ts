@@ -81,7 +81,15 @@ export class MachineWorkspaceComponent {
     const target = this.reviewTarget(), selected = this.store.selected();
     return target && selected && target.scopeId === selected.scopeId && target.taskId === selected.taskId && target.sessionId === selected.sessionId ? target : null;
   });
-  openCode(path: string): void { const target = this.codeTarget(); if (!target) return; this.codeFile.set({ ...target, file: { path } }); this.store.selectPanel('code'); this.panelOpen.set(true); this.wideReview.set(true); }
+  openCode(review: ChatReviewTarget, path: string): void {
+    const target = this.codeTarget();
+    if (!target || this.selectedReview() !== review || !this.panelOpen() || this.panel() !== 'changes' ||
+        this.store.offline() || review.scopeId !== target.scopeId || review.taskId !== target.taskId) return;
+    this.codeFile.set({ ...target, file: { path, fromChanges: true } });
+    this.store.selectPanel('code');
+    this.panelOpen.set(true);
+    this.wideReview.set(true);
+  }
   openChatFile(intent: CodeTarget & { readonly sessionId: number; readonly path: string }): void {
     const selected = this.store.selected(), target = this.codeTarget();
     if (!target || this.store.offline() || selected?.scopeId !== intent.scopeId ||

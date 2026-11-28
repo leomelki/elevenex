@@ -48,6 +48,35 @@ describe('Connected workspace composition', () => {
     expect(root.querySelector('ex-session-chat-review')).toBeNull();
   });
 
+  it('routes the selected Changes row to Code as a literal path on the current task', async () => {
+    const { fixture, component, platform, root } = setup();
+    const path = '/outside/notes%20#L2.md';
+    vi.spyOn(platform, 'sessionChatChanges').mockImplementation(async (_scope, input) => ({
+      ok: true, value: { turnId: input.turnId, revision: 'a'.repeat(64), offset: 0,
+        files: [{ path, status: 'M', add: 1, del: 0 }], total: 1, nextOffset: null, content: null },
+    }));
+    await settle(fixture);
+    component.store.selectSession({ taskId: '11', sessionId: '101' });
+    await settle(fixture);
+    const selected = component.store.selected()!;
+    const review = { ...selected, turnId: 'turn-one' };
+    component.review(review);
+    await settle(fixture);
+    const open = root.querySelector<HTMLButtonElement>(`button[aria-label="Open ${path} in Code"]`);
+    expect(open).not.toBeNull();
+    open?.click();
+    expect(component.codeFile()).toEqual({
+      scopeId: selected.scopeId, taskId: selected.taskId, file: { path, fromChanges: true },
+    });
+    expect(component.panel()).toBe('code');
+    expect(component.wideReview()).toBe(true);
+
+    component.store.selectSession({ taskId: '12', sessionId: '103' });
+    await settle(fixture);
+    component.openCode(review, path);
+    expect(component.codeFile()).toBeNull();
+  });
+
   it('loads navigation and the task header, retaining a read-only view behind Home', async () => {
     const { fixture, component, root } = setup();
     await settle(fixture);

@@ -47,6 +47,24 @@ describe('Code chat links', () => {
     await expect(readCodeLink('link-stat', { ...grant, path: '/' }, signal)).rejects.toThrow('changed');
   });
 
+  it('resolves a Changes file literally and never substitutes another file or grants a directory', async () => {
+    const changed = join(external, 'report%20#L2.md');
+    await writeFile(changed, 'literal bytes');
+    const link = await resolveCodeLink(workspace, changed, 'literal-file');
+    expect(link).toMatchObject({ kind: 'external', type: 1, name: 'report%20#L2.md', line: 1, column: 1 });
+    const grant = { root: link.path, fingerprint: link.fingerprint };
+    const signal = new AbortController().signal;
+    await expect(readCodeLink('link-read', { ...grant, path: '/' }, signal))
+      .resolves.toMatchObject({ content: Buffer.from('literal bytes').toString('base64') });
+    await expect(readCodeLink('link-read', { ...grant, path: '/report.md' }, signal)).rejects.toThrow();
+    await expect(resolveCodeLink(workspace, 'src/hello #.ts', 'literal-file'))
+      .resolves.toMatchObject({ kind: 'workspace', path: '/src/hello #.ts' });
+    await expect(resolveCodeLink(workspace, join(external, 'report.md#L2'), 'literal-file')).rejects.toThrow();
+    await expect(resolveCodeLink(workspace, '../notes/report.md', 'literal-file')).rejects.toThrow();
+    await expect(resolveCodeLink(workspace, join(external, '.git', 'config'), 'literal-file')).rejects.toThrow();
+    await expect(resolveCodeLink(workspace, external, 'literal-file')).rejects.toThrow();
+  });
+
   it('grants only the requested file and rejects symlinks and nonlocal URL authorities', async () => {
     const link = await resolveCodeLink(workspace, pathToFileURL(join(external, 'report.md')).href);
     expect(link).toMatchObject({ kind: 'external', type: 1, name: 'report.md' });

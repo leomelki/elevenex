@@ -26,9 +26,15 @@ describe('Code panel launch and iframe focus handoff', () => {
       codeRelease: vi.fn().mockResolvedValue(undefined),
       codePresent: vi.fn((_selected: CodeTarget, state: CodePresentation) => state.visible ? new Promise<void>(resolve => layouts.push(resolve)) : Promise.resolve()),
       codeFocus: vi.fn().mockResolvedValue(undefined),
+      codeOpenFile: vi.fn().mockResolvedValue({ ok: true, value: { accepted: true } }),
       codeAction: vi.fn().mockResolvedValue(undefined),
     } satisfies Partial<ElevenexBridge>;
-    TestBed.configureTestingModule({ providers: [{ provide: ELEVENEX_BRIDGE, useValue: bridge }, {provide:CodeFramePool,useValue:{mount:vi.fn(()=>vi.fn())}}] });
+    const mount = vi.fn((_url: string, container: HTMLElement) => {
+      const frame = document.createElement('iframe');
+      container.append(frame);
+      return vi.fn(() => frame.remove());
+    });
+    TestBed.configureTestingModule({ providers: [{ provide: ELEVENEX_BRIDGE, useValue: bridge }, { provide: CodeFramePool, useValue: { mount } }] });
     const fixture = TestBed.createComponent(CodePanelComponent);
     fixture.componentRef.setInput('target', target); fixture.componentRef.setInput('active', true); fixture.componentRef.setInput('wide', true);
     return { fixture, bridge, layouts, publish: (state: CodeSurfaceState) => publish({ target, state }) };
@@ -48,7 +54,7 @@ describe('Code panel launch and iframe focus handoff', () => {
     publish(ready); await settle(fixture); fixture.componentInstance.focusEditor(); await settle(fixture);
     expect(bridge.codeFocus).not.toHaveBeenCalled(); expect(layouts).toHaveLength(1);
     const acknowledge = layouts.shift(); if (!acknowledge) throw new Error('Frame presentation was not requested.'); acknowledge(); await settle(fixture);
-    expect(bridge.codeFocus).toHaveBeenCalledExactlyOnceWith(target);
+    expect(bridge.codeFocus).toHaveBeenCalledExactlyOnceWith(target, true);
     fixture.destroy(); expect(bridge.codePresent).toHaveBeenLastCalledWith(target, {visible:false,compact:false});
   });
   it('does not steal focus for an old task when a delayed layout acknowledgement arrives', async () => {
@@ -57,6 +63,42 @@ describe('Code panel launch and iframe focus handoff', () => {
     fixture.componentRef.setInput('target', { scopeId: 'scope-b', taskId: 2 }); await settle(fixture);
     const acknowledge = layouts.shift(); if (!acknowledge) throw new Error('Frame presentation was not requested.'); acknowledge(); await settle(fixture);
     expect(bridge.codeFocus).not.toHaveBeenCalled();
+  });
+  it('opens a Changes file after delayed presentation without taking focus back from later typing', async () => {
+    const { fixture, bridge, publish, layouts } = setup();
+    const file = { path: '/outside/notes%20.md', fromChanges: true } as const;
+    fixture.componentRef.setInput('file', { ...target, file });
+    await settle(fixture);
+    expect(bridge.codeOpenFile).not.toHaveBeenCalled();
+    const composer = document.createElement('textarea');
+    document.body.append(composer);
+    try {
+      composer.focus();
+      composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+      publish(ready); await settle(fixture);
+      layouts.shift()?.(); await settle(fixture);
+      expect(bridge.codeOpenFile).toHaveBeenCalledExactlyOnceWith(target, file);
+      expect(bridge.codeOpen).toHaveBeenCalledOnce();
+      expect(bridge.codeFocus).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(composer);
+    } finally { composer.remove(); }
+  });
+  it('cancels a retry handoff when the user moves on, even through a second presentation', async () => {
+    const { fixture, bridge, publish, layouts } = setup();
+    await settle(fixture);
+    fixture.componentInstance.retry();
+    const elsewhere = document.createElement('button');
+    document.body.append(elsewhere);
+    try {
+      elsewhere.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      elsewhere.focus();
+      publish(ready); await settle(fixture);
+      layouts.shift()?.(); await settle(fixture);
+      fixture.componentInstance.measuredWidth.set(432); await settle(fixture);
+      layouts.shift()?.(); await settle(fixture);
+      expect(bridge.codeFocus).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(elsewhere);
+    } finally { elsewhere.remove(); }
   });
   it('reveals only after the current viewport and compact layout are acknowledged, ignoring interrupted replies', async () => {
     const { fixture, bridge, publish, layouts } = setup(); await settle(fixture);
@@ -219,7 +261,7 @@ describe('Code panel launch and iframe focus handoff', () => {
     expect(fixture.componentInstance.browseLabel()).toContain('Browse files');
   });
   it('opens at side-panel width, offers direct file/search actions and retains it through expansion', async () => {
-    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(424);
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(424);
     const { fixture, bridge, publish, layouts } = setup();
     fixture.componentRef.setInput('wide', false); await settle(fixture);
     expect(bridge.codeOpen).toHaveBeenCalledExactlyOnceWith(target);
@@ -234,8 +276,19 @@ describe('Code panel launch and iframe focus handoff', () => {
     expect(bridge.codeAction).toHaveBeenLastCalledWith(target, 'find-file');
     await fixture.componentInstance.runAction('search-text'); await settle(fixture);
     expect(bridge.codeAction).toHaveBeenLastCalledWith(target, 'search-text');
+    const frame = root.querySelector('iframe');
+    expect(frame).not.toBeNull();
+    width.mockReturnValue(1064);
+    fixture.componentInstance.measuredWidth.set(1064);
     fixture.componentRef.setInput('wide', true); await settle(fixture);
+    layouts.shift()?.(); await settle(fixture);
+    expect(root.querySelector('iframe')).toBe(frame);
+    width.mockReturnValue(424);
+    fixture.componentInstance.measuredWidth.set(424);
     fixture.componentRef.setInput('wide', false); await settle(fixture);
+    layouts.shift()?.(); await settle(fixture);
+    expect(root.querySelector('iframe')).toBe(frame);
+    expect(bridge.codeFocus).not.toHaveBeenCalled();
     expect(bridge.codeRelease).not.toHaveBeenCalled();
     expect(bridge.codeOpen).toHaveBeenCalledOnce();
     fixture.componentRef.setInput('active', false); await settle(fixture);

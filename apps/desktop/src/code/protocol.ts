@@ -25,6 +25,7 @@ export class CodeProtocol {
   private ready = false;
   private readonly readyWaiters = new Set<(ready: boolean) => void>();
   private transportRevision = 0;
+  get revision(): number { return this.transportRevision; }
   readonly links: CodeLinks;
   readonly htmlPreview: HtmlPreview;
   private transfers?: CodeTransfers;
@@ -57,7 +58,8 @@ export class CodeProtocol {
     } catch { return false; }
   }
   bind(target: CodeTarget): boolean { const changed = target.scopeId !== this.target.scopeId || target.taskId !== this.target.taskId; if (changed) this.reset(); this.target = target; return changed; }
-  reset(): void { this.transfers?.dispose(); this.importCancellation?.abort(); this.links.clear(); this.htmlPreview.reset(); this.transportRevision++; this.ready = false; }
+  reset(): void { this.transfers?.dispose(); this.importCancellation?.abort(); this.links.clear(); this.htmlPreview.reset(); this.transportRevision++; this.ready = false; this.cancelReadyWaiters(); }
+  cancelReadyWaiters(): void { for (const done of this.readyWaiters) done(false); }
   whenReady(): Promise<boolean> {
     if (this.ready) return Promise.resolve(true);
     if (this.closed || this.readyWaiters.size >= 32) return Promise.resolve(false);
@@ -67,7 +69,7 @@ export class CodeProtocol {
       this.readyWaiters.add(done);
     });
   }
-  dispose(): void { this.closed = true; this.transfers?.dispose(); this.links.clear(); this.htmlPreview.reset(); this.lifetime.abort(); for (const done of this.readyWaiters) done(false); }
+  dispose(): void { this.closed = true; this.transfers?.dispose(); this.links.clear(); this.htmlPreview.reset(); this.lifetime.abort(); this.cancelReadyWaiters(); }
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const preview = codeWebviewAsset(url, this.authority);

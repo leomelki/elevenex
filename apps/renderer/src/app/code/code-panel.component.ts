@@ -64,43 +64,53 @@ export class CodePanelComponent {
   });
   private readonly frameContainer = viewChild<ElementRef<HTMLElement>>('frameContainer');
   private consumedFile: CodeFileIntent | null = null;
-  private previousWide?: boolean;
+  private requestedFileFocus: CodeFileIntent | null = null;
   private openingSelection: CodeTarget | null = null;
   private standaloneOpened = false;
   private readonly placedTarget = signal<CodeTarget | null>(null);
   private readonly focusRequest = signal<CodeTarget | null>(null);
   constructor() {
     const stopExit = this.bridge.onCodeExitRequested?.(target => { if (this.active() && this.target()?.scopeId === target.scopeId && this.target()?.taskId === target.taskId) this.wideChange.emit(false); });
-    inject(DestroyRef).onDestroy(() => stopExit?.());
+    const destroy = inject(DestroyRef);
+    const watchInput = new AbortController();
+    const cancelFocus = () => this.focusRequest.set(null);
+    const options = { capture: true, signal: watchInput.signal };
+    // A queued handoff belongs to the original gesture. Later host input or
+    // leaving this window takes priority over a delayed editor receipt.
+    this.document.addEventListener('pointerdown', cancelFocus, options);
+    this.document.addEventListener('keydown', cancelFocus, options);
+    this.document.defaultView?.addEventListener('blur', cancelFocus, options);
+    destroy.onDestroy(() => { watchInput.abort(); stopExit?.(); });
     effect(() => { const target = this.target(), initial = this.initialState(); untracked(() => { this.focusRequest.set(null); this.store.select(target); if (initial) this.store.adopt(initial); }); });
     effect(() => {
-      const active = this.active(), wide = this.wide(), target = this.target(), connected = this.connected(), standalone = this.standalone();
+      const active = this.active(), target = this.target(), connected = this.connected(), standalone = this.standalone();
       if (active && target && connected) untracked(() => {
-        if (this.previousWide === false || standalone && !this.standaloneOpened) this.focusRequest.set(target);
+        if (standalone && !this.standaloneOpened) this.focusRequest.set(target);
         if (standalone) this.standaloneOpened = true;
         if (this.openingSelection?.scopeId !== target.scopeId || this.openingSelection.taskId !== target.taskId) { this.openingSelection = target; void this.store.open(); }
       });
       if (!active || !connected || !target) this.openingSelection = null;
-      this.previousWide = wide;
     });
     effect(() => {
       const file = this.file(), target = this.target(), placed = this.placedTarget();
       if (!file || file === this.consumedFile || !target || file.scopeId !== target.scopeId ||
-          file.taskId !== target.taskId || !this.active() || !this.connected() ||
-          file.file.fromChat && (placed?.scopeId !== target.scopeId || placed.taskId !== target.taskId)) return;
+          file.taskId !== target.taskId || !this.active() || !this.connected()) return;
       untracked(() => {
+        if (this.requestedFileFocus !== file) {
+          this.requestedFileFocus = file;
+          this.focusRequest.set(target);
+        }
+        if ((file.file.fromChat || file.file.fromChanges) &&
+            (placed?.scopeId !== target.scopeId || placed.taskId !== target.taskId)) return;
         this.consumedFile = file;
-        void this.store.openFile(file.file).then(() => {
-          if (!file.file.fromChat && this.file() === file && this.target()?.scopeId === target.scopeId &&
-              this.target()?.taskId === target.taskId && !this.store.error()) this.focusRequest.set(target);
-        });
+        void this.store.openFile(file.file);
       });
     });
-    effect(() => { if (!this.active()) untracked(() => this.store.suspend()); });
+    effect(() => { if (!this.active()) untracked(() => { cancelFocus(); this.store.suspend(); }); });
     afterRenderEffect(onCleanup => {
       const container = this.frameContainer()?.nativeElement, url = this.frameResource();
       if (!container || !url || !this.frameVisible()) return;
-      onCleanup(this.frames.mount(url, container));
+      onCleanup(untracked(() => this.frames.mount(url, container)));
     });
     afterRenderEffect(onCleanup => {
       const target = this.target(), active = this.active(), hasSurface = this.hasSurface();
@@ -151,8 +161,15 @@ export class CodePanelComponent {
     });
     afterRenderEffect(() => {
       const wanted = this.focusRequest(), placed = this.placedTarget();
-      if (!wanted || !placed || wanted.scopeId !== placed.scopeId || wanted.taskId !== placed.taskId || !this.active() || !this.hasSurface()) return;
-      untracked(() => { this.focusRequest.set(null); this.store.focus(); });
+      if (!wanted || !placed || wanted.scopeId !== placed.scopeId || wanted.taskId !== placed.taskId ||
+          !this.active() || !this.connected() || !this.hasSurface()) return;
+      const frame = this.frameContainer()?.nativeElement.querySelector('iframe');
+      if (!frame) return;
+      untracked(() => {
+        cancelFocus();
+        frame.focus({ preventScroll: true });
+        this.store.focus(true);
+      });
     });
     inject(DestroyRef).onDestroy(() => { const target = this.target(); if (target) void this.bridge.codePresent?.(target, {visible:false, compact:this.compact()}).catch(() => undefined); });
   }

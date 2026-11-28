@@ -10,6 +10,30 @@ const { codeWebviewEndpoint } = require('../dist/code/webview');
 const validate = require('../dist/code/validation');
 const vm = require('node:vm');
 const { waitForCodeLayout } = require('../dist/code/layout-settlement');
+const { keepWorkbenchFocusLocal } = require('../dist/code/workbench-focus');
+
+test('background workbench code cannot focus the host window, while native gestures and focused editing can', () => {
+  const document = { hasFocus: () => false };
+  const window = {};
+  let focused = 0;
+  class HTMLElement {
+    ownerDocument = document;
+    focus() { focused++; }
+  }
+  vm.runInNewContext(`(${keepWorkbenchFocusLocal.toString()})()`, { HTMLElement, document, window });
+  const input = new HTMLElement();
+  input.focus();
+  window.event = { type: 'pointerdown', isTrusted: false };
+  input.focus();
+  assert.equal(focused, 0);
+  window.event.isTrusted = true;
+  input.focus();
+  assert.equal(focused, 1);
+  window.event = undefined;
+  document.hasFocus = () => true;
+  input.focus();
+  assert.equal(focused, 2);
+});
 
 function layoutFrame(viewportOnly = false) {
   let now = 0, identity = 0, moving = false, animatedProperty = 'width';
@@ -72,6 +96,9 @@ test('Code controls accept resource identities and bounded file positions, never
   for (const path of ['/absolute', '../escape', 'file/../escape', '.git/config', 'a\0']) assert.throws(() => validate.file({ path }));
   assert.deepEqual(validate.file({ path: 'unicode é #?.ts', line: 10, column: 2 }), { path: 'unicode é #?.ts', line: 10, column: 2 });
   assert.deepEqual(validate.file({ path: '/outside/notes.md#L4', fromChat: true }), { path: '/outside/notes.md#L4', fromChat: true });
+  assert.deepEqual(validate.file({ path: '/outside/notes%.md', fromChanges: true }), { path: '/outside/notes%.md', fromChanges: true });
+  assert.throws(() => validate.file({ path: '/outside/notes.md', fromChat: true, fromChanges: true }));
+  assert.throws(() => validate.file({ path: '/outside/notes.md', fromChanges: true, line: 2 }));
   for (const request of [{ path: 'a\0', fromChat: true }, { path: '/outside', fromChat: false }, { path: '/outside', fromChat: true, line: 2 }])
     assert.throws(() => validate.file(request));
   assert.throws(() => validate.file({ path: 'ok', line: 1.2 }));
@@ -106,6 +133,7 @@ test('Code HTTPS is confined to its task origin, rejects foreign origins, confin
     assert.equal((await request('/api/read', { method: 'POST', headers: { Origin: 'https://example.com', 'Content-Type': 'application/json' }, body: '{}' })).status, 403);
     assert.equal((await request('/api/raw-shell', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 404);
     assert.equal((await request('/api/link-resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"path":"/outside"}' })).status, 404);
+    assert.equal((await request('/api/link-resolve-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"path":"/outside"}' })).status, 404);
     assert.equal((await request('/api/link-read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"path":"/outside"}' })).status, 409);
     assert.equal((await request('/api/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"path":"/file","generation":"old"}' })).status, 409);
     assert.equal((await request('/api/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"path":"/file"}' })).status, 503);

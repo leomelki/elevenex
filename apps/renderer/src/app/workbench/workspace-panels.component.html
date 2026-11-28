@@ -1,4 +1,4 @@
-<header class="panel-head">
+<header class="panel-head" [class.code-chrome]="panel() === 'code'">
   <ex-panel-tabs [tabs]="tabs()" [active]="current().id" (selectTab)="panel.set($event)" />
   <div class="panel-actions" [class.code-tools]="panel() === 'code'">
     @if (panel() === 'code') { <ng-container [ngTemplateOutlet]="codeActions()" /> }

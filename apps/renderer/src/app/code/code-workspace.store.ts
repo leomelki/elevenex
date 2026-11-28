@@ -30,16 +30,24 @@ export class CodeWorkspaceStore {
     const target = this.selected, epoch = this.epoch;
     if (!target || this.destroyed) return Promise.resolve();
     if (typeof this.bridge.codeOpen !== 'function') { this.error.set('Open this workspace in the desktop app to use Code.'); return Promise.resolve(); }
+    const stateBeforeOpen = this.state();
     this.busy.set(true); this.error.set('');
     const pending = (async () => {
       try {
         const reply = await this.bridge.codeOpen(target);
         if (this.destroyed || epoch !== this.epoch) return;
-        if (reply.ok) this.state.set(reply.value); else this.error.set(reply.error.message);
+        if (reply.ok) this.acceptAcquisition(reply.value, stateBeforeOpen);
+        else this.error.set(reply.error.message);
       } catch { if (epoch === this.epoch && !this.destroyed) this.error.set('Code could not open. Try again when the machine is connected.'); }
       finally { if (epoch === this.epoch) { this.busy.set(false); this.opening = undefined; } }
     })();
     this.opening = pending; return pending;
+  }
+  private acceptAcquisition(reply: CodeSurfaceState, previous: CodeSurfaceState | null): void {
+    const current = this.state();
+    // A frame may publish ready while its earlier acquisition reply is in
+    // flight. Keep the live event for the same resource.
+    if (current === previous || current?.frameUrl !== reply.frameUrl || reply.relocated) this.state.set(reply);
   }
   adopt(state: CodeSurfaceState): void { if (!this.state() && state.taskId === this.selected?.taskId) this.state.set(state); }
   suspend(): void {
@@ -49,7 +57,7 @@ export class CodeWorkspaceStore {
   async detach(): Promise<void> { const epoch = this.epoch; await this.open(); if (epoch !== this.epoch || this.destroyed || this.error()) return; try { if (this.selected && this.state()) await this.bridge.codeDetach(this.selected); } catch { if (epoch === this.epoch) this.error.set('The editor window could not open. Your current editor is retained.'); } }
   async openFile(file: CodeOpenFile): Promise<void> {
     const target = this.selected, epoch = this.epoch, request = ++this.fileRequest;
-    if (!file.fromChat) await this.open();
+    if (!file.fromChat && !file.fromChanges) await this.open();
     if (!target || epoch !== this.epoch || request !== this.fileRequest || this.destroyed || !this.state()) return;
     this.error.set('');
     let result; try { result = await this.bridge.codeOpenFile(target, file); } catch { result = { ok: false as const, error: { message: 'This path could not be opened in the current task.' } }; }
@@ -57,10 +65,11 @@ export class CodeWorkspaceStore {
   }
   async recover(): Promise<void> {
     const target = this.selected, epoch = this.epoch; if (!target || this.busy()) return;
+    const previous = this.state();
     this.busy.set(true); this.error.set('');
-    try { const result = await this.bridge.codeRecover(target); if (epoch !== this.epoch) return; if (result.ok) { this.error.set(''); this.state.set(result.value); } else this.error.set(result.error.message); }
+    try { const result = await this.bridge.codeRecover(target); if (epoch !== this.epoch) return; if (result.ok) { this.error.set(''); this.acceptAcquisition(result.value, previous); } else this.error.set(result.error.message); }
     catch { if (epoch === this.epoch && !this.destroyed) this.error.set('Code could not reconnect. Your editor is retained. Try again when the machine is connected.'); }
     finally { if (epoch === this.epoch) this.busy.set(false); }
   }
-  focus(): void { const epoch = this.epoch; if (this.selected) void this.bridge.codeFocus(this.selected).catch(() => { if (epoch === this.epoch && !this.destroyed) this.error.set('The editor is unavailable. Reopen Code to recover it.'); }); }
+  focus(frameAlreadyFocused?: true): void { const epoch = this.epoch; if (this.selected) void this.bridge.codeFocus(this.selected, frameAlreadyFocused).catch(() => { if (epoch === this.epoch && !this.destroyed) this.error.set('The editor is unavailable. Reopen Code to recover it.'); }); }
 }
