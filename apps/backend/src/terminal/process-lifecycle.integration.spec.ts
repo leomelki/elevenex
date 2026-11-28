@@ -27,6 +27,38 @@ async function until(
   }
 }
 
+const windowsPtyTest =
+  process.env.ELEVENEX_PROCESS_TESTS === '1' && process.platform === 'win32'
+    ? it
+    : it.skip;
+
+windowsPtyTest(
+  'closes a live Windows PTY and waits for the shell to exit',
+  async () => {
+    const child = pty.spawn(process.execPath, [
+      '-e',
+      'console.log("READY"); setInterval(() => {}, 1000)',
+    ]);
+    let ready = false;
+    let exited = false;
+    child.onData((data) => {
+      ready ||= data.includes('READY');
+    });
+    child.onExit(() => {
+      exited = true;
+    });
+    try {
+      await until(() => ready, 10000);
+      await terminatePtyAndWait(child, { signal: 'SIGHUP' });
+      expect(exited).toBe(true);
+      expect(() => process.kill(child.pid, 0)).toThrow();
+    } finally {
+      if (!exited) child.kill();
+    }
+  },
+  20000,
+);
+
 nativeDescribe('native PTY lifecycle', () => {
   jest.setTimeout(60000);
   let dir: string;

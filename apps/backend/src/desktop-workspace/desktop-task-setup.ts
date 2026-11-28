@@ -11,6 +11,7 @@ export interface DesktopTaskSetupIssue {
   readonly workspacePath?: string;
   readonly canUseSnapshot: boolean;
   readonly canExceedWorktreeLimit?: boolean;
+  readonly closeFailed?: true;
   readonly workspaceRecovery?: 'prepare' | 'restore-branch' | 'new-workspace';
 }
 
@@ -31,6 +32,13 @@ export function desktopTaskSetupIssue(
       ? (parsed as Record<string, unknown>)
       : {};
   const code = typeof error.code === 'string' ? error.code : '';
+  if (code === 'finish_failed')
+    return {
+      code: 'other',
+      message: 'The task could not be closed. Its workspace is still reserved. Retry closing to finish cleanup.',
+      canUseSnapshot: false,
+      closeFailed: true,
+    };
   if (code === 'worktree_limit_reached') {
     const { count, limit } = error;
     const validQuota =

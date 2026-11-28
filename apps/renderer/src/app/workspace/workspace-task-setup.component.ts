@@ -18,4 +18,5 @@ export class WorkspaceTaskSetupComponent {
   readonly error = input<string | null>(null);
   readonly retryRequested = output<WorkspaceTaskRecovery | undefined>();
   readonly refreshRequested = output<void>();
+  readonly closeRequested = output<void>();
 }

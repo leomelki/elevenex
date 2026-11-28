@@ -611,6 +611,25 @@ describe('DesktopWorkspaceService', () => {
     expect(retryTask).not.toHaveBeenCalled();
   });
 
+  it('reports a failed close as cleanup recovery on the open task', async () => {
+    await database.db
+      .update(schema.workspaces)
+      .set({
+        taskState: 'failed',
+        taskError: JSON.stringify({ code: 'finish_failed' }),
+      })
+      .where(eq(schema.workspaces.id, taskId));
+    const task = await service.task(taskId);
+    expect(task).toMatchObject({
+      state: 'failed',
+      archivedAt: null,
+      setupIssue: { code: 'other', closeFailed: true, canUseSnapshot: false },
+    });
+    expect((await service.listTasks({})).items[0].setupIssue).toEqual(
+      task.setupIssue,
+    );
+  });
+
   it('normalizes old missing-folder errors and permits only the advertised recovery', async () => {
     await database.db
       .update(schema.workspaces)

@@ -241,7 +241,11 @@ their safe message. Uncertain writes block another mutation until a durable
 refresh; task creation retains its request ID for the current draft. No mutation,
 prompt or git command is replayed after reconnect. Closing first requests real
 session/process/unpushed counts; Push and close must finish the push before the
-task is closed. Archive has Undo; deletion uses the shared confirmation.
+task is closed. When close cleanup fails, the task keeps its workspace reserved
+and offers Retry close even if its conversations have already been archived.
+The retry checks current process counts and uses the same confirmation flow.
+The sidebar removes an active selection once the scoped session read confirms
+it has left the active list. Archive has Undo; deletion uses the shared confirmation.
 Confirmed deletion closes the project's open tasks and stops its sessions before
 removing history. A cleanup failure keeps the project for an explicit retry.
 Progress and cleanup errors retain keyboard focus inside the confirmation.

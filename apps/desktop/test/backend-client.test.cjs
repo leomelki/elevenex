@@ -431,6 +431,9 @@ test('workspace response mapping strips unknown fields and rejects malformed or 
   }
   for (const workspaceRecovery of [null, 'arbitrary', 1]) assert.throws(() => parseWorkspaceTask({ ...task, setupIssue: { ...quotaIssue, workspaceRecovery } }));
   for (const canExceedWorktreeLimit of [null, 'yes', 1]) assert.throws(() => parseWorkspaceTask({ ...task, setupIssue: { ...quotaIssue, canExceedWorktreeLimit } }));
+  const closeIssue = { code: 'other', message: 'Retry closing the task.', canUseSnapshot: false, closeFailed: true };
+  assert.deepEqual(parseWorkspaceTask({ ...task, state: 'failed', setupIssue: closeIssue }).setupIssue, closeIssue);
+  assert.throws(() => parseWorkspaceTask({ ...task, setupIssue: { ...closeIssue, closeFailed: 'yes' } }));
   for (const value of [{ ...setupIssue, code: 'arbitrary' }, { ...setupIssue, canUseSnapshot: 'yes' }, { ...setupIssue, message: 'x'.repeat(501) }, { ...setupIssue, workspacePath: 'bad\npath' }]) assert.throws(() => parseWorkspaceTask({ ...task, setupIssue: value }));
   assert.throws(() => parseWorkspacePage({ items: Array(101).fill(task), nextCursor: null }, parseWorkspaceTask));
   assert.throws(() => parseWorkspacePage({ items: [], nextCursor: '-1' }, parseWorkspaceTask));

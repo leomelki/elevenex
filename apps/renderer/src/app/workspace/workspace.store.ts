@@ -528,6 +528,7 @@ export class WorkspaceStore {
     const priority = new Map<number, WorkspacePrioritySessions>();
     const current = () => revision === this.listRevision && this.valid(scope);
     const cursors = new Map<number, string | null>();
+    const missingSessionIds = new Set<number>();
     // Four workers bound both transport concurrency and first-paint memory.
     let index = 0;
     await Promise.all(Array.from({ length: Math.min(4, result.items.length) }, async () => {
@@ -562,13 +563,15 @@ export class WorkspaceStore {
           // An older selected conversation can be pinned outside the latest
           // window. Revalidate that one ID, rather than retaining its old status
           // or scanning every intervening page.
-          if ((background || this.sessionPriorityAvailable()) && pinned?.taskId === task.id && pinned.status !== 'archived' &&
+          if ((background || this.sessionPriorityAvailable() || task.setupIssue?.closeFailed) &&
+            pinned?.taskId === task.id && pinned.status !== 'archived' &&
             !rows.some(row => row.id === pinned.id) && !priority.get(task.id)?.items.some(row => row.id === pinned.id)) {
             const focused = await this.read(scope, () => this.bridge.workspaceSessions(scope, {
               taskId: task.id, ...(pinned.id > 1 ? { cursor: String(pinned.id - 1) } : {}), limit: 1,
             }), current, background);
             const updated = focused?.items.find(row => row.id === pinned.id);
             if (updated) rows = [...rows, updated].sort((a, b) => a.id - b.id);
+            else if (focused) missingSessionIds.add(pinned.id);
           }
           const selectedId = restored?.selection?.taskId === task.id ? restored.selection.sessionId : pinned?.taskId === task.id ? pinned.id : undefined;
           const selectedChild = rows.find(row => row.id === selectedId);
@@ -593,7 +596,7 @@ export class WorkspaceStore {
               return next;
             });
             this.sessionRecords.update(records => new Map(records).set(task.id,
-              selected && selected.taskId === task.id && !rows.some(item => item.id === selected.id) &&
+              selected && selected.taskId === task.id && !missingSessionIds.has(selected.id) && !rows.some(item => item.id === selected.id) &&
                 !priority.get(task.id)?.items.some(item => item.id === selected.id)
                 ? [...rows, selected] : rows,
             ));
@@ -610,8 +613,17 @@ export class WorkspaceStore {
     }));
     if (revision !== this.listRevision || this.scopeId() !== scope) return;
     this.archives.retain(this.closed() ? [] : result.items.map(task => task.id));
+    const recoveringClose = this.pendingTask();
+    if (recoveringClose?.setupIssue?.closeFailed) {
+      this.pendingTask.set(result.items.find(task => task.id === recoveringClose.id && task.setupIssue?.closeFailed) ?? null);
+    }
     const previous = this.selectedSession(), selection = this.chosen();
-    if (previous && previous.status !== 'archived' && selection && sessions.has(selection.taskId) && !sessions.get(selection.taskId)?.some(session => session.id === previous.id) && !priority.get(selection.taskId)?.items.some(session => session.id === previous.id)) {
+    for (const id of missingSessionIds) this.hierarchy.removeSession(id);
+    if (selection && missingSessionIds.has(selection.sessionId)) {
+      this.chosen.set(null);
+      const task = result.items.find(row => row.id === selection.taskId);
+      if (task?.setupIssue?.closeFailed) this.pendingTask.set(task);
+    } else if (previous && previous.status !== 'archived' && selection && sessions.has(selection.taskId) && !sessions.get(selection.taskId)?.some(session => session.id === previous.id) && !priority.get(selection.taskId)?.items.some(session => session.id === previous.id)) {
       const roots = sessions.get(selection.taskId) ?? [];
       const parent = previous.parentSessionId ? this.navigationSessions().get(selection.taskId)?.find(row => row.id === previous.parentSessionId) : undefined;
       // A retained selection supplements the history page. Evicting a history
@@ -1242,7 +1254,7 @@ export class WorkspaceStore {
   }
   async retryPreparation(recovery?: WorkspaceTaskRecovery): Promise<void> {
     const task = this.pendingTask(), scope = this.scopeId();
-    if (!task || !scope || this.busy() || this.mutationUncertain()) return;
+    if (!task || task.setupIssue?.closeFailed || !scope || this.busy() || this.mutationUncertain()) return;
     if (recovery === 'use-existing' && task.setupIssue?.code !== 'external-checkout') return;
     if (recovery === 'snapshot' && !task.setupIssue?.canUseSnapshot) return;
     if (recovery === 'exceed-worktree-limit' && !task.setupIssue?.canExceedWorktreeLimit) return;
@@ -1322,15 +1334,23 @@ export class WorkspaceStore {
     }
   }
   async closeTask(confirmStop = false, confirmedApps = 0): Promise<void> {
-    const task = this.selectedTask(), scope = this.scopeId(), selection = this.chosen();
+    const selected = this.selectedTask(), pending = selected ? null : this.pendingTask();
+    const task = selected ?? (pending?.setupIssue?.closeFailed ? pending : null);
+    const scope = this.scopeId(), selection = this.chosen();
     if (!task || !scope || this.busy()) return;
     this.busy.set(true);
     const result = await this.mutate(scope, () => this.bridge.workspaceFinishTask(scope, { taskId: task.id, confirmStop, ...(confirmedApps ? { confirmedApps } : {}) }));
     if (result) {
       this.sessionArchiveUndo.set(null);
       this.closeUndo.set({ scopeId: scope, task });
-      this.taskRecords.update(tasks => tasks.map(item => item.id === task.id ? result : item));
-      if (this.chosen() === selection) { this.chosen.set(null); await this.loadTasks(); }
+      const stillSelected = pending ? this.pendingTask() === pending
+        : this.chosen() === selection && this.selectedTask()?.id === task.id;
+      if (!this.closed()) this.taskRecords.update(tasks => tasks.filter(item => item.id !== task.id));
+      if (stillSelected) {
+        if (pending) this.stopPreparation();
+        this.chosen.set(null);
+        await this.loadTasks();
+      }
     }
     if (this.scopeId() === scope) this.busy.set(false);
   }

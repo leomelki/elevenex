@@ -4,6 +4,7 @@ import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { ButtonComponent, IconComponent, ModalLayerComponent, SetFieldComponent, StatusGlyphComponent, TooltipDirective } from '../ui';
 import { WorkspaceStore } from './workspace.store';
 import { WorkspaceTaskGitService } from './workspace-task-git.service';
+import type { WorkspaceTask } from '@elevenex/shared';
 
 @Component({
   selector: 'ex-workspace-task-header',
@@ -19,6 +20,7 @@ export class WorkspaceTaskHeaderComponent {
   private readonly bridge = inject(ELEVENEX_BRIDGE);
   readonly panelOpen = input(false);
   readonly panelToggle = output<void>();
+  readonly closeRecovery = input<WorkspaceTask>();
   protected readonly copied = signal(false);
   protected readonly closing = signal(false);
   protected readonly closeLoading = signal(false);
@@ -79,7 +81,7 @@ export class WorkspaceTaskHeaderComponent {
   protected readonly gitDialogOpen = signal(false);
   protected readonly gitDraft = signal('');
   private dialogTask?: number;
-  protected readonly confirmingTask = signal<{ readonly id: number; readonly title: string; readonly sessions: number; readonly running: number; readonly unpushed: number; readonly uncommitted?: number; readonly terminals: number; readonly actions: number; readonly apps?: number } | null>(null);
+  protected readonly confirmingTask = signal<{ readonly key: string; readonly title: string; readonly sessions: number; readonly running: number; readonly unpushed: number; readonly uncommitted?: number; readonly terminals: number; readonly actions: number; readonly apps?: number } | null>(null);
   protected readonly project = computed(() => this.store.projects().find(project => project.id === String(this.store.selectedTask()?.projectId)));
   protected readonly repo = computed(() => {
     const task = this.store.selectedTask();
@@ -87,7 +89,15 @@ export class WorkspaceTaskHeaderComponent {
   });
   private resetTimer?: ReturnType<typeof setTimeout>;
   private epoch = 0;
-  private readonly taskKey = computed(() => { const selected = this.store.taskSelection(); return selected ? `${selected.scopeId}/${selected.taskId}/${this.store.selectedTask()?.state}` : ''; });
+  private readonly closeTarget = computed(() => {
+    const recovery = this.closeRecovery();
+    return recovery ? { scopeId: this.store.scopeId(), task: recovery }
+      : { scopeId: this.store.taskSelection()?.scopeId, task: this.store.selectedTask() };
+  });
+  private readonly taskKey = computed(() => {
+    const { scopeId, task } = this.closeTarget();
+    return scopeId && task ? `${scopeId}/${task.id}/${task.state}` : '';
+  });
   constructor() {
     effect(() => {
       this.taskKey(); this.epoch++;
@@ -97,30 +107,34 @@ export class WorkspaceTaskHeaderComponent {
   }
 
   protected stage(stage: TaskStage): void { if (stage === 'closed') this.close(); else void this.store.setStage(stage); }
-  protected async close(): Promise<void> {
+  async close(): Promise<void> {
     if (this.store.offline()) { this.store.error.set(`Close task needs ${this.store.machine()?.name ?? 'the machine'}. Nothing was sent. Try again once it’s back.`); return; }
-    const task = this.store.selectedTask(), selection = this.store.taskSelection(), epoch = this.epoch;
-    if (!task || !selection || this.store.busy() || this.closeLoading()) return;
+    const { task, scopeId } = this.closeTarget(), key = this.taskKey(), epoch = this.epoch;
+    if (!task || !scopeId || this.store.busy() || this.store.mutationUncertain() || this.closeLoading()) return;
     this.closeLoading.set(true); this.closeError.set(null);
     try {
-      const preview = await this.bridge.workspaceClosePreview(selection.scopeId, task.id);
-      if (epoch !== this.epoch || this.taskKey() !== `${selection.scopeId}/${task.id}/${task.state}`) return;
+      const preview = await this.bridge.workspaceClosePreview(scopeId, task.id);
+      if (epoch !== this.epoch || this.taskKey() !== key) return;
       if (preview.ok) {
         const value = preview.value;
         if (!value.running && !value.terminals && !value.actions && !value.apps && !value.unpushed && value.uncommitted === 0) await this.store.closeTask();
-        else { this.confirmingTask.set({ id: task.id, title: task.name, ...value }); this.closing.set(true); }
+        else { this.confirmingTask.set({ key, title: task.name, ...value }); this.closing.set(true); }
       }
       else this.store.error.set(preview.error.message);
     } catch { if (epoch === this.epoch) this.store.error.set('The task could not be checked before closing.'); }
     finally { if (epoch === this.epoch) this.closeLoading.set(false); }
   }
   protected async confirmClose(intent: CloseTaskIntent): Promise<void> {
-    if (this.confirmingTask()?.id !== this.store.selectedTask()?.id) { this.closing.set(false); return; }
+    const task = this.confirmingTask(), key = this.taskKey();
+    if (!this.closing() || !task || task.key !== key) return;
     this.closeBusy.set(true); this.closeError.set(null);
-    if (intent.push && !await this.git.perform({ type: 'push' })) { this.closeError.set(this.git.error()); this.closeBusy.set(false); return; }
-    await this.store.closeTask(true, this.confirmingTask()?.apps);
-    this.closeBusy.set(false);
-    if (this.store.error()) this.closeError.set(this.store.error()); else this.closing.set(false);
+    try {
+      if (intent.push && !await this.git.perform({ type: 'push' })) { this.closeError.set(this.git.error()); return; }
+      if (this.taskKey() !== key) return;
+      await this.store.closeTask(true, task.apps);
+      if (this.taskKey() !== key) return;
+      if (this.store.error()) this.closeError.set(this.store.error()); else this.closing.set(false);
+    } finally { this.closeBusy.set(false); }
   }
   protected async copy(branch: string): Promise<void> {
     const epoch = this.epoch;

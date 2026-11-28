@@ -6,6 +6,19 @@ import { WorkspaceTaskSetupComponent } from './workspace-task-setup.component';
 const failed: WorkspaceTask = { id: 1, projectId: 2, repoId: 3, name: 'Continue existing work', branchName: 'feature/existing', stage: 'active', state: 'failed', archivedAt: null, updatedAt: '', setupIssue: { code: 'external-checkout', message: 'This branch is already checked out in another workspace.', workspacePath: '/work/existing', canUseSnapshot: true } };
 
 describe('Saved task setup recovery', () => {
+  it('offers close recovery without a setup retry', () => {
+    const fixture = TestBed.createComponent(WorkspaceTaskSetupComponent);
+    fixture.componentRef.setInput('task', { ...failed, setupIssue: {
+      code: 'other', message: 'Retry closing the task.', canUseSnapshot: false, closeFailed: true,
+    } });
+    const retry = vi.fn(); fixture.componentInstance.closeRequested.subscribe(retry);
+    fixture.detectChanges();
+    const buttons: NodeListOf<HTMLButtonElement> = fixture.nativeElement.querySelectorAll('button');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]?.textContent).toContain('Retry close');
+    buttons[0]?.click();
+    expect(retry).toHaveBeenCalledOnce();
+  });
   it('offers preparation for a released workspace instead of an endless progress state', () => {
     const fixture = TestBed.createComponent(WorkspaceTaskSetupComponent);
     fixture.componentRef.setInput('task', { ...failed, state: 'released', setupIssue: undefined });

@@ -4,10 +4,10 @@ const terminations = new WeakMap<IPty, Promise<void>>();
 
 /** Await process exit before allowing its working directory to be reused. */
 export function terminatePtyAndWait(
-  process: IPty,
+  pty: IPty,
   options: { signal?: string; graceMs?: number } = {},
 ): Promise<void> {
-  const existing = terminations.get(process);
+  const existing = terminations.get(pty);
   if (existing) return existing;
   // Register before signalling: kill can synchronously deliver an exit event.
   let resolve!: () => void;
@@ -16,7 +16,7 @@ export function terminatePtyAndWait(
     resolve = onResolve;
     reject = onReject;
   });
-  terminations.set(process, pending);
+  terminations.set(pty, pending);
   const begin = () => {
     let settled = false;
     let escalation: NodeJS.Timeout | undefined;
@@ -32,7 +32,7 @@ export function terminatePtyAndWait(
     };
     let subscription: { dispose(): void } | undefined;
     try {
-      subscription = process.onExit(() => finish());
+      subscription = pty.onExit(() => finish());
     } catch (error) {
       finish(error);
       return;
@@ -41,15 +41,15 @@ export function terminatePtyAndWait(
       subscription?.dispose();
       return;
     }
-    const kill = (signal: string) => {
+    const kill = (signal?: string) => {
       try {
-        process.kill(signal);
+        if (signal === undefined) pty.kill();
+        else pty.kill(signal);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ESRCH') finish();
         else finish(error);
       }
     };
-    escalation = setTimeout(() => kill('SIGKILL'), options.graceMs ?? 1500);
     deadline = setTimeout(
       () =>
         finish(
@@ -59,12 +59,18 @@ export function terminatePtyAndWait(
         ),
       7000,
     );
-    kill(options.signal ?? 'SIGTERM');
+    // node-pty closes the Windows pseudoconsole with a signal-free kill.
+    // Repeating it is unnecessary. Wait for the same exit confirmation as Unix.
+    if (process.platform === 'win32') kill();
+    else {
+      escalation = setTimeout(() => kill('SIGKILL'), options.graceMs ?? 1500);
+      kill(options.signal ?? 'SIGTERM');
+    }
   };
   begin();
   // A failed stop can be retried. Successful stops remain known for late callers.
   void pending.catch(() => {
-    if (terminations.get(process) === pending) terminations.delete(process);
+    if (terminations.get(pty) === pending) terminations.delete(pty);
   });
   return pending;
 }

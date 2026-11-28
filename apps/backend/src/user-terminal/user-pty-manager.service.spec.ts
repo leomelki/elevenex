@@ -497,7 +497,7 @@ describe('UserPtyManager', () => {
       jest.useRealTimers();
     }
   });
-  it('escalates the retired PTY without signalling its replacement', async () => {
+  it('terminates the retired PTY without killing its replacement', async () => {
     jest.useFakeTimers();
     try {
       const first = createMockPty();
@@ -510,7 +510,7 @@ describe('UserPtyManager', () => {
       expect(manager.isAlive(3)).toBe(false);
       await manager.spawn(3, '/repo/worktree', '/bin/zsh');
       jest.advanceTimersByTime(5000);
-      expect(first.kill.mock.calls).toEqual([['SIGHUP'], ['SIGKILL']]);
+      expect(first.kill.mock.calls).toEqual(process.platform === 'win32' ? [[]] : [['SIGHUP'], ['SIGKILL']]);
       expect(second.kill).not.toHaveBeenCalled();
       first.emit('exit', { exitCode: 137 });
       expect(manager.isAlive(3)).toBe(true);
@@ -540,8 +540,9 @@ describe('UserPtyManager', () => {
       await Promise.resolve();
       expect(stopped).toBe(false);
       jest.advanceTimersByTime(5000);
-      expect(first.kill.mock.calls).toEqual([['SIGHUP']]);
-      expect(second.kill).toHaveBeenLastCalledWith('SIGKILL');
+      const windows = process.platform === 'win32';
+      expect(first.kill.mock.calls).toEqual(windows ? [[]] : [['SIGHUP']]);
+      expect(second.kill.mock.calls).toEqual(windows ? [[]] : [['SIGHUP'], ['SIGKILL']]);
       second.emit('exit', { exitCode: 137 });
       await pending;
       expect(stopped).toBe(true);

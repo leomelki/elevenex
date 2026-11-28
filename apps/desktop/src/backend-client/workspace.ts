@@ -147,10 +147,12 @@ function setupIssue(value: unknown): WorkspaceTaskSetupIssue {
   const recovery = raw['workspaceRecovery'];
   if (recovery !== undefined && recovery !== 'prepare' && recovery !== 'restore-branch' && recovery !== 'new-workspace') throw invalidResponse();
   if (path !== undefined && /[\0\r\n]/.test(text(path, 4096))) throw invalidResponse();
+  if (raw['closeFailed'] !== undefined && raw['closeFailed'] !== true) throw invalidResponse();
   return {
     code,
     message: required(raw['message'], 500),
     canUseSnapshot: boolean(raw['canUseSnapshot']),
+    ...(raw['closeFailed'] === true ? { closeFailed: true } : {}),
     ...(raw['canExceedWorktreeLimit'] === undefined ? {} : { canExceedWorktreeLimit: boolean(raw['canExceedWorktreeLimit']) }),
     ...(path === undefined ? {} : { workspacePath: text(path, 4096) }),
     ...(recovery === undefined ? {} : { workspaceRecovery: recovery }),

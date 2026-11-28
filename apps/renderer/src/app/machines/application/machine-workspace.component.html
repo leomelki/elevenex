@@ -22,7 +22,12 @@
           [sessionTitle]="store.selectedSession()?.name ?? ''" [agentFocus]="agentFocus()"
           [agentNavigationBusy]="agentNavigationBusy()" [agentNavigationError]="agentNavigationError()" (agentSessionRequested)="openAgentSession($event)" />
       } @else if (store.pendingTask(); as task) {
-        <ex-workspace-task-setup [task]="task" [busy]="store.busy()" [paused]="store.preparationPaused()" [uncertain]="store.mutationUncertain()" [error]="store.error()" (retryRequested)="store.retryPreparation($event)" (refreshRequested)="store.reconcilePreparation()" />
+        @if (task.setupIssue?.closeFailed) {
+          <ex-workspace-task-header #closeRecovery [closeRecovery]="task" />
+          <ex-workspace-task-setup [task]="task" [busy]="store.busy() || store.offline()" [uncertain]="store.mutationUncertain()" [error]="store.error()" (closeRequested)="closeRecovery.close()" (refreshRequested)="store.refresh()" />
+        } @else {
+          <ex-workspace-task-setup [task]="task" [busy]="store.busy()" [paused]="store.preparationPaused()" [uncertain]="store.mutationUncertain()" [error]="store.error()" (retryRequested)="store.retryPreparation($event)" (refreshRequested)="store.reconcilePreparation()" />
+        }
       } @else {
         <section class="empty-state">
           @if (store.offline()) {

@@ -58,6 +58,8 @@ export interface WorkspaceTaskSetupIssue {
   readonly workspacePath?: string;
   readonly canUseSnapshot: boolean;
   readonly canExceedWorktreeLimit?: boolean;
+  /** Cleanup failed during close. Use the close flow to retry. */
+  readonly closeFailed?: true;
   /** Optional capability; older clients retain ordinary retry. */
   readonly workspaceRecovery?: 'prepare' | 'restore-branch' | 'new-workspace';
 }

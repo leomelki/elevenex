@@ -30,7 +30,10 @@ export class WorkspaceNavigationComponent {
     computation: (state, previous): boolean => !state.closed && (!state.loading || state.count > 0 || (previous?.source.scope === state.scope && previous.value)),
   });
   // The main setup surface owns this actionable failure; avoid announcing it twice.
-  protected readonly visibleError = computed(() => (this.store.pendingTask()?.setupIssue?.message === this.store.error() ? null : this.store.error()) ?? this.store.resumeError());
+  protected readonly visibleError = computed(() => {
+    const issue = this.store.pendingTask()?.setupIssue, error = this.store.error();
+    return (issue?.closeFailed || issue?.message === error ? null : error) ?? this.store.resumeError();
+  });
   protected readonly label = computed(() => this.store.selectedProject()?.name ?? 'All projects');
   protected readonly projectMark = computed(() => this.store.projects().find(project => project.id === this.store.activeProject()));
   protected async removeSession(intent: { readonly taskId: string; readonly session: TaskSession }, deleting = false): Promise<void> {

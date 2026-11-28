@@ -6,7 +6,7 @@
   >
     <h2>Close “{{ title() }}”?</h2>
     <ul>
-      @if (terminals()) { <li><ex-icon name="terminal" [size]="14" />Stops {{ terminals() }} running terminals</li> }
+      @if (terminals()) { <li><ex-icon name="terminal" [size]="14" />Stops {{ terminals() }} running {{ terminals() === 1 ? 'terminal' : 'terminals' }}</li> }
       @if (apps()) { <li><ex-icon name="window" [size]="14" />Stops {{ apps() }} running {{ apps() === 1 ? 'app' : 'apps' }}</li> }
       @if (actions()) { <li><ex-icon name="actions" [size]="14" />Stops {{ actions() }} running actions</li> }
       @if (running()) {
@@ -15,10 +15,12 @@
           {{ running() }} running {{ running() === 1 ? 'session' : 'sessions' }}
         </li>
       }
-      <li>
-        <ex-icon name="archive" [size]="14" />Archives
-        {{ sessions() }} sessions. Reopen them any time from Closed.
-      </li>
+      @if (sessions()) {
+        <li>
+          <ex-icon name="archive" [size]="14" />Archives
+          {{ sessions() }} {{ sessions() === 1 ? 'session' : 'sessions' }}. Reopen the task any time from Closed.
+        </li>
+      }
       <li>
         <ex-icon name="check" [size]="14" />{{ uncommitted() ? 'Keeps the task’s files on disk.' : 'Cleans up the task’s files on disk.' }}
       </li>

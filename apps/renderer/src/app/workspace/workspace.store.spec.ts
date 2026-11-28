@@ -330,6 +330,38 @@ describe('WorkspaceStore', () => {
     expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual([String(id), '500']);
   });
 
+  it('removes an archived selection from Needs you and lets an empty task retry close', async () => {
+    vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { store, bridge, start } = setup();
+    bridge.workspaceSessions.mockResolvedValue(ok(page([{ ...session, status: 'attention' }])));
+    await start();
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    expect(store.projects()[0]?.attention).toBe(1);
+
+    const failed: WorkspaceTask = { ...task, state: 'failed', setupIssue: {
+      code: 'other', message: 'Retry closing the task.', canUseSnapshot: false, closeFailed: true,
+    } };
+    bridge.workspaceTasks.mockResolvedValue(ok(page([failed])));
+    bridge.workspaceSessions.mockResolvedValue(ok(page([])));
+    bridge.workspaceRevision.mockResolvedValue(ok({ revision: 2, version: 1, sessionArchive: true }));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(store.selected()).toBeNull();
+    expect(store.tasks()[0]?.sessions).toEqual([]);
+    expect(store.projects()[0]?.attention).toBe(0);
+    expect(store.pendingTask()).toEqual(failed);
+
+    await store.retryPreparation();
+    expect(bridge.workspaceRetryTask).not.toHaveBeenCalled();
+    bridge.workspaceFinishTask.mockImplementation(async () => {
+      bridge.workspaceTasks.mockResolvedValue(ok(page([])));
+      return ok({ ...task, state: 'finished', archivedAt: 'now' });
+    });
+    await store.closeTask(true);
+    expect(bridge.workspaceFinishTask).toHaveBeenCalledWith('scope', { taskId: 3, confirmStop: true });
+    expect(store.pendingTask()).toBeNull();
+    expect(store.tasks()).toEqual([]);
+  });
+
   it('revalidates a selected nested conversation and retains its parent outside the latest root page', async () => {
     vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     const { store, bridge, start } = setup();
@@ -1063,6 +1095,16 @@ it('retains a scope-bound task Undo after close, and never reuses it in another 
   await store.selectSession({taskId:'3',sessionId:'5'}); await store.closeTask();
   emit({revision:2,scope:{id:'other',environment:{kind:'local'}}}); TestBed.tick(); await settle();
   await store.undoClose(); expect(bridge.workspaceReopenTask).toHaveBeenCalledTimes(1);
+});
+
+it('removes a successfully closed task even when the active list refresh fails', async () => {
+  const { store, bridge, start } = setup(); await start();
+  store.selectSession({ taskId: '3', sessionId: '5' });
+  bridge.workspaceTasks.mockResolvedValue({ ok: false, error: { code: 'transport', message: 'Connection lost.' } });
+  await store.closeTask();
+  expect(store.selected()).toBeNull();
+  expect(store.tasks()).toEqual([]);
+  expect(store.closeUndo()?.task.id).toBe(3);
 });
 
 

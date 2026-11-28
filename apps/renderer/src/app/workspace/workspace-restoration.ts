@@ -107,7 +107,7 @@ export class WorkspaceRestoration {
     if (!task && !tasks.value.items.length && cursor) return defaultWindow();
     const window: RestoredTaskWindow = { page: tasks.value, cursor, closed };
     if (!task) return { ok: true, value: window };
-    if (saved.sessionId === null) {
+    if (saved.sessionId === null || task.setupIssue?.closeFailed && !closed) {
       return { ok: true, value: { ...window, ...(task.state !== 'ready' && !closed ? { pendingTask: task } : {}) } };
     }
     return this.session(scope, window, task.id, saved.sessionId, archiveHistory, current);
